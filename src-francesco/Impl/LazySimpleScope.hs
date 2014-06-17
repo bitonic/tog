@@ -14,7 +14,6 @@ import           Data.Monoid                      ((<>), mempty, mconcat)
 import           Data.Typeable                    (Typeable)
 
 import           Types.Term
-import           Types.Var
 import           Eval
 
 -- Base terms

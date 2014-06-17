@@ -41,13 +41,16 @@ module Types.Monad
     , StuckTC
     , newProblem
     , newProblem_
+    , newProblemClosed
     , bindProblem
+    , bindProblemClosed
     , waitOnProblem
+    , waitOnProblemClosed
     , solveProblems
     , solveProblems_
     ) where
 
-import Prelude                                    hiding (abs, pi)
+import           Prelude                          hiding (abs, pi)
 
 import qualified Data.Set                         as Set
 import           Data.Typeable                    (Typeable)
@@ -133,13 +136,44 @@ getTypeOfVar v = do
 -- Problem handling
 ------------------------------------------------------------------------
 
+newProblem
+    :: (Typeable a, IsVar v, IsTerm t, Nf p, PP.Pretty (p t v))
+    => Set.Set MetaVar
+    -> ProblemDescription p t v
+    -> StuckTC t v a
+    -> TC t v (ProblemId a)
+newProblem mvs desc m = do
+  ctx <- askContext
+  liftClosed $ newProblemClosed mvs ctx desc m
+
 newProblem_
     :: (Typeable a, IsVar v, IsTerm t, Nf p, PP.Pretty (p t v))
     => MetaVar
     -> ProblemDescription p t v
     -> StuckTC t v a
-    -> TC t v (ProblemId t v a)
+    -> TC t v (ProblemId a)
 newProblem_ mv = newProblem (Set.singleton mv)
+
+bindProblem
+  :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
+  => ProblemId a
+  -> ProblemDescription p t v
+  -> (a -> StuckTC t v b)
+  -> TC t v (ProblemId b)
+bindProblem pid desc f = do
+  ctx <- askContext
+  liftClosed $ bindProblemClosed pid ctx desc f
+
+waitOnProblem
+  :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
+  => ProblemId a
+  -> ProblemDescription p t v
+  -> StuckTC t v b
+  -> TC t v (ProblemId b)
+waitOnProblem pid desc m = do
+  ctx <- askContext
+  liftClosed $ waitOnProblemClosed pid ctx desc m
+
 
 solveProblems_ :: (IsTerm t) => ClosedTC t ()
 solveProblems_ = void solveProblems

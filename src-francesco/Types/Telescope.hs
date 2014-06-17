@@ -8,9 +8,11 @@ module Types.Telescope
     , proxyTel
     , substs
     , instantiate
+    , (++)
       -- ** 'Tel' types
     , Proxy(..)
     , Id(..)
+    , Prod2(..)
     , ProxyTel
     , ClosedProxyTel
     , IdTel
@@ -85,10 +87,16 @@ instance Bound Proxy where
 
 -- | An identity type, useful to have terms at the end of a 'Tel'.
 newtype Id f v = Id {unId :: f v}
-     deriving (Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable)
 
 instance Bound Id where
-     Id t >>>= f = Id (t >>= f)
+  Id t >>>= f = Id (t >>= f)
+
+data Prod2 (f :: * -> *) v = Prod2 (f v) (f v)
+  deriving (Functor, Foldable, Traversable)
+
+instance Bound Prod2 where
+  Prod2 x y >>>= f = Prod2 (x >>= f) (y >>= f)
 
 type IdTel    = Tel Id
 type ProxyTel = Tel Proxy
@@ -143,3 +151,7 @@ unTel tel0 f = go tel0 Ctx.Empty
     go :: Tel t f v -> Ctx.Ctx v0 f v -> a
     go (Empty t)         ctx = f ctx t
     go (Cons type_ tel') ctx = go tel' (Ctx.Snoc ctx type_)
+
+(++) :: Ctx.Ctx v0 f v -> Tel t f v -> Tel t f v0
+Ctx.Empty            ++ tel' = tel'
+(Ctx.Snoc ctx type_) ++ tel' = ctx ++ (Cons type_ tel')

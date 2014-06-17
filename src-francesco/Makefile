@@ -15,4 +15,3 @@ $(bnfc_output) : Syntax.cf
 
 ./dist/build/tc/tc : $(gen_hs_files)
 	cabal build
-
