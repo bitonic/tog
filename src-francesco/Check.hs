@@ -192,16 +192,8 @@ checkEqual type_ x y = do
         let body1' = fromAbs body1
         let body2' = fromAbs body2
         let cod'   = fromAbs cod
-        -- This is unfortunate, we need to create a new problem only
-        -- because the recursive call is in a different context.
-        stuck <- extendContext (getName_ body1') dom $ \_ ->
-                 checkEqual cod' body1' body2'
-        -- TODO use some helper function
-        case stuck of
-          NotStuck () ->
-            notStuck ()
-          StuckOn pid ->
-            StuckOn <$> waitOnProblem pid (EscapingScope pid) (notStuck ())
+        extendContext (getName_ body1') dom $ \_ ->
+          checkEqual cod' body1' body2'
       (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
         let cod1' = fromAbs cod1
         stuck <- checkEqual set dom1 dom2
@@ -209,15 +201,11 @@ checkEqual type_ x y = do
         -- (see above)
         case stuck of
           NotStuck () -> do
-            stuck' <- extendContext (getName_ cod1') dom1 $ \_ ->
+            extendContext (getName_ cod1') dom1 $ \_ ->
               checkEqual set cod1' (fromAbs cod2)
-            case stuck' of
-              NotStuck () -> notStuck ()
-              StuckOn pid -> StuckOn <$> waitOnProblem pid (EscapingScope pid) (notStuck ())
           StuckOn pid -> do
-            pid' <- extendContext (getName_ cod1') dom1 $ \_ ->
-                    waitOnProblemCheckEqual pid set cod1' (fromAbs cod2)
-            StuckOn <$> waitOnProblem pid' (EscapingScope pid') (notStuck ())
+            extendContext (getName_ cod1') dom1 $ \_ ->
+              StuckOn <$> waitOnProblemCheckEqual pid set cod1' (fromAbs cod2)
       (Set, Equal type1 x1 y1, Equal type2 x2 y2) ->
         bindStuckTC (checkEqual set type1 type2) (\_ -> CheckEqual type1 x1 x2) $ \() ->
         bindStuckTC (checkEqual type1 x1 x2)     (\_ -> CheckEqual type1 y1 y2) $ \() ->
@@ -317,7 +305,7 @@ checkEqualBlockedOn type_ mvs fun1 elims1 t2 = do
     matchPat dataCon pats (Apply t) | App (Meta mv) mvArgs <- view t = do
       mvT <- liftClosed $ do
         mvType <- getTypeOfMetaVar mv
-        mvT <- unrollPi mvType $ \ctxMvArgs endType' -> do
+        mvT <- unrollPiTC mvType $ \ctxMvArgs endType' -> do
           DataCon tyCon dataConTypeTel <- getDefinition dataCon
           -- We know that the metavariable must have the right type (we
           -- have typechecked the arguments already).
@@ -325,7 +313,7 @@ checkEqualBlockedOn type_ mvs fun1 elims1 t2 = do
           Just tyConArgs <- return $ mapM isApply tyConArgs0
           True <- return $ tyCon == tyCon'
           let dataConType = Tel.substs (vacuous dataConTypeTel) tyConArgs
-          dataConArgsTel <- unrollPi dataConType $ \ctx -> return . Tel.idTel ctx
+          dataConArgsTel <- unrollPiTC dataConType $ \ctx -> return . Tel.idTel ctx
           dataConArgs <- createMvsPars dataConArgsTel
           return $ ctxLam ctxMvArgs $ con dataCon $ dataConArgs
         instantiateMetaVar mv mvT
@@ -381,7 +369,7 @@ equalConArgs
     -- ^ Type of the head.
     -> Name -> [Term t v] -> [Term t v] -> StuckTC t v ()
 equalConArgs type_ dataCon xs ys = do
-  expandedCon <- unrollPi type_ $ \ctx _ ->
+  expandedCon <- unrollPiTC type_ $ \ctx _ ->
                  return $ ctxLam ctx $ con dataCon $ map var $ ctxVars ctx
   checkEqualSpine type_ expandedCon (map Apply xs) (map Apply ys)
 
@@ -423,38 +411,97 @@ metaAssign
     :: (IsVar v, IsTerm t)
     => Type t v -> MetaVar -> [Elim (Term t) v] -> Term t v -> StuckTC t v ()
 metaAssign type_ mv elims t = do
-  sig <- getSignature
-  let vsOrMvs = case checkPatternCondition sig elims of
-        TTOK vs        -> Right vs
-        TTMetaVars mvs -> Left $ Set.insert mv mvs
-        TTFail ()      -> Left $ Set.singleton mv
-  case vsOrMvs of
-    Left mvs -> do
-      let t' = nf sig t
-      -- TODO should we really prune allowing all variables here?  Or
-      -- only the rigid ones?
-      let fvs = fvAll $ freeVars sig t'
-      pruned <- liftClosed $ prune fvs mv $ map (nf' sig) elims
-      if pruned
-        then checkEqual type_ (metaVar mv elims) t
-        else fmap StuckOn $
-               newProblem mvs (CheckEqual type_ (metaVar mv elims) t) $
-                 checkEqual type_ (metaVar mv elims) t
-    Right vs -> do
-      -- TODO have `pruneTerm' return an evaluated term.
-      liftClosed $ pruneTerm (Set.fromList vs) t
-      res <- closeTerm $ lambdaAbstract vs $ nf sig t
-      case res of
-        TTOK t' -> do
-          let mvs = metaVars t'
-          when (mv `HS.member` mvs) $ checkError $ OccursCheckFailed mv $ vacuous t'
-          instantiateMetaVar mv t'
-          notStuck ()
-        TTMetaVars mvs ->
-          fmap StuckOn $
-            newProblemCheckEqual (Set.insert mv mvs) type_ (metaVar mv elims) t
-        TTFail v ->
-          checkError $ FreeVariableInEquatedTerm mv elims t v
+  -- tel <- etaExpandVars elims0 (Tel.Prod2 type0 t0) $ \elims (Tel.Prod2 type_ t) -> do
+    sig <- getSignature
+    let vsOrMvs = case checkPatternCondition sig elims of
+          TTOK vs        -> Right vs
+          TTMetaVars mvs -> Left $ Set.insert mv mvs
+          -- TODO here we should also wait on metavars on the right that
+          -- could simplify the problem.
+          TTFail ()      -> Left $ Set.singleton mv
+    case vsOrMvs of
+      Left mvs -> do
+        let t' = nf sig t
+        -- TODO should we really prune allowing all variables here?  Or
+        -- only the rigid ones?
+        let fvs = fvAll $ freeVars sig t'
+        pruned <- liftClosed $ prune fvs mv $ map (nf' sig) elims
+        if pruned
+          then checkEqual type_ (metaVar mv elims) t
+          else fmap StuckOn $
+                 newProblem mvs (CheckEqual type_ (metaVar mv elims) t) $
+                   checkEqual type_ (metaVar mv elims) t
+      Right vs -> do
+        -- TODO have `pruneTerm' return an evaluated term.
+        liftClosed $ pruneTerm (Set.fromList vs) t
+        res <- closeTerm $ lambdaAbstract vs $ nf sig t
+        case res of
+          TTOK t' -> do
+            let mvs = metaVars t'
+            when (mv `HS.member` mvs) $ checkError $ OccursCheckFailed mv $ vacuous t'
+            instantiateMetaVar mv t'
+            notStuck ()
+          TTMetaVars mvs ->
+            fmap StuckOn $
+              newProblemCheckEqual (Set.insert mv mvs) type_ (metaVar mv elims) t
+          TTFail v ->
+            checkError $ FreeVariableInEquatedTerm mv elims t v
+
+-- data EtaExpandVars t f v EtaExpandVars [Elim f v] (t f v)
+
+-- etaExpandVars
+--   :: (IsVar v, IsTerm f, Bound t)
+--   => Sig.Signature f
+--   -> Ctx.ClosedCtx f v
+--   -> [Elim f v]
+--   -> Tel.ClosedTel (EtaExpandVars t f v) f
+-- etaExpandVars sig ctx elims t = undefined
+
+-- -- | Expands a record-typed variable ranging over the given 'Tel.Tel',
+-- -- returning a new telescope ranging over all the fields of the record
+-- -- type and the old telescope with the variable substituted with a
+-- -- constructed record.
+-- etaExpandVar
+--   :: (IsVar v, IsTerm f, Bound t)
+--   => Sig.Signature f
+--   -> Name
+--   -- ^ The type constructor of the record type.
+--   -> Tel.Tel t f (TermVar v)
+--   -> Tel.Tel t f v
+-- etaExpandVar sig tyCon tel =
+--   let Constant (Record dataCon projs) tyConType = Sig.getDefinition sig tyCon
+--       Right tel'' = unrollPiWithNames sig (vacuous tyConType) (map fst projs) $ \tyConPars _ ->
+--         let tel' = tel >>>= \v -> case v of
+--                      B _  -> ctxApp (con dataCon []) tyConPars
+--                      F v' -> var $ Ctx.weaken tyConPars v'
+--         in tyConPars Tel.++ tel'
+--   in tel''
+
+-- -- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
+-- -- variable.
+-- collectProjectedVar
+--   :: (IsVar v, IsTerm t) => Sig.Signature t -> [Elim t v] -> Maybe (v, Name)
+-- collectProjectedVar sig elims = do
+--   (v, projName) <- msum $ flip map elims $ \elim -> do
+--     Apply t <- return elim
+--     App (Var v) vElims <- return $ whnfView sig t
+--     projName : _ <- forM vElims $ \vElim -> do
+--       Proj projName _ <- return vElim
+--       return projName
+--     return (v, projName)
+--   let Projection _ tyCon _ = Sig.getDefinition sig projName
+--   return (v, projName)
+
+-- splitContext
+--   :: v
+--   -> t f v
+--   -> (forall v'. (IsVar v') => Tel.Tel t f (TermVar v') -> StuckTC f v' ())
+--   -> StuckTC f v ()
+-- splitContext = error "TODO splitContext"
+--       -- -- TODO get rid of this at every level, we can do it all at once.
+--       -- case stuck of
+--       --   NotStuck () -> notStuck ()
+--       --   StuckOn pid -> waitOnProblem pid (EscapingScope pid) (notStuck ())
 
 -- | The term must be in normal form.
 pruneTerm
@@ -636,13 +683,16 @@ closeTerm t0 = do
               goElim (Proj n f) = pure $ Proj n f
 
               resElims = traverse goElim elims
-          in case h of
-               Meta mv  ->
-                 TTMetaVars (Set.singleton mv) <*> resElims
+          in case (h, resElims) of
+               (Meta mv, TTMetaVars mvs) ->
+                 TTMetaVars $ Set.insert mv mvs
+               (Meta mv, TTFail _) ->
+                 TTMetaVars $ Set.singleton mv
                _ ->
                  App <$> traverse (either TTFail pure . strengthen) h <*> resElims
 
   return $ go Left t0
+
 
 -- Problem handling
 -------------------
@@ -673,14 +723,14 @@ elimStuckTC m ifStuck = do
 
 bindStuck
     :: (IsVar v, IsTerm t, Typeable a, Typeable b)
-    => Stuck t v a -> (ProblemId t v a -> CheckProblem t v)
+    => Stuck a -> (ProblemId a -> CheckProblem t v)
     -> (a -> StuckTC t v b) -> StuckTC t v b
 bindStuck (NotStuck x)  _    f = f x
 bindStuck (StuckOn pid) desc f = StuckOn <$> bindProblem pid (desc pid) f
 
 bindStuckTC
     :: (IsVar v, IsTerm t, Typeable a, Typeable b)
-    => StuckTC t v a -> (ProblemId t v a -> CheckProblem t v)
+    => StuckTC t v a -> (ProblemId a -> CheckProblem t v)
     -> (a -> StuckTC t v b) -> StuckTC t v b
 bindStuckTC m desc f = do
     stuck <- m
@@ -766,7 +816,7 @@ checkData
 checkData tyCon tyConPars dataCons = do
     tyConType <- definitionType <$> getDefinition tyCon
     addConstant tyCon (Data []) tyConType
-    unrollPiWithNames tyConType tyConPars $ \tyConPars' endType -> do
+    unrollPiWithNamesTC tyConType tyConPars $ \tyConPars' endType -> do
         elimStuckTC (equalType endType set) $
           error $ "Type constructor does not return Set: " ++ show tyCon
         let appliedTyConType = ctxApp (def tyCon []) tyConPars'
@@ -786,7 +836,7 @@ checkConstr
 checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
     atSrcLoc dataCon $ do
         dataConType <- isType synDataConType
-        unrollPi dataConType $ \vs endType -> do
+        unrollPiTC dataConType $ \vs endType -> do
             let appliedTyConType' = fmap (Ctx.weaken vs) appliedTyConType
             elimStuckTC (equalType appliedTyConType' endType) $ do
               checkError $ TermsNotEqual appliedTyConType' endType
@@ -809,7 +859,7 @@ checkRec
 checkRec tyCon tyConPars dataCon fields = do
     tyConType <- definitionType <$> getDefinition tyCon
     addConstant tyCon (Record dataCon []) tyConType
-    unrollPiWithNames tyConType tyConPars $ \tyConPars' endType -> do
+    unrollPiWithNamesTC tyConType tyConPars $ \tyConPars' endType -> do
         void $ equalType endType set
         fieldsTel <- checkFields fields
         let appliedTyConType = ctxApp (def tyCon []) tyConPars'
@@ -940,7 +990,7 @@ checkPattern funName synPat type_ ret = case synPat of
       checkPatternStuck funName stuck
 
 -- TODO we can loosen this by postponing adding clauses.
-checkPatternStuck :: (IsVar v, IsTerm t) => Name -> Stuck t v a -> TC t v a
+checkPatternStuck :: (IsVar v, IsTerm t) => Name -> Stuck a -> TC t v a
 checkPatternStuck funName stuck =
   case stuck of
     NotStuck x -> return x
@@ -988,46 +1038,75 @@ checkInvertibility sig = go []
 
 -- TODO remove duplication
 
+data SaveContext t v a =
+  forall v'. (IsVar v') => SaveContext (Ctx.Ctx v t v') (TC t v' a)
+
 unrollPiWithNames
-    :: (IsVar v, IsTerm t)
-    => Type t v
-    -- ^ Type to unroll
-    -> [Name]
-    -- ^ Names to give to each parameter
-    -> (∀ v'. (IsVar v') => Ctx.Ctx v (Type t) v' -> Type t v' -> TC t v' a)
-    -- ^ Handler taking a context with accumulated domains of the pis
-    -- and the final codomain.
-    -> TC t v a
-unrollPiWithNames type_ []             ret = ret Ctx.Empty type_
-unrollPiWithNames type_ (name : names) ret = do
-  typeView <- whnfViewTC type_
-  case typeView of
+  :: (IsVar v, IsTerm t)
+  => Sig.Signature t
+  -> Type t v
+  -- ^ Type to unroll
+  -> [Name]
+  -- ^ Names to give to each parameter
+  -> (∀ v'. (IsVar v') => Ctx.Ctx v (Type t) v' -> Type t v' -> a)
+  -- ^ Handler taking a context with accumulated domains of the pis
+  -- and the final codomain.
+  -> Either String a
+unrollPiWithNames _ type_ [] ret =
+  return $ ret Ctx.Empty type_
+unrollPiWithNames sig type_ (name : names) ret =
+  case whnfView sig type_ of
     Pi domain codomain ->
-      extendContext name domain $ \_v ->
-      unrollPiWithNames (fromAbs codomain) names $ \ctxVs endType ->
+      unrollPiWithNames sig (fromAbs codomain) names $ \ctxVs endType ->
       ret (Ctx.singleton name domain Ctx.++ ctxVs) endType
     _ ->
-      checkError $ ExpectedFunctionType type_ Nothing
+      Left $ renderError sig $ ExpectedFunctionType type_ Nothing
+
+unrollPiWithNamesTC
+  :: (IsVar v, IsTerm t) => Type t v -> [Name]
+  -> (∀ v'. (IsVar v') => Ctx.Ctx v (Type t) v' -> Type t v' -> TC t v' a)
+  -> TC t v a
+unrollPiWithNamesTC type_ names ret = do
+  sig <- getSignature
+  case unrollPiWithNames sig type_ names (\ctx -> SaveContext ctx . ret ctx) of
+    Left err ->
+      typeError err
+    Right (SaveContext ctx m) -> do
+      ctx0 <- askContext
+      localContext (\_ -> ctx0 Ctx.++ ctx) m
 
 unrollPi
-    :: (IsVar v, IsTerm t)
-    => Type t v
-    -- ^ Type to unroll
-    -> (∀ v'. (IsVar v') => Ctx.Ctx v (Type t) v' -> Type t v' -> TC t v' a)
-    -- ^ Handler taking a weakening function, the list of domains
-    -- of the unrolled pis, the final codomain.
-    -> TC t v a
-unrollPi type_ ret = do
-  typeView <- whnfViewTC type_
-  case typeView of
-    Pi domain codomain -> do
+  :: (IsVar v, IsTerm t)
+  => Sig.Signature t
+  -> Type t v
+  -- ^ Type to unroll
+  -> (∀ v'. (IsVar v') => Ctx.Ctx v (Type t) v' -> Type t v' -> a)
+  -- ^ Handler taking a weakening function, the list of domains
+  -- of the unrolled pis, the final codomain.
+  -> Either String a
+unrollPi sig type_ ret = do
+  case whnfView sig type_ of
+    Pi domain codomain ->
       let codomain' = fromAbs codomain
-      let name      = getName_ codomain'
-      extendContext name domain $ \_v ->
-        unrollPi codomain' $ \ctxVs endType ->
-        ret (Ctx.singleton name domain Ctx.++ ctxVs) endType
+          name      = getName_ codomain'
+      in unrollPi sig codomain' $ \ctxVs endType ->
+         ret (Ctx.singleton name domain Ctx.++ ctxVs) endType
     _ ->
-      ret Ctx.Empty type_
+      return $ ret Ctx.Empty type_
+
+unrollPiTC
+  :: (IsVar v, IsTerm t)
+  => Type t v
+  -> (∀ v'. (IsVar v') => Ctx.Ctx v (Type t) v' -> Type t v' -> TC t v' a)
+  -> TC t v a
+unrollPiTC type_ ret = do
+  sig <- getSignature
+  case unrollPi sig type_ (\ctx -> SaveContext ctx . ret ctx) of
+    Left err ->
+      typeError err
+    Right (SaveContext ctx m) -> do
+      ctx0 <- askContext
+      localContext (\_ -> ctx0 Ctx.++ ctx) m
 
 -- Definition utils
 -------------------
@@ -1128,9 +1207,9 @@ matchTyCon tyCon t err handler = do
     MetaVarHead mv _ -> do
       liftClosed $ do
         mvType <- getTypeOfMetaVar mv
-        mvT <- unrollPi mvType $ \ctxMvArgs _ -> do
+        mvT <- unrollPiTC mvType $ \ctxMvArgs _ -> do
           Constant _ tyConType <- getDefinition tyCon
-          tyConParsTel <- unrollPi (vacuous tyConType) $ \ctx ->
+          tyConParsTel <- unrollPiTC (vacuous tyConType) $ \ctx ->
                           return . Tel.idTel ctx
           tyConPars <- createMvsPars tyConParsTel
           return $ ctxLam ctxMvArgs $ def tyCon $ map Apply tyConPars
@@ -1168,7 +1247,7 @@ matchPi name t err handler = do
     MetaVarHead mv _ -> do
       liftClosed $ do
         mvType <- getTypeOfMetaVar mv
-        mvT <- unrollPi mvType $ \ctxMvArgs _ -> do
+        mvT <- unrollPiTC mvType $ \ctxMvArgs _ -> do
           dom <- addMetaVarInCtx set
           cod <- extendContext name dom $ \_ -> addMetaVarInCtx set
           return $ ctxLam ctxMvArgs $ pi dom $ toAbs cod
@@ -1205,7 +1284,7 @@ matchEqual t err handler = do
     MetaVarHead mv _ -> do
       liftClosed $ do
         mvType <- getTypeOfMetaVar mv
-        mvT <- unrollPi mvType $ \ctxMvArgs _ -> do
+        mvT <- unrollPiTC mvType $ \ctxMvArgs _ -> do
           type_ <- addMetaVarInCtx set
           t1 <- addMetaVarInCtx type_
           t2 <- addMetaVarInCtx type_
@@ -1224,13 +1303,13 @@ matchEqual t err handler = do
 newProblemCheckEqual
     :: (IsTerm t, IsVar v, Typeable v, Typeable t)
     => Set.Set MetaVar -> Type t v -> Term t v -> Term t v
-    -> TC t v (ProblemId t v ())
+    -> TC t v (ProblemId ())
 newProblemCheckEqual mvs type_ x y = do
     newProblem mvs (CheckEqual type_ x y) $ checkEqual type_ x y
 
 waitOnProblemCheckEqual
     :: (IsTerm t, IsVar v, Typeable a, Typeable v, Typeable t)
-    => ProblemId t v' a -> Type t v -> Term t v -> Term t v -> TC t v (ProblemId t v())
+    => ProblemId a -> Type t v -> Term t v -> Term t v -> TC t v (ProblemId ())
 waitOnProblemCheckEqual pid type_ x y = do
     waitOnProblem pid (CheckEqual type_ x y) $ checkEqual type_ x y
 
@@ -1259,46 +1338,48 @@ checkError :: (IsVar v, IsTerm t) => CheckError t v -> TC t v a
 checkError err = do
     sig <- getSignature
     typeError $ renderError sig err
-  where
-    renderError sig (DataConTypeError synT type_) =
-      "DataCon type error " ++ render synT ++ " : " ++ renderTerm sig type_
-    renderError sig (NotEqualityType type_) =
-      "Expecting an equality type: " ++ renderTerm sig type_
-    renderError sig (LambdaTypeError synT type_) =
-      "Lambda type error\n" ++ render synT ++ "\n  :\n" ++ renderTerm sig type_
-    renderError sig (ExpectedFunctionType type_ mbArg) =
-      "Expected function type " ++ renderTerm sig type_ ++
-      (case mbArg of
-         Nothing  -> ""
-         Just arg -> "\nIn application of " ++ render arg)
-    renderError _ (CannotInferTypeOf synT) =
-      "Cannot infer type of " ++ render synT
-    renderError sig (TermsNotEqual t1 t2) =
-      renderTerm sig t1 ++ "\n  !=\n" ++ renderTerm sig t2
-    renderError sig (SpineNotEqual type_ es1 es2) =
-      render es1 ++ "\n  !=\n" ++ render es2 ++ "\n  :\n" ++ renderTerm sig type_
-    renderError sig (ExpectingRecordType type_) =
-      "Expecting record type: " ++ renderTerm sig type_
-    renderError sig (FreeVariableInEquatedTerm mv els rhs v) =
-      "Free variable `" ++ renderVar v ++ "' in term equated to metavariable application:\n" ++
-      renderTerm sig (metaVar mv els) ++ "\n" ++
-      "  =\n" ++
-      renderTerm sig rhs
-    renderError _ (PatternMatchOnRecord synPat tyCon) =
-      "Cannot have pattern " ++ render synPat ++ " for record type " ++ render tyCon
-    renderError sig (MismatchingPattern type_ synPat) =
-      render synPat ++ " does not match an element of type " ++ renderTerm sig type_
-    renderError sig (OccursCheckFailed mv t) =
-      "Attempt at recursive instantiation: " ++ render mv ++ " := " ++ renderTerm sig t
-    renderError _ (NameNotInScope name) =
-      "Name not in scope: " ++ render name
-    renderError _ (StuckTypeSignature name) =
-      "Got stuck on the type signature when checking clauses for function " ++ render name
-    renderError _ (ClausesAlreadyAdded fun) =
-      "Clauses already added for function " ++ render fun
 
+renderError :: (IsVar v, IsTerm t) => Sig.Signature t -> CheckError t v -> String
+renderError sig term0 = case term0 of
+  DataConTypeError synT type_ ->
+    "DataCon type error " ++ render synT ++ " : " ++ renderTerm type_
+  NotEqualityType type_ ->
+    "Expecting an equality type: " ++ renderTerm type_
+  LambdaTypeError synT type_ ->
+    "Lambda type error\n" ++ render synT ++ "\n  :\n" ++ renderTerm type_
+  ExpectedFunctionType type_ mbArg ->
+    "Expected function type " ++ renderTerm type_ ++
+    (case mbArg of
+       Nothing  -> ""
+       Just arg -> "\nIn application of " ++ render arg)
+  CannotInferTypeOf synT ->
+    "Cannot infer type of " ++ render synT
+  TermsNotEqual t1 t2 ->
+    renderTerm t1 ++ "\n  !=\n" ++ renderTerm t2
+  SpineNotEqual type_ es1 es2 ->
+    render es1 ++ "\n  !=\n" ++ render es2 ++ "\n  :\n" ++ renderTerm type_
+  ExpectingRecordType type_ ->
+    "Expecting record type: " ++ renderTerm type_
+  FreeVariableInEquatedTerm mv els rhs v ->
+    "Free variable `" ++ renderVar v ++ "' in term equated to metavariable application:\n" ++
+    renderTerm (metaVar mv els) ++ "\n" ++
+    "  =\n" ++
+    renderTerm rhs
+  PatternMatchOnRecord synPat tyCon ->
+    "Cannot have pattern " ++ render synPat ++ " for record type " ++ render tyCon
+  MismatchingPattern type_ synPat ->
+    render synPat ++ " does not match an element of type " ++ renderTerm type_
+  OccursCheckFailed mv t ->
+    "Attempt at recursive instantiation: " ++ render mv ++ " := " ++ renderTerm t
+  NameNotInScope name ->
+    "Name not in scope: " ++ render name
+  StuckTypeSignature name ->
+    "Got stuck on the type signature when checking clauses for function " ++ render name
+  ClausesAlreadyAdded fun ->
+    "Clauses already added for function " ++ render fun
+  where
     renderVar = render . varName
-    renderTerm sig = render . prettyTerm sig
+    renderTerm = render . prettyTerm sig
 
 prettyTerm :: (IsVar v, IsTerm t) => Sig.Signature t -> t v -> PP.Doc
 prettyTerm sig = PP.pretty . view . instantiateMetaVars sig
@@ -1338,7 +1419,7 @@ isApply (Apply v) = Just v
 isApply Proj{}    = Nothing
 
 -- Telescope & context utils
-------------------
+----------------------------
 
 telPi :: (IsVar v, IsTerm t) => Tel.IdTel (Type t) v -> Type t v
 telPi tel = Tel.unTel tel $ \ctx endType -> ctxPi ctx (Tel.unId endType)
@@ -1374,9 +1455,8 @@ ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx $ lam $ toAbs t
 data CheckProblem t v
     = CheckEqual (Type t v) (Term t v) (Term t v)
     | WaitForInfer A.Expr (Type t v)
-    | forall a v'. EscapingScope (ProblemId t v' a)
-    | MetaVarIfStuck (Term t v) (Type t v) (ProblemId t v (Term t v))
-    | forall a v'. WaitingOn (ProblemId t v' a)
+    | MetaVarIfStuck (Term t v) (Type t v) (ProblemId (Term t v))
+    | forall a. WaitingOn (ProblemId a)
     | CheckSpine (Term t v) [A.Elim] (Type t v)
     | EqualSpine (Term t v) [Elim t v] [Elim t v] (Type t v)
     | MatchTyCon Name (Type t v)
@@ -1387,7 +1467,6 @@ instance Nf CheckProblem where
   nf' sig desc = case desc of
     CheckEqual type_ x y -> CheckEqual (nf sig type_) (nf sig x) (nf sig y)
     WaitForInfer synT type_ -> WaitForInfer synT (nf sig type_)
-    EscapingScope pid -> EscapingScope pid
     MetaVarIfStuck mv type_ pid -> MetaVarIfStuck (nf sig mv) (nf sig type_) pid
     WaitingOn pid -> WaitingOn pid
     CheckSpine t elims type_ -> CheckSpine (nf sig t) elims (nf sig type_)
@@ -1405,8 +1484,6 @@ instance (IsVar v, IsTerm t) => PP.Pretty (CheckProblem t v)  where
       WaitForInfer synT type_ ->
         "Waiting for inference of" $$ PP.nest 2 (
           PP.pretty synT $$ PP.nest 2 ":" $$ prettyView type_)
-      EscapingScope pid ->
-        "Escaping scope" <+> PP.text (show pid)
       MetaVarIfStuck mvT type_ pid | App (Meta mv) _ <- view mvT ->
         "Waiting to equate placeholder" <+> PP.pretty mv <+> "of type" $$
         PP.nest 2 (prettyView type_) $$
