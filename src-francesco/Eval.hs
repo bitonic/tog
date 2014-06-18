@@ -177,3 +177,6 @@ instance Nf Definition where
   nf' sig (DataCon tyCon type_)          = DataCon tyCon $ nf' sig type_
   nf' sig (Projection field tyCon type_) = Projection field tyCon $ nf' sig type_
   nf' sig (Function type_ clauses)       = Function (nf sig type_) (mapInvertible (nf' sig) clauses)
+
+instance Nf TermView where
+  nf' sig = view . nf sig . unview

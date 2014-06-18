@@ -408,12 +408,11 @@ addMetaVarInCtx type_ = do
 metaAssign
     :: (IsVar v, IsTerm t)
     => Type t v -> MetaVar -> [Elim (Term t) v] -> Term t v -> StuckTC t v ()
-metaAssign type_ mv elims t = do
-  -- sig <- getSignature
-  -- ctx0 <- askContext
-  -- liftClosed $ etaExpandVars sig ctx0 elims0 (Tel.Prod2 type0 t0) $ \ctx elims (Tel.Prod2 type_ t) ->
-  --   localContext (\_ -> ctx) $ do
-      sig <- getSignature
+metaAssign type0 mv elims0 t0 = do
+  sig <- getSignature
+  ctx0 <- askContext
+  liftClosed $ etaExpandVars sig ctx0 elims0 (Tel.Prod2 type0 t0) $ \ctx elims (Tel.Prod2 type_ t) ->
+    localContext (\_ -> ctx) $ do
       let vsOrMvs = case checkPatternCondition sig elims of
             TTOK vs        -> Right vs
             TTMetaVars mvs -> Left $ Set.insert mv mvs
@@ -448,83 +447,84 @@ metaAssign type_ mv elims t = do
             TTFail v ->
               checkError $ FreeVariableInEquatedTerm mv elims t v
 
--- data EtaExpandVars t f v = EtaExpandVars [Elim f v] (t f v)
+data EtaExpandVars t f v = EtaExpandVars [Elim f v] (t f v)
 
--- instance (Bound t) => Bound (EtaExpandVars t) where
---   EtaExpandVars elims t >>>= f = EtaExpandVars (map (>>>= f) elims) (t >>>= f)
+instance (Bound t) => Bound (EtaExpandVars t) where
+  EtaExpandVars elims t >>>= f = EtaExpandVars (map (>>>= f) elims) (t >>>= f)
 
--- etaExpandVars
---   :: (IsVar v, IsTerm f, Bound t)
---   => Sig.Signature f
---   -> Ctx.ClosedCtx f v
---   -> [Elim f v]
---   -> t f v
---   -> (forall v'. (IsVar v') => Ctx.ClosedCtx f v' -> [Elim f v'] -> t f v' -> a)
---   -> a
--- etaExpandVars sig ctx0 elims t ret =
---   case collectProjectedVar sig elims of
---     Nothing ->
---       ret ctx0 elims t
---     Just (v, tyCon) ->
---       splitContext ctx0 v (EtaExpandVars elims t) $ \ctx1 type_ tel ->
---         let tel' = etaExpandVar sig tyCon type_ tel
---         in Tel.unTel tel' $ \ctx2 (EtaExpandVars elims' t') ->
---            etaExpandVars sig (ctx1 Ctx.++ ctx2) elims' t' ret
+etaExpandVars
+  :: (IsVar v, IsTerm f, Bound t)
+  => Sig.Signature f
+  -> Ctx.ClosedCtx f v
+  -> [Elim f v]
+  -> t f v
+  -> (forall v'. (IsVar v') => Ctx.ClosedCtx f v' -> [Elim f v'] -> t f v' -> a)
+  -> a
+etaExpandVars sig ctx0 elims t ret =
+  case collectProjectedVar sig elims of
+    Nothing ->
+      ret ctx0 elims t
+    Just (v, tyCon) ->
+      splitContext ctx0 v (EtaExpandVars elims t) $ \ctx1 type_ tel ->
+        let tel' = etaExpandVar sig tyCon type_ tel
+        in Tel.unTel tel' $ \ctx2 (EtaExpandVars elims' t') ->
+           etaExpandVars sig (ctx1 Ctx.++ ctx2) elims' t' ret
 
--- -- | Expands a record-typed variable ranging over the given 'Tel.Tel',
--- -- returning a new telescope ranging over all the fields of the record
--- -- type and the old telescope with the variable substituted with a
--- -- constructed record.
--- etaExpandVar
---   :: (IsVar v, IsTerm f, Bound t)
---   => Sig.Signature f
---   -> Name
---   -- ^ The type constructor of the record type.
---   -> Type f v
---   -- ^ The type of the variable we're expanding.
---   -> Tel.Tel t f (TermVar v)
---   -> Tel.Tel t f v
--- etaExpandVar sig tyCon type_ tel =
---   let Constant (Record dataCon projs) _ = Sig.getDefinition sig tyCon
---       DataCon _ dataConType = Sig.getDefinition sig dataCon
---       App (Def _) tyConPars0 = whnfView sig type_
---       Just tyConPars = mapM isApply tyConPars0
---       appliedDataConType = Tel.substs (vacuous dataConType) tyConPars
---       Right tel'' = unrollPiWithNames sig appliedDataConType (map fst projs) $ \dataConPars _ ->
---         let tel' = tel >>>= \v -> case v of
---                      B _  -> con dataCon $ map var $ ctxVars dataConPars
---                      F v' -> var $ Ctx.weaken dataConPars v'
---         in dataConPars Tel.++ tel'
---   in tel''
+-- | Expands a record-typed variable ranging over the given 'Tel.Tel',
+-- returning a new telescope ranging over all the fields of the record
+-- type and the old telescope with the variable substituted with a
+-- constructed record.
+etaExpandVar
+  :: (IsVar v, IsTerm f, Bound t)
+  => Sig.Signature f
+  -> Name
+  -- ^ The type constructor of the record type.
+  -> Type f v
+  -- ^ The type of the variable we're expanding.
+  -> Tel.Tel t f (TermVar v)
+  -> Tel.Tel t f v
+etaExpandVar sig tyCon type_ tel =
+  let Constant (Record dataCon projs) _ = Sig.getDefinition sig tyCon
+      DataCon _ dataConType = Sig.getDefinition sig dataCon
+      App (Def tyCon') tyConPars0 = whnfView sig type_
+      Just tyConPars = trace ("==== " ++ show tyCon ++ " " ++ show tyCon' ++ " " ++ render (whnfView sig type_)) $ mapM isApply tyConPars0
+      -- Just tyConPars = mapM isApply tyConPars0
+      appliedDataConType = Tel.substs (vacuous dataConType) tyConPars
+      Right tel'' = unrollPiWithNames sig appliedDataConType (map fst projs) $ \dataConPars _ ->
+        let tel' = tel >>>= \v -> case v of
+                     B _  -> con dataCon $ map var $ ctxVars dataConPars
+                     F v' -> var $ Ctx.weaken dataConPars v'
+        in dataConPars Tel.++ tel'
+  in tel''
 
--- -- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
--- -- variable.
--- collectProjectedVar
---   :: (IsVar v, IsTerm t) => Sig.Signature t -> [Elim t v] -> Maybe (v, Name)
--- collectProjectedVar sig elims = do
---   (v, projName) <- msum $ flip map elims $ \elim -> do
---     Apply t <- return elim
---     App (Var v) vElims <- return $ whnfView sig t
---     projName : _ <- forM vElims $ \vElim -> do
---       Proj projName _ <- return vElim
---       return projName
---     return (v, projName)
---   let Projection _ tyCon _ = Sig.getDefinition sig projName
---   return (v, tyCon)
+-- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
+-- variable.
+collectProjectedVar
+  :: (IsVar v, IsTerm t) => Sig.Signature t -> [Elim t v] -> Maybe (v, Name)
+collectProjectedVar sig elims = do
+  (v, projName) <- msum $ flip map elims $ \elim -> do
+    Apply t <- return elim
+    App (Var v) vElims <- return $ whnfView sig t
+    projName : _ <- forM vElims $ \vElim -> do
+      Proj projName _ <- return vElim
+      return projName
+    return (v, projName)
+  let Projection _ tyCon _ = Sig.getDefinition sig projName
+  return (v, tyCon)
 
--- splitContext
---   :: forall t f v0 a.
---      Ctx.ClosedCtx f v0
---   -> v0
---   -> t f v0
---   -> (forall v'. (IsVar v') => Ctx.ClosedCtx f v' -> Type f v' -> Tel.Tel t f (TermVar v') -> a)
---   -> a
--- splitContext ctx0 v0 t ret = go ctx0 v0 (Tel.Empty t)
---   where
---     go :: Ctx.ClosedCtx f v -> v -> Tel.Tel t f v -> a
---     go Ctx.Empty                 v     _   = absurd v
---     go (Ctx.Snoc ctx (_, type_)) (B _) tel = ret ctx type_ tel
---     go (Ctx.Snoc ctx type_)      (F v) tel = go ctx v (Tel.Cons type_ tel)
+splitContext
+  :: forall t f v0 a.
+     Ctx.ClosedCtx f v0
+  -> v0
+  -> t f v0
+  -> (forall v'. (IsVar v') => Ctx.ClosedCtx f v' -> Type f v' -> Tel.Tel t f (TermVar v') -> a)
+  -> a
+splitContext ctx0 v0 t ret = go ctx0 v0 (Tel.Empty t)
+  where
+    go :: Ctx.ClosedCtx f v -> v -> Tel.Tel t f v -> a
+    go Ctx.Empty                 v     _   = absurd v
+    go (Ctx.Snoc ctx (_, type_)) (B _) tel = ret ctx type_ tel
+    go (Ctx.Snoc ctx type_)      (F v) tel = go ctx v (Tel.Cons type_ tel)
 
 -- | The term must be in normal form.
 pruneTerm
@@ -1449,7 +1449,7 @@ telPi tel = Tel.unTel tel $ \ctx endType -> ctxPi ctx (Tel.unId endType)
 
 -- | Collects all the variables in the 'Ctx.Ctx'.
 ctxVars :: IsTerm t => Ctx.Ctx v0 (Type t) v -> [v]
-ctxVars = go
+ctxVars = reverse . go
   where
     go :: IsTerm t => Ctx.Ctx v0 (Type t) v -> [v]
     go Ctx.Empty                = []
@@ -1458,7 +1458,7 @@ ctxVars = go
 -- | Applies a 'Term' to all the variables in the context.  The
 -- variables are applied from left to right.
 ctxApp :: (IsVar v, IsTerm t) => Term t v -> Ctx.Ctx v0 (Type t) v -> Term t v
-ctxApp t ctx0 = eliminate t $ map (Apply . var) $ reverse $ ctxVars ctx0
+ctxApp t ctx0 = eliminate t $ map (Apply . var) $ ctxVars ctx0
 
 -- | Creates a 'Pi' type containing all the types in the 'Ctx' and
 -- terminating with the provided 't'.
