@@ -29,7 +29,6 @@ module Types.Monad.Base
     , StuckTC
     , newProblemClosed
     , bindProblemClosed
-    , waitOnProblemClosed
     , solveProblems
     ) where
 
@@ -111,6 +110,7 @@ data TCState t = TCState
     { tsSignature        :: !(Sig.Signature t)
     , tsUnsolvedProblems :: !(Map.Map ProblemIdInt (Problem t))
     , tsSolvedProblems   :: !(Map.Map ProblemIdInt ProblemSolution)
+    , tsProblemCount     :: !Int
     }
 
 -- | An empty state.
@@ -119,6 +119,7 @@ initTCState = TCState
   { tsSignature        = Sig.empty
   , tsUnsolvedProblems = Map.empty
   , tsSolvedProblems   = Map.empty
+  , tsProblemCount     = 0
   }
 
 data TCErr
@@ -217,13 +218,11 @@ data Problem t = forall a b v p. (Typeable a, Typeable b, IsVar v, Nf p, PP.Pret
 
 data ProblemState
     = BoundToMetaVars  !(Set.Set MetaVar)
-    | WaitingOnProblem !ProblemIdInt
     | BoundToProblem   !ProblemIdInt
     deriving (Show)
 
 instance PP.Pretty ProblemState where
   pretty (BoundToMetaVars mvs)  = "BoundToMetaVars" <+> PP.pretty (Set.toList mvs)
-  pretty (WaitingOnProblem pid) = "WaitingOnProblem" <+> PP.pretty pid
   pretty (BoundToProblem pid)   = "BoundToProblem" <+> PP.pretty pid
 
 -- | As remarked, we store the problems solutions dynamically to have
@@ -253,11 +252,8 @@ addProblem pid prob = do
 
 addFreshProblem :: Problem t -> TC t v (ProblemId a)
 addFreshProblem prob = do
-  ts <- get
-  let probs = tsUnsolvedProblems ts
-  let pid = case Map.maxViewWithKey probs of
-              Nothing             -> 0
-              Just ((pid0, _), _) -> pid0 + 1
+  pid <- modify $ \ts ->
+         let count = tsProblemCount ts in (ts{tsProblemCount = count + 1}, count)
   addProblem pid prob
 
 -- | Problem description.  We have a 'Nf' constraint on it so that when
@@ -286,7 +282,8 @@ newProblemClosed mvs ctx desc m = do
 -- | @bindProblem pid desc (\x -> m)@ binds computation @m@ to problem
 -- @pid@. When @pid@ is solved with result @t@, @m t@ will be executed.
 bindProblemClosed
-    :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
+    :: forall a b t v p.
+       (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
     => ProblemId a
     -> Ctx.ClosedCtx t v
     -> ProblemDescription p t v
@@ -300,86 +297,6 @@ bindProblemClosed (ProblemId pid) ctx desc f = do
       , pDescription = desc
       }
     addFreshProblem prob
-
--- | @waitOnProblem pid desc m@ waits until @pid@ is solved before
--- executing @m@.  The difference between 'waitOnProblem' and
--- 'bindProblem' is that with 'waitOnProblem' @m@ does not need to be in
--- the same context as @pid@, as reflected in the types of the
--- variables.
-waitOnProblemClosed
-    :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
-    => ProblemId a
-    -> Ctx.ClosedCtx t v
-    -> ProblemDescription p t v
-    -> StuckTC t v b
-    -> ClosedTC t (ProblemId b)
-waitOnProblemClosed (ProblemId pid) ctx desc m = do
-    prob <- saveSrcLoc $ Problem
-      { pContext     = ctx
-      , pProblem     = \() -> m
-      , pState       = WaitingOnProblem pid
-      , pDescription = desc
-      }
-    addFreshProblem prob
-
--- -- | Store a new problem dependend on a set of 'MetaVar's.  When one of
--- -- them will be instantiated, the computation can be executed again.
--- newProblem
---     :: (Typeable a, IsVar v, IsTerm t, Nf p, PP.Pretty (p t v))
---     => Set.Set MetaVar
---     -> ProblemDescription p t v
---     -> StuckTC t v a
---     -> TC t v (ProblemId t v a)
--- newProblem mvs _ _ | Set.null mvs = do
---     error "Types.Monad.Base.newProblem: empty set of metas."
--- newProblem mvs desc m = do
---     ctx <- askContext
---     prob <- saveSrcLoc $ Problem
---       { pContext     = ctx
---       , pProblem     = \() -> m
---       , pState       = BoundToMetaVars mvs
---       , pDescription = desc
---       }
---     addFreshProblem prob
-
--- -- | @bindProblem pid desc (\x -> m)@ binds computation @m@ to problem
--- -- @pid@. When @pid@ is solved with result @t@, @m t@ will be executed.
--- bindProblem
---     :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
---     => ProblemId t v a
---     -> ProblemDescription p t v
---     -> (a -> StuckTC t v b)
---     -> TC t v (ProblemId t v b)
--- bindProblem (ProblemId pid) desc f = do
---     ctx <- askContext
---     prob <- saveSrcLoc $ Problem
---       { pContext     = ctx
---       , pProblem     = f
---       , pState       = BoundToProblem pid
---       , pDescription = desc
---       }
---     addFreshProblem prob
-
--- -- | @waitOnProblem pid desc m@ waits until @pid@ is solved before
--- -- executing @m@.  The difference between 'waitOnProblem' and
--- -- 'bindProblem' is that with 'waitOnProblem' @m@ does not need to be in
--- -- the same context as @pid@, as reflected in the types of the
--- -- variables.
--- waitOnProblem
---     :: (Typeable a, Typeable b, IsTerm t, IsVar v', Nf p, PP.Pretty (p t v'))
---     => ProblemId t v a
---     -> ProblemDescription p t v'
---     -> StuckTC t v' b
---     -> TC t v' (ProblemId t v' b)
--- waitOnProblem (ProblemId pid) desc m = do
---     ctx <- askContext
---     prob <- saveSrcLoc $ Problem
---       { pContext     = ctx
---       , pProblem     = \() -> m
---       , pState       = WaitingOnProblem pid
---       , pDescription = desc
---       }
---     addFreshProblem prob
 
 -- | Description for problems that after execution are stuck on another
 -- problem -- we preserve the original description and we add the
@@ -420,16 +337,14 @@ solveProblems = do
       -- available.
       BoundToProblem boundTo -> do
         Map.lookup boundTo . tsSolvedProblems <$> get
-      -- If we're just waiting on it, do the same but return ().
-      WaitingOnProblem waitingOn -> do
-        (problemSolution () <$) . Map.lookup waitingOn . tsSolvedProblems <$> get
     case mbSolution of
       Nothing       -> return False
       Just solution -> True <$ solveProblem pid desc ctx prob solution
   progress <$ when progress (void solveProblems)
   where
     solveProblem
-      :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
+      :: forall a b t v p.
+         (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
       => ProblemIdInt
       -- ^ pid of the problem we're solving.
       -> ProblemDescription p t v
@@ -458,8 +373,12 @@ solveProblems = do
           StuckOn (ProblemId boundTo) -> do
             -- If the problem is stuck, re-add it as a dependency of
             -- what it is stuck on.
-            void $ addProblem pid $ Problem ctx m (BoundToProblem boundTo) $
-              StuckProblemDescription boundTo desc
+            let m' :: b -> StuckTC t v b
+                m' = return . NotStuck
+            _ :: ProblemId b <-
+              addProblem pid $ Problem ctx m' (BoundToProblem boundTo) $
+                StuckProblemDescription boundTo desc
+            return ()
 
 -- Utils
 ------------------------------------------------------------------------

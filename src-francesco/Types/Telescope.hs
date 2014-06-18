@@ -143,12 +143,13 @@ proxyTel :: Ctx.Ctx v0 f v -> ProxyTel f v0
 proxyTel ctx = tel ctx Proxy
 
 unTel :: forall t f v0 a.
-         Tel t f v0
-      -> (forall v. Ctx.Ctx v0 f v -> t f v -> a)
+         (IsVar v0)
+      => Tel t f v0
+      -> (forall v. (IsVar v) => Ctx.Ctx v0 f v -> t f v -> a)
       -> a
 unTel tel0 f = go tel0 Ctx.Empty
   where
-    go :: Tel t f v -> Ctx.Ctx v0 f v -> a
+    go :: (IsVar v) => Tel t f v -> Ctx.Ctx v0 f v -> a
     go (Empty t)         ctx = f ctx t
     go (Cons type_ tel') ctx = go tel' (Ctx.Snoc ctx type_)
 

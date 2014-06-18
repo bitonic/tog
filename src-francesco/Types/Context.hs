@@ -28,12 +28,12 @@ import           Types.Term                       hiding (weaken)
 -- the previous ones.
 data Ctx v0 t v where
     Empty :: Ctx v0 t v0
-    Snoc  :: Ctx v0 t v -> (Name, t v) -> Ctx v0 t (TermVar v)
+    Snoc  :: (IsVar v) => Ctx v0 t v -> (Name, t v) -> Ctx v0 t (TermVar v)
     deriving (Typeable)
 
 type ClosedCtx = Ctx Void
 
-singleton :: Name -> t v0 -> Ctx v0 t (TermVar v0)
+singleton :: (IsVar v0) => Name -> t v0 -> Ctx v0 t (TermVar v0)
 singleton name t = Snoc Empty (name, t)
 
 lookupName :: Functor t => Name -> Ctx v0 t v -> Maybe (v, t v)

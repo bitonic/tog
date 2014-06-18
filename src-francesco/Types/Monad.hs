@@ -44,8 +44,6 @@ module Types.Monad
     , newProblemClosed
     , bindProblem
     , bindProblemClosed
-    , waitOnProblem
-    , waitOnProblemClosed
     , solveProblems
     , solveProblems_
     ) where
@@ -117,7 +115,7 @@ liftClosed :: ClosedTC t a -> TC t v a
 liftClosed = localContext $ const Ctx.Empty
 
 extendContext
-    :: (IsTerm t)
+    :: (IsVar v, IsTerm t)
     => Name -> Type t v -> (TermVar v -> TC t (TermVar v) a)
     -> TC t v a
 extendContext n type_ m =
@@ -163,17 +161,6 @@ bindProblem
 bindProblem pid desc f = do
   ctx <- askContext
   liftClosed $ bindProblemClosed pid ctx desc f
-
-waitOnProblem
-  :: (Typeable a, Typeable b, IsTerm t, IsVar v, Nf p, PP.Pretty (p t v))
-  => ProblemId a
-  -> ProblemDescription p t v
-  -> StuckTC t v b
-  -> TC t v (ProblemId b)
-waitOnProblem pid desc m = do
-  ctx <- askContext
-  liftClosed $ waitOnProblemClosed pid ctx desc m
-
 
 solveProblems_ :: (IsTerm t) => ClosedTC t ()
 solveProblems_ = void solveProblems
