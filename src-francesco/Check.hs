@@ -342,8 +342,13 @@ checkEqualSpine type_ h (elim1 : elims1) (elim2 : elims2) = do
       typeView <- whnfViewTC type_
       case typeView of
         Pi domain codomain -> do
-          bindStuckTC (checkEqual domain arg1 arg2) (\_ -> desc) $ \() ->
-            checkEqualSpine (instantiate codomain arg1) (eliminate h [Apply arg1]) elims1 elims2
+          -- If you're stuck on the domain, don't give up, and put a
+          -- metavariable instead.
+          arg1' <-
+            metaVarIfStuck domain $
+              bindStuckTC (checkEqual domain arg1 arg2) (\_ -> desc) $ \() ->
+                notStuck arg1
+          checkEqualSpine (instantiate codomain arg1') (eliminate h [Apply arg1']) elims1 elims2
         _ ->
           error $ "impossible.checkEqualSpine: Expected function type " ++ render typeView
     (Proj proj projIx, Proj proj' projIx')
