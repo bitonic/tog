@@ -297,15 +297,22 @@ checkEqualBlockedOn type_ mvs fun1 elims1 t2 = do
       error "impossible.checkEqualBlockedOn: got too few patterns."
 
     matchPat :: Name -> [Pattern] -> Elim t v -> TC t v ()
-    matchPat dataCon pats (Apply t) | App (Meta mv) mvArgs <- view t = do
-      mvT <- liftClosed $ instantiateDataCon mv dataCon
-      matchPat dataCon pats $ Apply $ eliminate (vacuous mvT) mvArgs
-    matchPat dataCon pats (Apply t)
-      | Con dataCon' dataConArgs <- view t, dataCon == dataCon' = do
-        matchPats pats (map Apply dataConArgs)
+    matchPat dataCon pats (Apply t) = do
+      tView <- whnfViewTC t
+      case tView of
+        App (Meta mv) mvArgs -> do
+          mvT <- liftClosed $ instantiateDataCon mv dataCon
+          matchPat dataCon pats $ Apply $ eliminate (vacuous mvT) mvArgs
+        Con dataCon' dataConArgs | dataCon == dataCon' ->
+          matchPats pats (map Apply dataConArgs)
+        _ ->
+          -- This can't happen -- we know that the execution was
+          -- blocked, or in other words it was impeded only by
+          -- metavariables.
+          error $ "impossible.matchPat: bad elim:\n" ++
+                  show (ConP dataCon pats) ++ "\n" ++ render (Apply t)
     matchPat dataCon pats elim = do
-      -- This can't happen -- we know that the execution was blocked, or
-      -- in other words it was impeded only by metavariables.
+      -- Same as above.
       error $ "impossible.matchPat: bad elim:\n" ++
               show (ConP dataCon pats) ++ "\n" ++ render elim
 
