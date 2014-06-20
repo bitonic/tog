@@ -1,4 +1,4 @@
-module CurryMeta where
+module EtaExpandVarsAndMeta where
 
 open import Prelude
 
@@ -15,8 +15,8 @@ data Unit : Set
 data Unit where
   tt : Unit
 
-X : Pair Unit Unit -> Unit
+X : Unit -> Pair Unit Unit
 X x = _
 
-test : (x y : Unit) -> X (pair x y) == x
-test x y = refl
+test : (x : Pair Unit Unit) -> X (fst x) == pair (fst x) (fst x)
+test x = refl

@@ -298,21 +298,7 @@ checkEqualBlockedOn type_ mvs fun1 elims1 t2 = do
 
     matchPat :: Name -> [Pattern] -> Elim t v -> TC t v ()
     matchPat dataCon pats (Apply t) | App (Meta mv) mvArgs <- view t = do
-      mvT <- liftClosed $ do
-        mvType <- getTypeOfMetaVar mv
-        mvT <- unrollPiTC mvType $ \ctxMvArgs endType' -> do
-          DataCon tyCon dataConTypeTel <- getDefinition dataCon
-          -- We know that the metavariable must have the right type (we
-          -- have typechecked the arguments already).
-          App (Def tyCon') tyConArgs0 <- whnfViewTC endType'
-          Just tyConArgs <- return $ mapM isApply tyConArgs0
-          True <- return $ tyCon == tyCon'
-          let dataConType = Tel.substs (vacuous dataConTypeTel) tyConArgs
-          dataConArgsTel <- unrollPiTC dataConType $ \ctx -> return . Tel.idTel ctx
-          dataConArgs <- createMvsPars dataConArgsTel
-          return $ ctxLam ctxMvArgs $ con dataCon $ dataConArgs
-        instantiateMetaVar mv mvT
-        return mvT
+      mvT <- liftClosed $ instantiateDataCon mv dataCon
       matchPat dataCon pats $ Apply $ eliminate (vacuous mvT) mvArgs
     matchPat dataCon pats (Apply t)
       | Con dataCon' dataConArgs <- view t, dataCon == dataCon' = do
@@ -408,46 +394,64 @@ addMetaVarInCtx type_ = do
   return $ ctxApp (metaVar mv []) ctx
 
 metaAssign
-    :: (IsVar v, IsTerm t)
-    => Type t v -> MetaVar -> [Elim (Term t) v] -> Term t v -> StuckTC t v ()
+  :: (IsVar v, IsTerm t)
+  => Type t v -> MetaVar -> [Elim (Term t) v] -> Term t v -> StuckTC t v ()
 metaAssign type0 mv elims0 t0 = do
-  sig <- getSignature
-  ctx0 <- askContext
-  liftClosed $ etaExpandVars sig ctx0 elims0 (Tel.Prod2 type0 t0) $ \ctx elims (Tel.Prod2 type_ t) ->
-    localContext (\_ -> ctx) $ do
-      let invOrMvs = case invertMeta sig elims of
-            TTOK inv       -> Right inv
-            TTMetaVars mvs -> Left $ Set.insert mv mvs
-            -- TODO here we should also wait on metavars on the right that
-            -- could simplify the problem.
-            TTFail ()      -> Left $ Set.singleton mv
-      case invOrMvs of
-        Left mvs -> do
-          let t' = nf sig t
-          -- TODO should we really prune allowing all variables here?  Or
-          -- only the rigid ones?
-          let fvs = fvAll $ freeVars sig t'
-          pruned <- liftClosed $ prune fvs mv $ map (nf' sig) elims
-          if pruned
-            then checkEqual type_ (metaVar mv elims) t
-            else fmap StuckOn $
-                   newProblem mvs (CheckEqual type_ (metaVar mv elims) t) $
-                     checkEqual type_ (metaVar mv elims) t
-        Right inv -> do
-          -- TODO have `pruneTerm' return an evaluated term.
-          liftClosed $ pruneTerm (Set.fromList $ toList inv) t
-          sig' <- getSignature
-          case applyInvertMeta sig' inv (nf sig' t) of
-            TTOK t' -> do
-              let mvs = metaVars t'
-              when (mv `HS.member` mvs) $ checkError $ OccursCheckFailed mv $ vacuous t'
-              instantiateMetaVar mv t'
-              notStuck ()
-            TTMetaVars mvs ->
-              fmap StuckOn $
-                newProblemCheckEqual (Set.insert mv mvs) type_ (metaVar mv elims) t
-            TTFail v ->
-              checkError $ FreeVariableInEquatedTerm mv elims t v
+  -- Try to eta-expand the metavariable first.
+  mvType <- getTypeOfMetaVar mv
+  mbRecordDataCon <- liftClosed $ unrollPiTC mvType $ \_ mvEndType -> do
+    sig <- getSignature
+    return $ case whnfView sig mvEndType of
+      App (Def tyCon) _ | Constant (Record dataCon _) _ <- Sig.getDefinition sig tyCon ->
+        Just dataCon
+      _ ->
+        Nothing
+  -- If you can, eta-expand and restart the equality.  Otherwise, try to
+  -- assign.
+  case mbRecordDataCon of
+    Just dataCon -> do
+      mvT <- liftClosed $ instantiateDataCon mv dataCon
+      checkEqual type0 (eliminate (vacuous mvT) elims0) t0
+    Nothing -> do
+      sig <- getSignature
+      ctx0 <- askContext
+      liftClosed $
+        etaExpandVars sig ctx0 elims0 (Tel.Prod2 type0 t0) $ \ctx elims (Tel.Prod2 type_ t) ->
+          localContext (\_ -> ctx) $ do
+            let invOrMvs = case invertMeta sig elims of
+                  TTOK inv       -> Right inv
+                  TTMetaVars mvs -> Left $ Set.insert mv mvs
+                  -- TODO here we should also wait on metavars on the right that
+                  -- could simplify the problem.
+                  TTFail ()      -> Left $ Set.singleton mv
+            case invOrMvs of
+              Left mvs -> do
+                let t' = nf sig t
+                -- TODO should we really prune allowing all variables here?  Or
+                -- only the rigid ones?
+                let fvs = fvAll $ freeVars sig t'
+                pruned <- liftClosed $ prune fvs mv $ map (nf' sig) elims
+                if pruned
+                  then checkEqual type_ (metaVar mv elims) t
+                  else fmap StuckOn $
+                         newProblem mvs (CheckEqual type_ (metaVar mv elims) t) $
+                           checkEqual type_ (metaVar mv elims) t
+              Right inv -> do
+                -- TODO have `pruneTerm' return an evaluated term.
+                liftClosed $ pruneTerm (Set.fromList $ toList inv) t
+                sig' <- getSignature
+                case applyInvertMeta sig' inv (nf sig' t) of
+                  TTOK t' -> do
+                    let mvs = metaVars t'
+                    when (mv `HS.member` mvs) $
+                      checkError $ OccursCheckFailed mv $ vacuous t'
+                    instantiateMetaVar mv t'
+                    notStuck ()
+                  TTMetaVars mvs ->
+                    fmap StuckOn $
+                      newProblemCheckEqual (Set.insert mv mvs) type_ (metaVar mv elims) t
+                  TTFail v ->
+                    checkError $ FreeVariableInEquatedTerm mv elims t v
 
 -- Eta-expansion of arguments of metas
 --------------------------------------
@@ -1430,6 +1434,28 @@ matchEqual t err handler = do
         matchEqual t' err handler
     _ -> do
       NotStuck <$> checkError err
+
+instantiateDataCon
+  :: (IsTerm t)
+  => MetaVar
+  -> Name
+  -- ^ Name of the datacon
+  -> ClosedTC t (Closed (Term t))
+instantiateDataCon mv dataCon = do
+  mvType <- getTypeOfMetaVar mv
+  mvT <- unrollPiTC mvType $ \ctxMvArgs endType' -> do
+    DataCon tyCon dataConTypeTel <- getDefinition dataCon
+    -- We know that the metavariable must have the right type (we have
+    -- typechecked the arguments already).
+    App (Def tyCon') tyConArgs0 <- whnfViewTC endType'
+    Just tyConArgs <- return $ mapM isApply tyConArgs0
+    True <- return $ tyCon == tyCon'
+    let dataConType = Tel.substs (vacuous dataConTypeTel) tyConArgs
+    dataConArgsTel <- unrollPiTC dataConType $ \ctx -> return . Tel.idTel ctx
+    dataConArgs <- createMvsPars dataConArgsTel
+    return $ ctxLam ctxMvArgs $ con dataCon $ dataConArgs
+  instantiateMetaVar mv mvT
+  return mvT
 
 -- Problems shortcuts
 ---------------------
