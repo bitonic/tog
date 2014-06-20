@@ -4,11 +4,11 @@ module Check (checkProgram) where
 import           Prelude                          hiding (abs, pi)
 
 import           Data.Functor                     ((<$>), (<$))
-import           Data.Foldable                    (forM_)
+import           Data.Foldable                    (forM_, toList, Foldable)
 import qualified Data.HashSet                     as HS
 import           Control.Monad                    (when, void, guard, mzero, forM, msum)
-import           Data.List                        (nub)
-import           Data.Traversable                 (traverse, sequenceA)
+import           Data.List                        (sortBy, groupBy)
+import           Data.Traversable                 (traverse, sequenceA, Traversable)
 import           Prelude.Extras                   ((==#))
 import           Bound                            hiding (instantiate, abstract)
 import           Bound.Var                        (unvar)
@@ -20,6 +20,8 @@ import           Control.Applicative              (Applicative(pure, (<*>)))
 import           Control.Monad.Trans              (lift)
 import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT)
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
+import           Data.Function                    (on)
+import           Data.Ord                         (comparing)
 
 import           Syntax.Abstract                  (Name)
 import           Syntax.Abstract.Pretty           ()
@@ -413,13 +415,13 @@ metaAssign type0 mv elims0 t0 = do
   ctx0 <- askContext
   liftClosed $ etaExpandVars sig ctx0 elims0 (Tel.Prod2 type0 t0) $ \ctx elims (Tel.Prod2 type_ t) ->
     localContext (\_ -> ctx) $ do
-      let vsOrMvs = case checkPatternCondition sig elims of
-            TTOK vs        -> Right vs
+      let invOrMvs = case invertMeta sig elims of
+            TTOK inv       -> Right inv
             TTMetaVars mvs -> Left $ Set.insert mv mvs
             -- TODO here we should also wait on metavars on the right that
             -- could simplify the problem.
             TTFail ()      -> Left $ Set.singleton mv
-      case vsOrMvs of
+      case invOrMvs of
         Left mvs -> do
           let t' = nf sig t
           -- TODO should we really prune allowing all variables here?  Or
@@ -431,11 +433,11 @@ metaAssign type0 mv elims0 t0 = do
             else fmap StuckOn $
                    newProblem mvs (CheckEqual type_ (metaVar mv elims) t) $
                      checkEqual type_ (metaVar mv elims) t
-        Right vs -> do
+        Right inv -> do
           -- TODO have `pruneTerm' return an evaluated term.
-          liftClosed $ pruneTerm (Set.fromList vs) t
-          res <- closeTerm $ lambdaAbstract vs $ nf sig t
-          case res of
+          liftClosed $ pruneTerm (Set.fromList $ toList inv) t
+          sig' <- getSignature
+          case applyInvertMeta sig' inv (nf sig' t) of
             TTOK t' -> do
               let mvs = metaVars t'
               when (mv `HS.member` mvs) $ checkError $ OccursCheckFailed mv $ vacuous t'
@@ -446,6 +448,9 @@ metaAssign type0 mv elims0 t0 = do
                 newProblemCheckEqual (Set.insert mv mvs) type_ (metaVar mv elims) t
             TTFail v ->
               checkError $ FreeVariableInEquatedTerm mv elims t v
+
+-- Eta-expansion of arguments of metas
+--------------------------------------
 
 data EtaExpandVars t f v = EtaExpandVars [Elim f v] (t f v)
 
@@ -460,8 +465,9 @@ etaExpandVars
   -> t f v
   -> (forall v'. (IsVar v') => Ctx.ClosedCtx f v' -> [Elim f v'] -> t f v' -> a)
   -> a
-etaExpandVars sig ctx0 elims t ret =
-  case collectProjectedVar sig elims of
+etaExpandVars sig ctx0 elims0 t ret =
+  let elims = map (etaContractElim sig . nf' sig) elims0
+  in case collectProjectedVar sig elims of
     Nothing ->
       ret ctx0 elims t
     Just (v, tyCon) ->
@@ -486,9 +492,8 @@ etaExpandVar
 etaExpandVar sig tyCon type_ tel =
   let Constant (Record dataCon projs) _ = Sig.getDefinition sig tyCon
       DataCon _ dataConType = Sig.getDefinition sig dataCon
-      App (Def tyCon') tyConPars0 = whnfView sig type_
-      Just tyConPars = trace ("==== " ++ show tyCon ++ " " ++ show tyCon' ++ " " ++ render (whnfView sig type_)) $ mapM isApply tyConPars0
-      -- Just tyConPars = mapM isApply tyConPars0
+      App (Def _) tyConPars0 = whnfView sig type_
+      Just tyConPars = mapM isApply tyConPars0
       appliedDataConType = Tel.substs (vacuous dataConType) tyConPars
       Right tel'' = unrollPiWithNames sig appliedDataConType (map fst projs) $ \dataConPars _ ->
         let tel' = tel >>>= \v -> case v of
@@ -525,6 +530,43 @@ splitContext ctx0 v0 t ret = go ctx0 v0 (Tel.Empty t)
     go Ctx.Empty                 v     _   = absurd v
     go (Ctx.Snoc ctx (_, type_)) (B _) tel = ret ctx type_ tel
     go (Ctx.Snoc ctx type_)      (F v) tel = go ctx v (Tel.Cons type_ tel)
+
+-- Eta-contraction of terms
+---------------------------
+
+etaContractElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Elim t v -> Elim t v
+etaContractElim sig (Apply t)  = Apply $ etaContract sig t
+etaContractElim _   (Proj n f) = Proj n f
+
+etaContract :: (IsVar v, IsTerm t) => Sig.Signature t -> t v -> t v
+etaContract sig t0 = case whnfView sig t0 of
+  -- TODO it should be possible to do it also for constructors
+  Lam body
+    | App h elims@(_:_) <- whnfView sig (etaContract sig (fromAbs body))
+    , Apply t <- last elims
+    , App (Var (B _)) [] <- whnfView sig t
+    , Just t' <- traverse (unvar (const Nothing) Just) (app h (init elims)) ->
+      t'
+  Con dataCon args
+    | DataCon tyCon _ <- Sig.getDefinition sig dataCon
+    , Constant (Record _ fields) _ <- Sig.getDefinition sig tyCon
+    , length args == length fields
+    , Just (t : ts) <- sequence (zipWith isRightProjection fields args)
+    , all (t ==#) ts ->
+      t
+  _ ->
+    t0
+  where
+    isRightProjection (n, f) t
+      | App h elims@(_ : _) <- whnfView sig (etaContract sig t)
+      , Proj n' f' <- last elims
+      , n == n', f == f' =
+        Just $ nf sig $ app h (init elims)
+    isRightProjection _ _ =
+      Nothing
+
+-- Pruning
+----------
 
 -- | The term must be in normal form.
 pruneTerm
@@ -639,30 +681,93 @@ shouldKill sig vs t = do
     _ ->
       return $ not (fvRigid (freeVars sig t) `Set.isSubsetOf` vs)
 
--- | 'TTMetaVars' if the pattern condition check is blocked on a some
+data InvertMeta t v v0
+  = IMSubst [(v0, t v)] [v]
+  -- A substitution from variables of the term on the left of the
+  -- equation to variables inside the metavar.
+  --
+  -- We also keep an ordered list of variables to abstract the body of
+  -- the metavariable.
+  | IMArgument (InvertMeta t (TermVar v) v0)
+  deriving (Functor, Foldable, Traversable)
+
+-- | Tries to invert a metavariable given its parameters (eliminators),
+-- providing a substitution for the term on the right if it suceeds.
+-- Doing so amounts to check if the pattern condition is respected for
+-- the arguments, although we employ various trick to get around it when
+-- the terms are not variables.
+--
+-- 'TTMetaVars' if the pattern condition check is blocked on a some
 -- 'MetaVar's.  The set is empty if the pattern condition is not
 -- respected and no 'MetaVar' can change that.
 --
--- 'TTOK' if the pattern condition is respected, with the distinct
--- variables.
---
 -- 'TTFail' if the pattern condition fails.
-checkPatternCondition
-  :: (IsVar v, IsTerm t)
-  => Sig.Signature t -> [Elim (Term t) v] -> TermTraverse () [v]
-checkPatternCondition sig elims0 =
-  case traverse checkElim elims0 of
-    TTOK vs | vs /= nub vs -> TTFail ()
-    res                    -> res
+invertMeta
+  :: forall v0 t.
+     (IsVar v0, IsTerm t)
+  => Sig.Signature t
+  -> [Elim (Term t) v0]
+  -> TermTraverse () (InvertMeta t v0 v0)
+invertMeta sig elims0 = case mapM isApply elims0 of
+    Just args0 -> go args0 [] (length args0)
+    Nothing    -> TTFail ()     -- TODO eta-expand metavars to eliminate projections.
   where
-    checkElim (Apply t) =
-      case whnf sig t of
-        NotBlocked t' | App (Var v) [] <- view t' -> pure v
-        MetaVarHead mv _                          -> TTMetaVars (Set.singleton mv)
-        BlockedOn mvs _ _                         -> TTMetaVars mvs
-        _                                         -> TTFail ()
-    checkElim (Proj _ _) =
-      TTFail ()
+    go :: [Term t v0] -> [v] -> Int -> TermTraverse () (InvertMeta t v v0)
+    go args vs 0 =
+      let vs' = reverse vs
+      in case checkArgs (zip args (map var vs')) of
+           TTFail ()      -> TTFail ()
+           TTMetaVars mvs -> TTMetaVars mvs
+           TTOK sub       -> IMSubst <$> checkLinearity sub <*> pure vs'
+    go args vs n =
+      IMArgument <$> go args (boundTermVar "_" : map F vs) (n - 1)
+
+    checkArgs :: [(Term t v0, Term t v)] -> TermTraverse () [(v0, Term t v)]
+    checkArgs xs = concat <$> traverse (uncurry checkArg) xs
+
+    checkArg :: Term t v0 -> Term t v -> TermTraverse () [(v0, Term t v)]
+    checkArg arg v = case whnf sig arg of
+      NotBlocked t
+        | App (Var v0) [] <- view t ->
+          pure [(v0, v)]
+      NotBlocked t
+        | Con dataCon recArgs <- view t
+        , DataCon tyCon _ <- Sig.getDefinition sig dataCon
+        , Constant (Record _ fields) _ <- Sig.getDefinition sig tyCon ->
+          checkArgs [ (recArg, eliminate v [Proj n f])
+                    | (recArg, (n, f)) <- zip recArgs fields
+                    ]
+      NotBlocked _ ->
+        TTFail ()
+      MetaVarHead mv _ ->
+        TTMetaVars $ Set.singleton mv
+      BlockedOn mvs _ _ ->
+        TTMetaVars mvs
+
+    checkLinearity :: [(v0, Term t v)] -> TermTraverse () [(v0, Term t v)]
+    checkLinearity sub =
+      traverse makeLinear $ groupBy ((==) `on` fst) $ sortBy (comparing fst) sub
+
+    makeLinear :: [(v0, Term t v)] -> TermTraverse () (v0, Term t v)
+    makeLinear []      = error "impossible.checkPatternCondition"
+    makeLinear [x]     = pure x
+    -- TODO Consider making this work for singleton types.
+    makeLinear (_ : _) = TTFail ()
+
+applyInvertMeta
+  :: forall t v0.
+     (IsVar v0, IsTerm t)
+  => Sig.Signature t -> InvertMeta t v0 v0 -> Term t v0
+  -> TermTraverse v0 (Closed (Term t))
+applyInvertMeta sig invMeta = go invMeta
+  where
+    go :: (IsVar v)
+       => InvertMeta t v v0 -> Term t v0 -> TermTraverse v0 (Closed (Term t))
+    go (IMSubst    sub vs) t = fmap kill . lambdaAbstract vs <$>
+                               applyInvertMetaSubst sig sub t
+    go (IMArgument im)     t = go im t
+
+    kill = error "applyInvertMeta.impossible"
 
 -- | Creates a term in the same context as the original term but lambda
 -- abstracted over the given variables.
@@ -672,37 +777,40 @@ lambdaAbstract (v : vs) t = unview $ Lam $ abstract v $ lambdaAbstract vs t
 
 -- TODO improve efficiency of this traversal, we shouldn't need all
 -- those `fromAbs'.  Also in `freeVars'.
-closeTerm
-    :: forall t v0.
-       (IsVar v0, IsTerm t)
-    => Term t v0 -> TC t v0 (TermTraverse v0 (Closed (Term t)))
-closeTerm t0 = do
-  sig <- getSignature
-  let
-    lift' :: (v -> Either v0 v') -> (TermVar v -> Either v0 (TermVar v'))
-    lift' _ (B v) = Right $ B v
-    lift' f (F v) = F <$> f v
+applyInvertMetaSubst
+    :: forall t v0 mvV.
+       (IsVar v0, IsVar mvV, IsTerm t)
+    => Sig.Signature t -> [(v0, t mvV)] -> Term t v0
+    -> TermTraverse v0 (Term t mvV)
+applyInvertMetaSubst sig subst t0 =
+  flip go t0 $ \v -> maybe (Left v) Right (lookup v subst)
+  where
+    lift' :: forall v v1.
+             (v -> Either v0 (Term t v1))
+          -> (TermVar v -> Either v0 (Term t (TermVar v1)))
+    lift' _ (B v) = Right $ var $ B v
+    lift' f (F v) = fmap F <$> f v
 
-    go :: (IsVar v, IsTerm t) => (v -> Either v0 v') -> Term t v
-       -> TermTraverse v0 (t v')
-    go strengthen t = unview <$>
+    go :: forall v v1. (IsVar v, IsVar v1)
+       => (v -> Either v0 (Term t v1)) -> Term t v -> TermTraverse v0 (t v1)
+    go invert t =
       case whnfView sig t of
         Lam body ->
-          (Lam . toAbs) <$> go (lift' strengthen) (fromAbs body)
+          (lam . toAbs) <$> go (lift' invert) (fromAbs body)
         Pi dom cod ->
-          (\dom' cod' -> Pi dom' (toAbs cod'))
-            <$> go strengthen dom <*> go (lift' strengthen) (fromAbs cod)
+          (\dom' cod' -> pi dom' (toAbs cod'))
+            <$> go invert dom <*> go (lift' invert) (fromAbs cod)
         Equal type_ x y ->
-          (\type' x' y' -> Equal type' x' y')
-            <$> (go strengthen type_) <*> (go strengthen x) <*> (go strengthen y)
+          (\type' x' y' -> equal type' x' y')
+            <$> (go invert type_) <*> (go invert x) <*> (go invert y)
         Refl ->
-          pure Refl
+          pure refl
         Con dataCon args ->
-          Con dataCon <$> sequenceA (map (go strengthen) args)
+          con dataCon <$> sequenceA (map (go invert) args)
         Set ->
-          pure Set
+          pure set
         App h elims ->
-          let goElim (Apply t') = Apply <$> go strengthen t'
+          let goElim (Apply t') = Apply <$> go invert t'
               goElim (Proj n f) = pure $ Proj n f
 
               resElims = traverse goElim elims
@@ -711,11 +819,14 @@ closeTerm t0 = do
                  TTMetaVars $ Set.insert mv mvs
                (Meta mv, TTFail _) ->
                  TTMetaVars $ Set.singleton mv
-               _ ->
-                 App <$> traverse (either TTFail pure . strengthen) h <*> resElims
-
-  return $ go Left t0
-
+               (Var v, _) ->
+                 eliminate <$> either TTFail pure (invert v) <*> resElims
+               (Def f, _) ->
+                 app (Def f) <$> resElims
+               (J, _) ->
+                 app J <$> resElims
+               (Meta mv, _) ->
+                 app (Meta mv) <$> resElims
 
 -- Problem handling
 -------------------
@@ -797,7 +908,7 @@ checkProgram decls0 = do
         putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
         putStrLn ""
       drawLine
-      putStrLn $ "-- Solved problems: " ++ show (Set.size (trSolvedProblems tr)) ++ " " ++ show (trSolvedProblems tr)
+      putStrLn $ "-- Solved problems: " ++ show (Set.size (trSolvedProblems tr))
       putStrLn $ "-- Unsolved problems: " ++ show (Map.size (trUnsolvedProblems tr))
       drawLine
       forM_ (Map.toList (trUnsolvedProblems tr)) $ \(pid, (probState, probDesc)) -> do
