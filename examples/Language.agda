@@ -139,8 +139,6 @@ lookup (snoc _ _) _ (left  eq) g = subst (\ f -> El (f g)) eq (snd g)
 lookup (snoc _ _) t (right p)  g =
   subst (\ f -> El (f g)) (fst (snd p)) (lookup _ _ (snd (snd p)) (fst g))
 
-{-
-
 ------------------------------------------------------------------------
 -- A language
 
@@ -231,6 +229,49 @@ raw-category =
    sigma' set'
      -- Morphisms.
   (sigma' (pi' (el' (var zero)) (pi' (el' (var (suc zero))) set'))
+     -- Identity.
+  (sigma' (pi' (el' (var (suc zero)))
+               (el' (app (app (var (suc zero)) (var zero)) (var zero))))
+     -- Composition.
+     (pi' (el' (var (suc (suc zero))))                                 -- X.
+     (pi' (el' (var (suc (suc (suc zero)))))                           -- Y.
+     (pi' (el' (var (suc (suc (suc (suc zero))))))                     -- Z.
+     (pi' (el' (app (app (var (suc (suc (suc (suc zero)))))
+                         (var (suc (suc zero))))
+                    (var (suc zero))))                                 -- Hom X Y.
+     (pi' (el' (app (app (var (suc (suc (suc (suc (suc zero))))))
+                         (var (suc (suc zero))))
+                    (var (suc zero))))                                 -- Hom Y Z.
+          (el' (app (app (var (suc (suc (suc (suc (suc (suc zero)))))))
+                         (var (suc (suc (suc (suc zero))))))
+                    (var (suc (suc zero))))))                          -- Hom X Z.
+  ))))))
+
+{-
+barCtxt : Ctxt
+barCtxt =
+  (snoc (snoc empty (\ _ -> set))
+        (\ g -> fun (el (snd g)) (fun (el (snd g)) set)))
+
+bar : Type barCtxt (\ g -> pi (el (snd (fst g))) (\ x -> el (snd g x x)))
+bar = pi' (el' (var (suc zero)))
+          (el' (app (app (var (suc zero)) (var zero)) (var zero)))
+
+-- raw-categoryU' : U
+-- raw-categoryU' =
+--   sigma set (\ obj ->
+--   sigma (fun (el obj) (fun (el obj) set)) (\ hom ->
+--   (pi (el obj) (\ x -> el (hom {!!} {!!})))))
+
+-- raw-category' : Type empty (\ _ -> raw-categoryU')
+-- raw-category' =
+--      -- Objects.
+--    sigma' set'
+--      -- Morphisms.
+--   (sigma' (pi' (el' (var zero)) (pi' (el' (var (suc zero))) set'))
+--           (pi' (el' (var (suc zero)))
+--                (el' (app (app (var (suc zero)) (var zero)) (var zero)))))
+
      -- Identity.
   (sigma' (pi' (el' (var (suc zero)))
                (el' (app (app (var (suc zero)) (var zero)) (var zero))))

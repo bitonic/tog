@@ -1,41 +1,42 @@
-
 module Main where
 
-import Syntax.Abs
-import Syntax.Par
-import Syntax.BetterLayout
-import Syntax.ErrM
-import Syntax.Print
-import Syntax.Abstract
-import Syntax.Abstract.Pretty
-import Scope.Check
+import           System.Environment               (getArgs, getProgName)
 
-import IMPL.Term
-import Types.Monad
-import Types.Check
+import           Syntax.Par                       (myLexer, pProgram)
+import           Syntax.BetterLayout              (resolveLayout)
+import           Syntax.ErrM                      (Err(Bad, Ok))
+import           Scope.Check                      (scopeCheck)
+import           Check                            (checkProgram)
 
-import System.Environment
+import           Types.Monad
+import           Impl.LazySimpleScope
 
-checkFile :: FilePath -> IO ()
+
+checkFile :: FilePath -> IO (Either String (TCState LazySimpleScope))
 checkFile file = do
     s <- readFile file
     let tokens = resolveLayout False $ myLexer s
     case pProgram tokens of
-	Bad s	-> putStrLn $ "Parse error: " ++ s
-	Ok p	-> do
+	Bad err -> return $ Left $ "Parse error: " ++ err
+	Ok p    -> do
           case scopeCheck p of
-            Left err -> print err
-            Right p  -> do
-              mapM_ print p
-              z <- checkProgram p
+            Left err ->
+              return $ Left $ show err
+            Right p' -> do
+              z <- checkProgram p'
               case z of
-                Just err -> print err
-                Nothing  -> putStrLn "OK"
+                Left err -> return $ Left $ show err
+                Right ts -> return $ Right ts
 
+main :: IO ()
 main = do
     args <- getArgs
     prog <- getProgName
     case args of
-	[file]  -> checkFile file
-	_	-> putStrLn $ "Usage: " ++ prog ++ " FILE"
+        [file] -> do
+          errOrTs <- checkFile file
+          case errOrTs of
+            Left err -> putStrLn err
+            _        -> return ()
+        _      -> putStrLn $ "Usage: " ++ prog ++ " FILE"
 
