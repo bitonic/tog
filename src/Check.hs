@@ -23,19 +23,16 @@ import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import           Data.Function                    (on)
 import           Data.Ord                         (comparing)
 
-import           Syntax.Abstract                  (Name)
-import           Syntax.Abstract.Pretty           ()
-import qualified Syntax.Abstract                  as A
-import           Types.Definition
-import qualified Types.Context                    as Ctx
-import qualified Types.Telescope                  as Tel
-import           Types.Monad
-import           Types.Term
+import           Syntax.Internal                  (Name)
+import qualified Syntax.Internal                  as A
+import           Term
+import qualified Term.Context                     as Ctx
+import qualified Term.Telescope                   as Tel
+import qualified Term.Signature                   as Sig
 import           Text.PrettyPrint.Extended        (render, (<+>), ($$))
 import qualified Text.PrettyPrint.Extended        as PP
-import qualified Types.Signature                  as Sig
-import           Eval
-import           FreeVars
+import           Monad
+
 
 -- Main functions
 ------------------------------------------------------------------------

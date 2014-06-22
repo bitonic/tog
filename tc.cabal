@@ -14,8 +14,8 @@ cabal-version:       >= 1.10
 
 executable tc
   main-is:             Main.hs
-  other-modules:       Syntax.Lex
-                     , Syntax.Par
+  other-modules:       Syntax.Raw.Lex
+                     , Syntax.Raw.Par
   -- other-extensions:    
 
   build-depends:       base >= 4.7

@@ -1,4 +1,4 @@
-module Types.Context
+module Term.Context
     ( -- * 'Ctx'
       Ctx(..)
     , ClosedCtx
@@ -18,8 +18,8 @@ import           Data.Void                        (Void, absurd)
 import           Control.Arrow                    ((***))
 import           Data.Typeable                    (Typeable)
 
-import           Syntax.Abstract                  (Name)
-import           Types.Term                       hiding (weaken)
+import           Syntax.Internal                  (Name)
+import           Term.Types                       hiding (weaken)
 
 -- Ctx
 ------------------------------------------------------------------------

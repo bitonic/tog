@@ -1,4 +1,4 @@
-module Eval
+module Term.Eval
     ( -- * Elimination
       eliminate
       -- * 'Blocked'
@@ -21,12 +21,11 @@ import           Bound                            hiding (instantiate)
 import           Data.Functor                     ((<$>))
 import           Control.Applicative              ((<*>), pure)
 
-import           Syntax.Abstract                  (Name)
-import           Syntax.Abstract.Pretty           ()
-import           Types.Definition
-import qualified Types.Signature                  as Sig
-import           Types.Term
-import qualified Types.Telescope                  as Tel
+import           Syntax.Internal                  (Name)
+import           Term.Definition
+import qualified Term.Signature                   as Sig
+import           Term.Types
+import qualified Term.Telescope                   as Tel
 
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.

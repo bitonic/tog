@@ -1,4 +1,4 @@
-module Types.Signature
+module Term.Signature
     ( Signature
     , empty
       -- * Definitions
@@ -15,10 +15,10 @@ module Types.Signature
 
 import qualified Data.Map                         as Map
 
-import           Syntax.Abstract                  (Name)
-import           Types.Definition
+import           Syntax.Internal                  (Name)
+import           Term.Definition
 import           Text.PrettyPrint.Extended        (render)
-import           Types.Term
+import           Term.Types
 
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.

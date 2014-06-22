@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Types.Monad.Base
+module Monad.Base
     ( -- * Monad definition
       TC
     , ClosedTC
@@ -46,12 +46,10 @@ import           Bound
 
 import qualified Text.PrettyPrint.Extended        as PP
 import           Text.PrettyPrint.Extended        ((<+>))
-import           Syntax.Abstract                  (SrcLoc, noSrcLoc, HasSrcLoc, srcLoc)
-import           Syntax.Abstract.Pretty           ()
-import qualified Types.Context                    as Ctx
-import qualified Types.Signature                  as Sig
-import           Types.Term
-import           Eval
+import           Syntax.Internal                  (SrcLoc, noSrcLoc, HasSrcLoc, srcLoc)
+import qualified Term.Context                     as Ctx
+import qualified Term.Signature                   as Sig
+import           Term
 
 -- Monad definition
 ------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Types.Term where
+module Term.Types where
 
 import           Prelude                          hiding (pi, foldr)
 
@@ -19,8 +19,7 @@ import           Control.Applicative              (Applicative, pure, (<*>))
 import qualified Data.Set                         as Set
 
 import qualified Text.PrettyPrint.Extended        as PP
-import           Syntax.Abstract                  (Name)
-import           Syntax.Abstract.Pretty           ()
+import           Syntax.Internal                  (Name)
 
 -- Named
 ------------------------------------------------------------------------

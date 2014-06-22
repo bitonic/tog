@@ -1,4 +1,4 @@
-module FreeVars
+module Term.FreeVars
   ( FreeVars(..)
   , fvAll
   , freeVars
@@ -9,9 +9,9 @@ import qualified Data.Set                         as Set
 import           Bound
 import           Data.Foldable                    (foldMap)
 
-import qualified Types.Signature                  as Sig
-import           Types.Term
-import           Eval
+import qualified Term.Signature                   as Sig
+import           Term.Types
+import           Term.Eval
 
 -- Free variables
 ------------------------------------------------------------------------

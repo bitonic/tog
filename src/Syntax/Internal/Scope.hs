@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
-module Scope.Check
-    ( scopeCheck
+module Syntax.Internal.Scope
+    ( checkScope
     , ScopeError
     ) where
 
@@ -13,10 +13,8 @@ import Data.Monoid
 import qualified Data.Map as Map
 import Data.Map (Map)
 
-import qualified Syntax.Abs as C
-import Syntax.Abstract
-import Syntax.Abstract.Pretty
-import Syntax.Print
+import qualified Syntax.Raw as C
+import Syntax.Internal.Abs
 
 data ScopeError = ScopeError SrcLoc String
 
@@ -108,7 +106,7 @@ resolveName' :: C.Name -> Check NameInfo
 resolveName' x@(C.Name ((l, c), s)) = do
   mi <- resolveName'' x
   case mi of
-    Nothing -> scopeError x $ "Not in scope: " ++ printTree x
+    Nothing -> scopeError x $ "Not in scope: " ++ C.printTree x
     Just (VarName _)     -> return (VarName y)
     Just (DefName _ n)   -> return (DefName y n)
     Just (ConName _ n a) -> return (ConName y n a)
@@ -148,8 +146,8 @@ checkHiding e = case e of
       (n, bs, stop) <- telHiding bs
       return (n + length xs, C.Bind xs e : bs, stop)
 
-scopeCheck :: C.Program -> Either ScopeError [Decl]
-scopeCheck (C.Prog _ ds) = flip runReaderT initScope $ unCheck $ checkDecls ds
+checkScope :: C.Program -> Either ScopeError Program
+checkScope (C.Prog _ ds) = flip runReaderT initScope $ unCheck $ checkDecls ds
 
 isSet :: C.Name -> Check ()
 isSet (C.Name ((l, c), "Set")) = return ()
@@ -171,12 +169,12 @@ resolveCon x = do
   i <- resolveName' x
   case i of
     ConName c n args -> return (c, n, args)
-    _                -> scopeError x $ printTree x ++ " should be a constructor"
+    _                -> scopeError x $ C.printTree x ++ " should be a constructor"
 
 checkHiddenNames :: Hiding -> [C.HiddenName] -> Check [C.Name]
 checkHiddenNames 0 (C.NotHidden x : xs) = (x :) <$> checkHiddenNames 0 xs
-checkHiddenNames n (C.NotHidden x : _)  = scopeError x $ "Expected implicit binding of " ++ printTree x
-checkHiddenNames 0 (C.Hidden x : _)     = scopeError x $ "Expected explicit binding of " ++ printTree x
+checkHiddenNames n (C.NotHidden x : _)  = scopeError x $ "Expected implicit binding of " ++ C.printTree x
+checkHiddenNames 0 (C.Hidden x : _)     = scopeError x $ "Expected explicit binding of " ++ C.printTree x
 checkHiddenNames n (C.Hidden x : xs)    = (x :) <$> checkHiddenNames (n - 1) xs
 checkHiddenNames 0 []                   = return []
 checkHiddenNames _ []                   = impossible "checkHiddenNames _ []"
@@ -318,13 +316,13 @@ cWild x = C.IdP (C.Name ((l, c), "_"))
 
 insertImplicit :: SrcLoc -> Hiding -> [C.Arg] -> Check [C.Expr]
 insertImplicit p 0 (C.Arg e : args)  = (e :) <$> insertImplicit (srcLoc e) 0 args
-insertImplicit p 0 (C.HArg e : _)    = scopeError e $ "Unexpected implicit application " ++ printTree e
+insertImplicit p 0 (C.HArg e : _)    = scopeError e $ "Unexpected implicit application " ++ C.printTree e
 insertImplicit p 0 []                = return []
 insertImplicit p n (C.HArg e : args) = (e :) <$> insertImplicit (srcLoc e) (n - 1) args
 insertImplicit p n args              = (cMeta p :) <$> insertImplicit p (n - 1) args
 
 insertImplicitPatterns :: SrcLoc -> Hiding -> [C.Pattern] -> Check [C.Pattern]
-insertImplicitPatterns p 0 (C.HideP e : _)  = scopeError e $ "Unexpected implicit pattern " ++ printTree e
+insertImplicitPatterns p 0 (C.HideP e : _)  = scopeError e $ "Unexpected implicit pattern " ++ C.printTree e
 insertImplicitPatterns p 0 (e : args)       = (e :) <$> insertImplicitPatterns (srcLoc e) 0 args
 insertImplicitPatterns p 0 []               = return []
 insertImplicitPatterns p n (C.HideP e : ps) = (e :) <$> insertImplicitPatterns (srcLoc e) (n - 1) ps
@@ -336,7 +334,7 @@ pAppView :: C.Pattern -> Check PAppView
 pAppView p = case p of
   C.AppP p q -> applyTo q <$> pAppView p
   C.IdP x    -> return (x, [])
-  C.HideP p  -> scopeError p $ "Unexpected implicit pattern: " ++ printTree p
+  C.HideP p  -> scopeError p $ "Unexpected implicit pattern: " ++ C.printTree p
   where
     applyTo q (c, ps) = (c, ps ++ [q])
 
@@ -383,8 +381,8 @@ checkExpr e = case e of
           (z, n) <- checkAppHead x
           case z of
             IsProj x -> case es of
-              []   -> scopeError e $ "Record projections must be applied: " ++ printTree e
-              C.HArg _ : _ -> scopeError e $ "Unexpected implicit argument to projection function: " ++ printTree e
+              []   -> scopeError e $ "Record projections must be applied: " ++ C.printTree e
+              C.HArg _ : _ -> scopeError e $ "Unexpected implicit argument to projection function: " ++ C.printTree e
               C.Arg e : es -> do
                 e <- checkExpr e
                 doProj x e . map Apply =<< checkArgs e n es (\ _ -> return ())
@@ -442,7 +440,7 @@ data AppView = CApp C.Name [C.Arg]
 appView :: C.Expr -> Check AppView
 appView e = case e of
   C.App (arg@C.HArg{} : _) ->
-    scopeError arg $ "Unexpected curly braces: " ++ printTree arg
+    scopeError arg $ "Unexpected curly braces: " ++ C.printTree arg
   C.App (C.Arg e : es) -> applyTo es =<< appView e
   C.App []             -> impossible "appView: empty application"
   C.Id x               -> return $ CApp x []
@@ -454,7 +452,7 @@ appView e = case e of
     notApp = return $ NotApp e
     applyTo []  app          = return app
     applyTo es2 (CApp x es1) = return $ CApp x $ es1 ++ es2
-    applyTo es  (NotApp e)   = scopeError e $ printTree e ++ " cannot be applied to arguments"
+    applyTo es  (NotApp e)   = scopeError e $ C.printTree e ++ " cannot be applied to arguments"
 
 checkAppHead :: C.Name -> Check (AppHead, Hiding)
 checkAppHead (C.Name ((l, c), "_"))    = return (HeadMeta $ SrcLoc l c, 0)
@@ -473,7 +471,7 @@ checkTel :: [C.Binding] -> CCheck [(Name, Expr)]
 checkTel = concatMapC checkBinding
 
 checkBinding :: C.Binding -> CCheck [(Name, Expr)]
-checkBinding b@C.HBind{} _ = scopeError b $ "Implicit binding must be on top level: " ++ printTree b
+checkBinding b@C.HBind{} _ = scopeError b $ "Implicit binding must be on top level: " ++ C.printTree b
 checkBinding (C.Bind args e) ret = do
   xs <- mapM argName args
   let is = map mkVarInfo xs
@@ -482,7 +480,7 @@ checkBinding (C.Bind args e) ret = do
 
 argName :: C.Arg -> Check C.Name
 argName (C.Arg (C.Id x)) = return x
-argName a = scopeError a $ "Expected variable name: " ++ printTree a
+argName a = scopeError a $ "Expected variable name: " ++ C.printTree a
 
 -- SrcLoc instances --
 

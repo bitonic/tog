@@ -1,4 +1,4 @@
-module Types.Telescope
+module Term.Telescope
     ( -- * 'Tel'
       Tel(..)
     , ClosedTel
@@ -30,9 +30,9 @@ import           Data.Monoid                      (mempty, (<>))
 import           Control.Applicative              ((<$>), (<*>), pure)
 import           Data.Typeable                    (Typeable)
 
-import           Syntax.Abstract                  (Name)
-import qualified Types.Context                    as Ctx
-import           Types.Term                       hiding (instantiate)
+import           Syntax.Internal                  (Name)
+import qualified Term.Context                     as Ctx
+import           Term.Types                       hiding (instantiate)
 
 -- Tel
 ------------------------------------------------------------------------

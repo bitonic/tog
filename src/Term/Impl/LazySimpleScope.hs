@@ -1,4 +1,4 @@
-module Impl.LazySimpleScope (LazySimpleScope) where
+module Term.Impl.LazySimpleScope (LazySimpleScope) where
 
 import Prelude                                    hiding (pi, abs, foldr)
 
@@ -13,8 +13,8 @@ import           Control.Applicative              (Applicative(pure, (<*>)))
 import           Data.Monoid                      ((<>), mempty, mconcat)
 import           Data.Typeable                    (Typeable)
 
-import           Types.Term
-import           Eval
+import           Term.Types
+import           Term.Eval
 
 -- Base terms
 ------------------------------------------------------------------------

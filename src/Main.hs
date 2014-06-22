@@ -1,32 +1,24 @@
 module Main where
 
 import           System.Environment               (getArgs, getProgName)
+import           Control.Monad.Trans.Class        (lift)
+import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT, hoistEither)
 
-import           Syntax.Par                       (myLexer, pProgram)
-import           Syntax.BetterLayout              (resolveLayout)
-import           Syntax.ErrM                      (Err(Bad, Ok))
-import           Scope.Check                      (scopeCheck)
+import           Syntax.Raw                       (parseProgram)
+import           Syntax.Internal                  (checkScope)
 import           Check                            (checkProgram)
-
-import           Types.Monad
-import           Impl.LazySimpleScope
-
+import           Term
+import           Monad
 
 checkFile :: FilePath -> IO (Either String (TCState LazySimpleScope))
-checkFile file = do
-    s <- readFile file
-    let tokens = resolveLayout False $ myLexer s
-    case pProgram tokens of
-	Bad err -> return $ Left $ "Parse error: " ++ err
-	Ok p    -> do
-          case scopeCheck p of
-            Left err ->
-              return $ Left $ show err
-            Right p' -> do
-              z <- checkProgram p'
-              case z of
-                Left err -> return $ Left $ show err
-                Right ts -> return $ Right ts
+checkFile file = (runEitherT :: EitherT String IO (TCState LazySimpleScope) -> IO (Either String (TCState LazySimpleScope))) $ do
+    s   <- lift $ readFile file
+    raw <- hoistEither $ showError "Parse" $ parseProgram s
+    int <- hoistEither $ showError "Scope" $ checkScope raw
+    EitherT $ fmap (showError "Type") $ checkProgram int
+  where
+    showError :: Show a => String -> Either a b -> Either String b
+    showError errType = either (\err -> Left $ errType ++ " error: " ++ show err) Right
 
 main :: IO ()
 main = do

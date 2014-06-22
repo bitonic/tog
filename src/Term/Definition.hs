@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Types.Definition
+module Term.Definition
     ( -- * 'Clause'
       Clause(..)
     , ClauseBody
@@ -19,9 +19,9 @@ import           Bound
 import           Data.Typeable                    (Typeable)
 import           Control.Arrow                    (second)
 
-import           Syntax.Abstract                  (Name)
-import qualified Types.Telescope                  as Tel
-import           Types.Term
+import           Syntax.Internal                  (Name)
+import qualified Term.Telescope                   as Tel
+import           Term.Types
 import qualified Text.PrettyPrint.Extended        as PP
 import           Text.PrettyPrint.Extended        ((<+>), ($$))
 

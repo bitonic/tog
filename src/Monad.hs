@@ -1,5 +1,5 @@
 -- | Module exporting convenience functions.
-module Types.Monad
+module Monad
     ( -- * Monad definition
       TC
     , ClosedTC
@@ -55,14 +55,11 @@ import           Data.Typeable                    (Typeable)
 import           Control.Monad                    (void)
 
 import qualified Text.PrettyPrint.Extended        as PP
-import           Syntax.Abstract                  (Name)
-import           Syntax.Abstract.Pretty           ()
-import           Types.Definition
-import           Types.Term
-import qualified Types.Context                    as Ctx
-import           Types.Monad.Base
-import qualified Types.Signature                  as Sig
-import           Eval
+import           Syntax.Internal                  (Name)
+import           Term
+import qualified Term.Context                    as Ctx
+import qualified Term.Signature                  as Sig
+import           Monad.Base
 
 -- Utilities
 ------------------------------------------------------------------------
