@@ -45,8 +45,8 @@ module TypeCheck.Monad
   ) where
 
 import           Control.Applicative              (Applicative(pure, (<*>)))
-import qualified Data.Map.Strict                  as Map
-import qualified Data.Set                         as Set
+import qualified Data.HashMap.Strict              as HMS
+import qualified Data.HashSet                     as HS
 import           Data.Typeable                    (Typeable)
 import           Data.Dynamic                     (Dynamic, toDyn, fromDynamic)
 import           Control.Monad                    (ap, void, msum, when, forM)
@@ -110,8 +110,8 @@ initEnv int =
 
 data TCState t p = TCState
     { tsSignature        :: !(Sig.Signature t)
-    , tsUnsolvedProblems :: !(Map.Map ProblemIdInt (Problem p))
-    , tsSolvedProblems   :: !(Map.Map ProblemIdInt ProblemSolution)
+    , tsUnsolvedProblems :: !(HMS.HashMap ProblemIdInt (Problem p))
+    , tsSolvedProblems   :: !(HMS.HashMap ProblemIdInt ProblemSolution)
     , tsProblemCount     :: !Int
     }
 
@@ -119,8 +119,8 @@ data TCState t p = TCState
 initTCState :: TCState t p
 initTCState = TCState
   { tsSignature        = Sig.empty
-  , tsUnsolvedProblems = Map.empty
-  , tsSolvedProblems   = Map.empty
+  , tsUnsolvedProblems = HMS.empty
+  , tsSolvedProblems   = HMS.empty
   , tsProblemCount     = 0
   }
 
@@ -141,14 +141,14 @@ instance Show TCErr where
 -- | A type useful to inspect what's going on.
 data TCReport t p = TCReport
   { trSignature        :: !(Sig.Signature t)
-  , trSolvedProblems   :: !(Set.Set ProblemIdInt)
-  , trUnsolvedProblems :: !(Map.Map ProblemIdInt (Problem p))
+  , trSolvedProblems   :: !(HS.HashSet ProblemIdInt)
+  , trUnsolvedProblems :: !(HMS.HashMap ProblemIdInt (Problem p))
   }
 
 tcReport :: (IsTerm t) => TCState t p -> TCReport t p
 tcReport ts = TCReport
   { trSignature        = sig
-  , trSolvedProblems   = Map.keysSet $ tsSolvedProblems ts
+  , trSolvedProblems   = HS.fromList $ HMS.keys $ tsSolvedProblems ts
   , trUnsolvedProblems = tsUnsolvedProblems ts
   }
   where
@@ -255,7 +255,7 @@ newtype ProblemId a = ProblemId ProblemIdInt
 --
 -- Both the type of the bound variable and the result type are
 -- 'Typeable' since we store the solutions and problems dynamically so
--- that they can all be in the same 'Map.Map'.
+-- that they can all be in the same 'HMS.HashMap'.
 data Problem p = forall a b. (Typeable a, Typeable b) => Problem
   { pProblem :: !(Maybe (p a b))
     -- ^ If 'Nothing', it means that we're just waiting on another
@@ -268,16 +268,16 @@ type InterpretProblem t p =
   forall a b. (Typeable a, Typeable b) => p a b -> a -> StuckTC t p b
 
 data ProblemState
-    = BoundToMetaVars  !(Set.Set MetaVar)
+    = BoundToMetaVars  !(HS.HashSet MetaVar)
     | BoundToProblem   !ProblemIdInt
     deriving (Show)
 
 instance PP.Pretty ProblemState where
-  pretty (BoundToMetaVars mvs)  = "BoundToMetaVars" <+> PP.pretty (Set.toList mvs)
+  pretty (BoundToMetaVars mvs)  = "BoundToMetaVars" <+> PP.pretty (HS.toList mvs)
   pretty (BoundToProblem pid)   = "BoundToProblem" <+> PP.pretty pid
 
 -- | As remarked, we store the problems solutions dynamically to have
--- them in a single 'Map.Map'.
+-- them in a single 'HMS.HashMap'.
 newtype ProblemSolution = ProblemSolution Dynamic
 
 problemSolution :: Typeable a => a -> ProblemSolution
@@ -292,7 +292,7 @@ data Stuck a
 
 addProblem :: ProblemIdInt -> Problem p -> TC t p (ProblemId a)
 addProblem pid prob = do
-  modify $ \ts -> (ts{tsUnsolvedProblems = Map.insert pid prob (tsUnsolvedProblems ts)}, ProblemId pid)
+  modify $ \ts -> (ts{tsUnsolvedProblems = HMS.insert pid prob (tsUnsolvedProblems ts)}, ProblemId pid)
 
 addFreshProblem :: Problem p -> TC t p (ProblemId a)
 addFreshProblem prob = do
@@ -304,7 +304,7 @@ addFreshProblem prob = do
 -- them will be instantiated, the computation can be executed again.
 newProblem
     :: (Typeable b)
-    => Set.Set MetaVar
+    => HS.HashSet MetaVar
     -> p () b
     -> StuckTC t p b
 newProblem mvs m = do
@@ -317,7 +317,7 @@ newProblem_
     => MetaVar
     -> p () b
     -> StuckTC t p b
-newProblem_ mv = newProblem (Set.singleton mv)
+newProblem_ mv = newProblem (HS.singleton mv)
 
 -- | @bindProblem pid desc (\x -> m)@ binds computation @m@ to problem
 -- @pid@. When @pid@ is solved with result @t@, @m t@ will be executed.
@@ -335,7 +335,7 @@ bindProblem (ProblemId pid) f = do
 -- current state.  Returns whether any problem was solved.
 solveProblems :: forall p t. TC t p Bool
 solveProblems = do
-  unsolvedProbs <- Map.toList . tsUnsolvedProblems <$> get
+  unsolvedProbs <- HMS.toList . tsUnsolvedProblems <$> get
   -- Go over all unsolved problems and record if we made progress in any
   -- of them.
   progress <- fmap or $ forM unsolvedProbs $ \(pid, (Problem prob state loc)) -> do
@@ -346,13 +346,13 @@ solveProblems = do
       -- instantiated.  The state will be ().
       BoundToMetaVars mvs -> do
         withSignature $ \sig -> msum
-          [ problemSolution () <$ Map.lookup mv (Sig.metaVarsBodies sig)
-          | mv <- Set.toList mvs
+          [ problemSolution () <$ HMS.lookup mv (Sig.metaVarsBodies sig)
+          | mv <- HS.toList mvs
           ]
       -- If we're bound to another problem, retrieve its result if
       -- available.
       BoundToProblem boundTo ->
-        Map.lookup boundTo . tsSolvedProblems <$> get
+        HMS.lookup boundTo . tsSolvedProblems <$> get
     case mbSolution of
       Nothing       -> return False
       Just solution -> True <$ solveProblem pid prob loc solution
@@ -372,7 +372,7 @@ solveProblems = do
       -> TC t p ()
     solveProblem pid mbP loc (ProblemSolution x) = do
       -- Delete the problem from the list of unsolved problems.
-      modify_ $ \ts -> ts{tsUnsolvedProblems = Map.delete pid (tsUnsolvedProblems ts)}
+      modify_ $ \ts -> ts{tsUnsolvedProblems = HMS.delete pid (tsUnsolvedProblems ts)}
       -- Execute the suspended computation. From how the functions
       -- adding problems are designed we know that the types will match
       -- up.
@@ -388,7 +388,7 @@ solveProblems = do
         NotStuck y -> do
           -- Mark the problem as solved.
           modify_ $ \ts ->
-            ts{tsSolvedProblems = Map.insert pid (problemSolution y) (tsSolvedProblems ts)}
+            ts{tsSolvedProblems = HMS.insert pid (problemSolution y) (tsSolvedProblems ts)}
         StuckOn (ProblemId boundTo) -> do
           -- If the problem is stuck, re-add it as a dependency of
           -- what it is stuck on.

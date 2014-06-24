@@ -16,7 +16,6 @@ import           Data.Typeable                    (Typeable)
 import           Data.Hashable                    (Hashable)
 import           Data.Maybe                       (fromMaybe)
 import           Control.Applicative              (Applicative, pure, (<*>))
-import qualified Data.Set                         as Set
 
 import qualified Text.PrettyPrint.Extended        as PP
 import           Syntax.Internal                  (Name)
@@ -294,7 +293,7 @@ prettyView = PP.pretty . view
 data TermTraverse err a
     = TTOK a
     | TTFail err
-    | TTMetaVars (Set.Set MetaVar)
+    | TTMetaVars (HS.HashSet MetaVar)
     deriving (Functor)
 
 instance Applicative (TermTraverse err) where

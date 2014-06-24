@@ -16,7 +16,7 @@ import           Prelude                          hiding (pi)
 import           Bound.Name                       (instantiateName)
 import           Data.Void                        (vacuousM)
 import           Prelude.Extras                   (Eq1((==#)))
-import qualified Data.Set                         as Set
+import qualified Data.HashSet                     as HS
 import           Bound                            hiding (instantiate)
 import           Data.Functor                     ((<$>))
 import           Control.Applicative              ((<*>), pure)
@@ -48,7 +48,7 @@ data Blocked t v
     = NotBlocked (t v)
     | MetaVarHead MetaVar [Elim t v]
     -- ^ The term is 'MetaVar'-headed.
-    | BlockedOn (Set.Set MetaVar) Name [Elim t v]
+    | BlockedOn (HS.HashSet MetaVar) Name [Elim t v]
     -- ^ Returned when some 'MetaVar's are preventing us from reducing a
     -- definition.  The 'Name' is the name of the definition, the
     -- 'Elim's the eliminators stuck on it.
@@ -116,7 +116,7 @@ matchClause sig (Apply arg : es) (VarP : patterns) =
 matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
   case whnf sig arg of
     MetaVarHead mv _ ->
-      TTMetaVars (Set.singleton mv) <*> matchClause sig es patterns
+      TTMetaVars (HS.singleton mv) <*> matchClause sig es patterns
     NotBlocked t | Con dataCon' dataConArgs <- view t ->
       if dataCon == dataCon'
         then matchClause sig (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)

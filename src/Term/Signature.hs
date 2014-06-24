@@ -13,7 +13,7 @@ module Term.Signature
     , metaVarsBodies
     ) where
 
-import qualified Data.Map                         as Map
+import qualified Data.HashMap.Strict              as HMS
 
 import           Syntax.Internal                  (Name)
 import           Term.Definition
@@ -23,21 +23,22 @@ import           Term.Types
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
 data Signature t = Signature
-    { sDefinitions :: Map.Map Name (Closed (Definition t))
-    , sMetasTypes  :: Map.Map MetaVar (Closed (Type t))
-    , sMetasBodies :: Map.Map MetaVar (Closed (Term t))
+    { sDefinitions :: HMS.HashMap Name (Closed (Definition t))
+    , sMetasTypes  :: HMS.HashMap MetaVar (Closed (Type t))
+    , sMetasBodies :: HMS.HashMap MetaVar (Closed (Term t))
     -- ^ INVARIANT: Every 'MetaVar' in 'sMetaBodies' is also in
     -- 'sMetasTypes'.
+    , sMetasCount  :: Int
     }
 
 empty :: Signature t
-empty = Signature Map.empty Map.empty Map.empty
+empty = Signature HMS.empty HMS.empty HMS.empty 0
 
 -- | Gets a definition for the given name.  Fails if no definition can
 -- be found.
 getDefinition :: Signature t -> Name -> Closed (Definition t)
 getDefinition sig name =
-    case Map.lookup name (sDefinitions sig) of
+    case HMS.lookup name (sDefinitions sig) of
       Nothing   -> error $ "impossible.getDefinition: not found " ++ show name
       Just def' -> def'
 
@@ -52,12 +53,12 @@ addDefinition sig name def' = case def' of
     DataCon tyCon _           -> addDataCon tyCon
     _                         -> sig'
   where
-    sig' = sig{sDefinitions = Map.insert name def' (sDefinitions sig)}
+    sig' = sig{sDefinitions = HMS.insert name def' (sDefinitions sig)}
 
     addProjection tyCon projIx = case getDefinition sig' tyCon of
       Constant (Record dataCon projs) tyConType ->
         let projs' = projs ++ [(name, projIx)]
-            defs   = Map.insert tyCon (Constant (Record dataCon projs') tyConType) (sDefinitions sig')
+            defs   = HMS.insert tyCon (Constant (Record dataCon projs') tyConType) (sDefinitions sig')
         in sig'{sDefinitions = defs}
       _ ->
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a record"
@@ -65,7 +66,7 @@ addDefinition sig name def' = case def' of
     addDataCon tyCon = case getDefinition sig' tyCon of
       Constant (Data dataCons) tyConType ->
         let dataCons' = dataCons ++ [name]
-            defs      = Map.insert tyCon (Constant (Data dataCons') tyConType) (sDefinitions sig')
+            defs      = HMS.insert tyCon (Constant (Data dataCons') tyConType) (sDefinitions sig')
         in sig'{sDefinitions = defs}
       Constant (Record dataCon _) _ ->
         if name == dataCon
@@ -79,35 +80,35 @@ addDefinition sig name def' = case def' of
 -- present.
 getMetaVarType :: Signature t -> MetaVar -> Closed (Type t)
 getMetaVarType sig mv =
-    case Map.lookup mv (sMetasTypes sig) of
+    case HMS.lookup mv (sMetasTypes sig) of
       Nothing -> error $ "impossible.getMetaVarType: not found " ++ show mv
       Just d -> d
 
 -- | Gets the body of a 'MetaVar', if present.
 getMetaVarBody :: Signature t -> MetaVar -> Maybe (Closed (Term t))
-getMetaVarBody sig mv = Map.lookup mv (sMetasBodies sig)
+getMetaVarBody sig mv = HMS.lookup mv (sMetasBodies sig)
 
 -- | Creates a new 'MetaVar' with the provided type.
 addMetaVar :: Signature t -> Closed (Type t) -> (MetaVar, Signature t)
 addMetaVar sig type_ =
-    (mv, sig{sMetasTypes = Map.insert mv type_ (sMetasTypes sig)})
+    (mv, sig{ sMetasTypes = HMS.insert mv type_ (sMetasTypes sig)
+            , sMetasCount = sMetasCount sig + 1
+            })
   where
-    mv = case Map.maxViewWithKey (sMetasTypes sig) of
-        Nothing                  -> MetaVar 0
-        Just ((MetaVar i, _), _) -> MetaVar (i + 1)
+    mv = MetaVar $ sMetasCount sig
 
 -- | Instantiates the given 'MetaVar' with the given body.  Fails if no
 -- type is present for the 'MetaVar'.
 instantiateMetaVar :: Signature t -> MetaVar -> Closed (Term t) -> Signature t
-instantiateMetaVar sig mv _ | not (Map.member mv (sMetasTypes sig)) =
+instantiateMetaVar sig mv _ | not (HMS.member mv (sMetasTypes sig)) =
   error $ "impossible.instantiateMetaVar: " ++ show mv ++ " not present."
 instantiateMetaVar sig mv term =
-  sig{sMetasBodies = Map.insert mv term (sMetasBodies sig)}
+  sig{sMetasBodies = HMS.insert mv term (sMetasBodies sig)}
 
 -- | Gets the types of all 'MetaVar's.
-metaVarsTypes :: Signature t -> Map.Map MetaVar (Closed (Type t))
+metaVarsTypes :: Signature t -> HMS.HashMap MetaVar (Closed (Type t))
 metaVarsTypes = sMetasTypes
 
 -- | Gets the bodies for the instantiated 'MetaVar's.
-metaVarsBodies :: Signature t -> Map.Map MetaVar (Closed (Term t))
+metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (Closed (Term t))
 metaVarsBodies = sMetasBodies

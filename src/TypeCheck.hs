@@ -5,7 +5,9 @@ import           Prelude                          hiding (abs, pi)
 
 import           Data.Functor                     ((<$>), (<$))
 import           Data.Foldable                    (forM_)
+import qualified Data.HashMap.Strict              as HMS
 import qualified Data.HashSet                     as HS
+import qualified Data.Set                         as Set
 import           Control.Monad                    (when, void, guard, mzero, forM, msum, join)
 import           Data.List                        (sortBy, groupBy)
 import           Data.Traversable                 (traverse, sequenceA)
@@ -14,8 +16,6 @@ import           Bound                            (Var(F, B), Bound, (>>>=), Sco
 import           Bound.Var                        (unvar)
 import           Data.Typeable                    (Typeable)
 import           Data.Void                        (vacuous, Void, vacuousM, absurd)
-import qualified Data.Set                         as Set
-import qualified Data.Map                         as Map
 import           Control.Applicative              (Applicative(pure, (<*>)))
 import           Control.Monad.Trans              (lift)
 import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT)
@@ -72,20 +72,20 @@ checkProgram decls0 = do
       let mvsTypes  = Sig.metaVarsTypes $ trSignature tr
       let mvsBodies = Sig.metaVarsBodies $ trSignature tr
       drawLine
-      putStrLn $ "-- Solved MetaVars: " ++ show (Map.size mvsBodies)
-      putStrLn $ "-- Unsolved MetaVars: " ++ show (Map.size mvsTypes - Map.size mvsBodies)
+      putStrLn $ "-- Solved MetaVars: " ++ show (HMS.size mvsBodies)
+      putStrLn $ "-- Unsolved MetaVars: " ++ show (HMS.size mvsTypes - HMS.size mvsBodies)
       drawLine
-      forM_ (Map.toList mvsTypes) $ \(mv, mvType) -> do
+      forM_ (HMS.toList mvsTypes) $ \(mv, mvType) -> do
         putStrLn $ render $
           PP.pretty mv <+> ":" <+> PP.nest 2 (PP.pretty (view mvType))
-        let mvBody = case Map.lookup mv mvsBodies of
+        let mvBody = case HMS.lookup mv mvsBodies of
               Nothing      -> "?"
               Just mvBody0 -> prettyView mvBody0
         putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
         putStrLn ""
       drawLine
-      putStrLn $ "-- Solved problems: " ++ show (Set.size (trSolvedProblems tr))
-      putStrLn $ "-- Unsolved problems: " ++ show (Map.size (trUnsolvedProblems tr))
+      putStrLn $ "-- Solved problems: " ++ show (HS.size (trSolvedProblems tr))
+      putStrLn $ "-- Unsolved problems: " ++ show (HMS.size (trUnsolvedProblems tr))
       drawLine
       -- forM_ (Map.toList (trUnsolvedProblems tr)) $ \(pid, (probState, probDesc)) -> do
       --   let desc = render $
@@ -459,7 +459,7 @@ checkEqual ctx type_ x y = do
     (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
       -- Both blocked, and we already checked for syntactic equality: we
       -- give up.
-      newProblem (Set.union mvs1 mvs2) $
+      newProblem (HS.union mvs1 mvs2) $
         CheckEqual ctx (unview typeView) (ignoreBlocking blockedX) (ignoreBlocking blockedY)
     (BlockedOn mvs f elims, t) -> do
       checkEqualBlockedOn ctx (unview typeView) mvs f elims (ignoreBlocking t)
@@ -575,7 +575,7 @@ checkEqualBlockedOn
      (IsVar v, IsTerm t)
   => Ctx t v
   -> Type t v
-  -> Set.Set MetaVar -> Name -> [Elim t v]
+  -> HS.HashSet MetaVar -> Name -> [Elim t v]
   -> Term t v
   -> StuckTC' t ()
 checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
@@ -671,10 +671,10 @@ metaAssign ctx0 type0 mv elims0 t0 = do
         ttInv <- withSignature $ \sig -> invertMeta sig elims
         let invOrMvs = case ttInv of
               TTOK inv       -> Right inv
-              TTMetaVars mvs -> Left $ Set.insert mv mvs
+              TTMetaVars mvs -> Left $ HS.insert mv mvs
               -- TODO here we should also wait on metavars on the right that
               -- could simplify the problem.
-              TTFail ()      -> Left $ Set.singleton mv
+              TTFail ()      -> Left $ HS.singleton mv
         case invOrMvs of
           Left mvs -> do
             -- If we can't invert, try to prune the variables not
@@ -703,7 +703,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
                 instantiateMetaVar mv t'
                 returnStuckTC ()
               TTMetaVars mvs ->
-                newProblem (Set.insert mv mvs) $ CheckEqual ctx type_ (metaVar mv elims) t
+                newProblem (HS.insert mv mvs) $ CheckEqual ctx type_ (metaVar mv elims) t
               TTFail v ->
                 checkError $ FreeVariableInEquatedTerm mv elims t v
 
@@ -917,7 +917,7 @@ invertMeta sig elims0 = case mapM isApply elims0 of
       NotBlocked _ ->
         TTFail ()
       MetaVarHead mv _ ->
-        TTMetaVars $ Set.singleton mv
+        TTMetaVars $ HS.singleton mv
       BlockedOn mvs _ _ ->
         TTMetaVars mvs
 
@@ -988,9 +988,9 @@ applyInvertMetaSubst sig subst t0 =
               resElims = traverse goElim elims
           in case (h, resElims) of
                (Meta mv, TTMetaVars mvs) ->
-                 TTMetaVars $ Set.insert mv mvs
+                 TTMetaVars $ HS.insert mv mvs
                (Meta mv, TTFail _) ->
-                 TTMetaVars $ Set.singleton mv
+                 TTMetaVars $ HS.singleton mv
                (Var v, _) ->
                  eliminate <$> either TTFail pure (invert v) <*> resElims
                (Def f, _) ->

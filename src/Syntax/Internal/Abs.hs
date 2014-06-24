@@ -4,6 +4,7 @@ module Syntax.Internal.Abs where
 import Data.String (IsString(fromString))
 import Data.Typeable (Typeable)
 import Control.Arrow                    ((***))
+import Data.Hashable (Hashable, hashWithSalt)
 import Text.PrettyPrint.Extended
 
 data SrcLoc = SrcLoc { pLine :: Int, pCol :: Int }
@@ -27,6 +28,9 @@ instance Eq Name where
 
 instance Ord Name where
   Name _ x `compare` Name _ y = compare x y
+
+instance Hashable Name where
+  hashWithSalt s (Name _ x) = hashWithSalt s x
 
 type Program = [Decl]
 
