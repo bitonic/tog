@@ -4,11 +4,11 @@ module TypeCheck (checkProgram, TCState') where
 import           Prelude                          hiding (abs, pi)
 
 import           Data.Functor                     ((<$>), (<$))
-import           Data.Foldable                    (forM_, toList, Foldable)
+import           Data.Foldable                    (forM_)
 import qualified Data.HashSet                     as HS
 import           Control.Monad                    (when, void, guard, mzero, forM, msum, join)
 import           Data.List                        (sortBy, groupBy)
-import           Data.Traversable                 (traverse, sequenceA, Traversable)
+import           Data.Traversable                 (traverse, sequenceA)
 import           Prelude.Extras                   ((==#))
 import           Bound                            (Var(F, B), Bound, (>>>=), Scope(Scope), fromScope)
 import           Bound.Var                        (unvar)
@@ -217,42 +217,6 @@ addProjections tyCon tyConPars self fields0 =
         go fields' $
          Tel.instantiate fieldTypes' $ unview $ App (Var self) [Proj field ix]
       (_, _) -> error "impossible.addProjections: impossible: lengths do not match"
-
--- addProjections
---     :: forall v t.
---        (IsVar v, IsTerm t)
---     => Name
---     -- ^ Type constructor.
---     -> Ctx t v
---     -- ^ A context with the parameters to the type constructor, except
---     -- the last one ("self").
---     -> (Name, Type t v)
---     -- ^ Name and type for the the value of type record type itself,
---     -- which is the last argument of each projection ("self").  We have
---     -- a 'TermVar' in the context precisely because we're scoping over
---     -- the self element after the tycon parameters above.
---     -> [Name]
---     -- ^ Names of the remaining fields.
---     -> Tel.ProxyTel (Type t) (TermVar v)
---     -- ^ Telescope holding the types of the next fields, scoped
---     -- over the types of the previous fields.
---     -> TC' t ()
--- addProjections tyCon tyConPars (selfName, selfType) fields0 =
---     go $ zip fields0 $ map Field [0,1..]
---   where
---     tyConParsWithSelf = Ctx.Snoc tyConPars (selfName, selfType)
---     selfVar = boundTermVar selfName
-
---     go :: [(Name, Field)] -> Tel.ProxyTel (Type t) (TermVar v) -> TC' t ()
---     go fields fieldTypes = case (fields, fieldTypes) of
---       ([], Tel.Empty Tel.Proxy) ->
---         return ()
---       ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
---         let endType = pi (ctxApp (def tyCon []) tyConParsWithSelf) (toAbs fieldType)
---         addProjection field ix tyCon (Tel.idTel tyConParsWithSelf endType)
---         go fields' $
---           Tel.instantiate fieldTypes' $ unview $ App (Var selfVar) [Proj field ix]
---       (_, _) -> error "impossible.addProjections: impossible: lengths do not match"
 
 -- TODO what about pattern coverage?
 
@@ -729,7 +693,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
               Just mvT ->
                 checkEqual ctx type_ (eliminate (vacuous mvT) elims') t'
           Right inv -> do
-            t1 <- pruneTerm (Set.fromList $ toList inv) t
+            t1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t
             t2 <- withSignature $ \sig -> applyInvertMeta sig inv t1
             case t2 of
               TTOK t' -> do
@@ -881,15 +845,16 @@ shouldKill sig vs t = do
         -- (not meta variable), but the API does not help us...
 
 
-data InvertMeta t v v0 =
-  = IMSubst [(v0, t v)] [v]
+data InvertMeta t v0 =
+  forall v. (IsVar v) => InvertMeta [(v0, t v)] [v]
   -- A substitution from variables of the term on the left of the
   -- equation to variables inside the metavar.
   --
   -- We also keep an ordered list of variables to abstract the body of
   -- the metavariable.
-  | IMArgument (InvertMeta t (TermVar v) v0)
-  deriving (Functor, Foldable, Traversable)
+
+invertMetaVars :: InvertMeta t v0 -> [v0]
+invertMetaVars (InvertMeta sub _) = map fst sub
 
 -- | Tries to invert a metavariable given its parameters (eliminators),
 -- providing a substitution for the term on the right if it suceeds.
@@ -898,8 +863,7 @@ data InvertMeta t v v0 =
 -- the terms are not variables.
 --
 -- 'TTMetaVars' if the pattern condition check is blocked on a some
--- 'MetaVar's.  The set is empty if the pattern condition is not
--- respected and no 'MetaVar' can change that.
+-- 'MetaVar's.
 --
 -- 'TTFail' if the pattern condition fails.
 invertMeta
@@ -907,29 +871,42 @@ invertMeta
      (IsVar v0, IsTerm t)
   => Sig.Signature t
   -> [Elim (Term t) v0]
-  -> TermTraverse () (InvertMeta t v0 v0)
+  -> TermTraverse () (InvertMeta t v0)
 invertMeta sig elims0 = case mapM isApply elims0 of
-    Just args0 -> go args0 [] (length args0)
+    Just args0 -> go args0 ([] :: [v0]) (length args0)
     Nothing    -> TTFail ()
   where
-    go :: [Term t v0] -> [v] -> Int -> TermTraverse () (InvertMeta t v v0)
+    -- First we build up a list of variables representing the bound
+    -- arguments in the metavar body.
+    go :: (IsVar v)
+       => [Term t v0] -> [v] -> Int -> TermTraverse () (InvertMeta t v0)
     go args vs 0 =
       let vs' = reverse vs
+      -- Then we try to invert passing pairs of arguments to the
+      -- metavariable and bound arguments of the body of the
+      -- metavariable.
       in case checkArgs (zip args (map var vs')) of
            TTFail ()      -> TTFail ()
            TTMetaVars mvs -> TTMetaVars mvs
-           TTOK sub       -> IMSubst <$> checkLinearity sub <*> pure vs'
+           -- If we're good, we also check that each variable gets
+           -- substituted with only one thing.
+           TTOK sub       -> InvertMeta <$> checkLinearity sub <*> pure vs'
     go args vs n =
-      IMArgument <$> go args (boundTermVar "_" : map F vs) (n - 1)
+      go args (boundTermVar "_" : map F vs) (n - 1)
 
     checkArgs :: [(Term t v0, Term t v)] -> TermTraverse () [(v0, Term t v)]
     checkArgs xs = concat <$> traverse (uncurry checkArg) xs
 
     checkArg :: Term t v0 -> Term t v -> TermTraverse () [(v0, Term t v)]
     checkArg arg v = case whnf sig arg of
+      -- If the argument is a variable, we are simply going to replace
+      -- it with the corresponding variable in the body of the meta.
       NotBlocked t
         | App (Var v0) [] <- view t ->
           pure [(v0, v)]
+      -- If the argument is a record, we're going to substitute the
+      -- variable on the right with projected terms inside the body of
+      -- the metavariable.
       NotBlocked t
         | Con dataCon recArgs <- view t
         , DataCon tyCon _ <- Sig.getDefinition sig dataCon
@@ -957,16 +934,11 @@ invertMeta sig elims0 = case mapM isApply elims0 of
 applyInvertMeta
   :: forall t v0.
      (IsVar v0, IsTerm t)
-  => Sig.Signature t -> InvertMeta t v0 v0 -> Term t v0
+  => Sig.Signature t -> InvertMeta t v0 -> Term t v0
   -> TermTraverse v0 (Closed (Term t))
-applyInvertMeta sig invMeta = go invMeta
+applyInvertMeta sig (InvertMeta sub vs) t =
+  fmap kill . lambdaAbstract vs <$> applyInvertMetaSubst sig sub t
   where
-    go :: (IsVar v)
-       => InvertMeta t v v0 -> Term t v0 -> TermTraverse v0 (Closed (Term t))
-    go (IMSubst    sub vs) t = fmap kill . lambdaAbstract vs <$>
-                               applyInvertMetaSubst sig sub t
-    go (IMArgument im)     t = go im t
-
     kill = error "applyInvertMeta.impossible"
 
 -- | Creates a term in the same context as the original term but lambda
