@@ -78,4 +78,3 @@ ctx1 ++ (Snoc ctx2 namedType) = Snoc (ctx1 ++ ctx2) namedType
 weaken :: Ctx v0 t v -> v0 -> v
 weaken Empty        v = v
 weaken (Snoc ctx _) v = F (weaken ctx v)
-

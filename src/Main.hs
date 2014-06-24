@@ -6,12 +6,11 @@ import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT,
 
 import           Syntax.Raw                       (parseProgram)
 import           Syntax.Internal                  (checkScope)
-import           Check                            (checkProgram)
+import           TypeCheck                        (checkProgram, TCState')
 import           Term
-import           Monad
 
-checkFile :: FilePath -> IO (Either String (TCState LazySimpleScope))
-checkFile file = (runEitherT :: EitherT String IO (TCState LazySimpleScope) -> IO (Either String (TCState LazySimpleScope))) $ do
+checkFile :: FilePath -> IO (Either String (TCState' LazySimpleScope))
+checkFile file = runEitherT $ do
     s   <- lift $ readFile file
     raw <- hoistEither $ showError "Parse" $ parseProgram s
     int <- hoistEither $ showError "Scope" $ checkScope raw
