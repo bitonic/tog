@@ -713,20 +713,25 @@ metaAssign ctx0 type0 mv elims0 t0 = do
               TTFail ()      -> Left $ Set.singleton mv
         case invOrMvs of
           Left mvs -> do
+            -- If we can't invert, try to prune the variables not
+            -- present on the right from the eliminators.
             t' <- withSignature $ \sig -> nf sig t
             -- TODO should we really prune allowing all variables here?  Or
             -- only the rigid ones?
             fvs <- withSignature $ \sig -> fvAll $ freeVars sig t'
             elims' <- withSignature $ \sig -> map (nf' sig) elims
-            pruned <- prune fvs mv elims'
-            if pruned
-              then checkEqual ctx type_ (metaVar mv elims) t
-              else newProblem mvs $ CheckEqual ctx type_ (metaVar mv elims) t
+            mbMvT <- prune fvs mv elims'
+            -- If we managed to prune them, restart the equality.
+            -- Otherwise, wait on the metavariables.
+            case mbMvT of
+              Nothing ->
+                newProblem mvs $ CheckEqual ctx type_ (metaVar mv elims) t
+              Just mvT ->
+                checkEqual ctx type_ (eliminate (vacuous mvT) elims') t'
           Right inv -> do
-            -- TODO have `pruneTerm' return an evaluated term.
-            pruneTerm (Set.fromList $ toList inv) t
-            t'0 <- withSignature $ \sig -> applyInvertMeta sig inv $ nf sig t
-            case t'0 of
+            t1 <- pruneTerm (Set.fromList $ toList inv) t
+            t2 <- withSignature $ \sig -> applyInvertMeta sig inv t1
+            case t2 of
               TTOK t' -> do
                 let mvs = metaVars t'
                 when (mv `HS.member` mvs) $
@@ -739,36 +744,47 @@ metaAssign ctx0 type0 mv elims0 t0 = do
                 checkError $ FreeVariableInEquatedTerm mv elims t v
 
 -- | The term must be in normal form.
+--
+-- Returns the pruned term.
 pruneTerm
     :: (IsVar v, IsTerm t)
     => Set.Set v                -- ^ allowed vars
     -> Term t v
-    -> TC' t ()
+    -> TC' t (Term t v)
 pruneTerm vs t = do
   tView <- whnfViewTC t
   case tView of
     Lam body -> do
       let body' = fromAbs body
-      pruneTerm (Set.insert (boundTermVar (getName_ body')) (Set.mapMonotonic F vs)) body'
+      lam . toAbs <$> pruneTerm (addVar (getName_ body')) body'
     Pi domain codomain -> do
-      pruneTerm vs domain
       let codomain' = fromAbs codomain
-      pruneTerm (Set.insert (boundTermVar (getName_ codomain')) (Set.mapMonotonic F vs)) codomain'
-    Equal type_ x y ->
-      mapM_ (pruneTerm vs) [type_, x, y]
-    App (Meta mv) elims ->
-      void (prune vs mv elims) >> return ()
-    App _ elims ->
-      mapM_ (pruneTerm vs) [t' | Apply t' <- elims]
+      pi <$> pruneTerm vs domain
+         <*> (toAbs <$> pruneTerm (addVar (getName_ codomain')) codomain')
+    Equal type_ x y -> do
+      equal <$> pruneTerm vs type_ <*> pruneTerm vs x <*> pruneTerm vs y
+    App (Meta mv) elims -> do
+      mbMvT <- prune vs mv elims
+      return $ case mbMvT of
+        Nothing  -> metaVar mv elims
+        Just mvT -> eliminate (vacuous mvT) elims
+    App h elims -> do
+      app h <$> mapM pruneElim elims
     Set ->
-      return ()
+      return set
     Refl ->
-      return ()
-    Con _ args ->
-      mapM_ (pruneTerm vs) args
+      return refl
+    Con dataCon args ->
+      con dataCon <$> mapM (pruneTerm vs) args
+  where
+    pruneElim (Apply t') = Apply <$> pruneTerm vs t'
+    pruneElim (Proj n f) = return $ Proj n f
+
+    addVar name = Set.insert (boundTermVar name) (Set.mapMonotonic F vs)
 
 -- | Prunes a 'MetaVar' application and instantiates the new body.
--- Returns if some (not necessarely all) pruning was performed.
+-- Returns the the new body of the metavariable if we managed to prune
+-- anything.
 --
 -- The term must be in normal form.
 prune
@@ -777,9 +793,9 @@ prune
     => Set.Set v0               -- ^ allowed vars
     -> MetaVar
     -> [Elim (Term t) v0]       -- ^ Arguments to the metavariable
-    -> TC' t Bool
+    -> TC' t (Maybe (Closed (Term t)))
 prune allowedVs oldMv elims | Just args <- mapM isApply elims =
-  maybe False (\() -> True) <$> runMaybeT (go args)
+  runMaybeT $ go args
   where
     go args = do
       -- TODO check that newly created meta is well-typed.
@@ -789,7 +805,9 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims =
       (newMvType, kills1) <- lift $ withSignature $ \sig -> createNewMeta sig oldMvType kills0
       guard $ any unNamed kills1
       newMv <- lift $ addMetaVar $ telPi newMvType
-      lift $ instantiateMetaVar oldMv (createMetaLam newMv kills1)
+      let mvT = createMetaLam newMv kills1
+      lift $ instantiateMetaVar oldMv mvT
+      return mvT
 
     -- We build a telescope with only the non-killed types in.  This
     -- way, we can analyze the dependency between arguments and avoid
@@ -830,7 +848,7 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims =
           in lam $ toAbs $ go' vs' kills
 prune _ _ _ = do
   -- TODO we could probably do something more.
-  return False
+  return Nothing
 
 -- | Returns whether the term should be killed, given a set of allowed
 -- variables.
@@ -863,7 +881,7 @@ shouldKill sig vs t = do
         -- (not meta variable), but the API does not help us...
 
 
-data InvertMeta t v v0
+data InvertMeta t v v0 =
   = IMSubst [(v0, t v)] [v]
   -- A substitution from variables of the term on the left of the
   -- equation to variables inside the metavar.
@@ -892,7 +910,7 @@ invertMeta
   -> TermTraverse () (InvertMeta t v0 v0)
 invertMeta sig elims0 = case mapM isApply elims0 of
     Just args0 -> go args0 [] (length args0)
-    Nothing    -> TTFail ()     -- TODO eta-expand metavars to eliminate projections.
+    Nothing    -> TTFail ()
   where
     go :: [Term t v0] -> [v] -> Int -> TermTraverse () (InvertMeta t v v0)
     go args vs 0 =
