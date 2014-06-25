@@ -14,7 +14,6 @@ module Term.Eval
 import           Prelude                          hiding (pi)
 
 import           Bound.Name                       (instantiateName)
-import           Data.Void                        (vacuousM)
 import           Prelude.Extras                   (Eq1((==#)))
 import qualified Data.HashSet                     as HS
 import           Bound                            hiding (instantiate)
@@ -75,7 +74,7 @@ ignoreBlocking (BlockedOn _ funName es) = def funName es
 whnf :: (IsTerm t) => Sig.Signature t -> t v -> Blocked t v
 whnf sig t = case view t of
   App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv ->
-    whnf sig $ eliminate (vacuousM t') es
+    whnf sig $ eliminate (substVacuous t') es
   App (Def defName) es | Function _ cs <- Sig.getDefinition sig defName ->
     whnfFun sig defName es $ ignoreInvertible cs
   App J (_ : x : _ : _ : Apply p : Apply refl' : es) | Refl <- view refl' ->
@@ -101,7 +100,7 @@ whnfFun sig funName es (Clause patterns body : clauses) =
       let ixArg n = if n >= length args
                     then error "Eval.whnf: too few arguments"
                     else args !! n
-      let body' = instantiateName ixArg (vacuousM body)
+      let body' = substInstantiateName ixArg (subst'Vacuous body)
       whnf sig $ eliminate body' leftoverEs
 
 matchClause
@@ -167,7 +166,7 @@ instance Nf Tel.Proxy where
   nf' _ Tel.Proxy = Tel.Proxy
 
 instance Nf Clause where
-  nf' sig (Clause pats body) = Clause pats $ toScope $ nf sig $ fromScope body
+  nf' sig (Clause pats body) = Clause pats $ substToScope $ nf sig $ substFromScope body
 
 instance Nf Definition where
   nf' sig (Constant kind t)              = Constant kind (nf sig t)

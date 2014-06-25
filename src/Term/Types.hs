@@ -3,16 +3,18 @@ module Term.Types where
 
 import           Prelude                          hiding (pi, foldr)
 
-import           Bound                            hiding (instantiate)
+import           Bound                            (Scope(Scope), Var(B, F), Bound, (>>>=))
 import           Bound.Var                        (unvar)
+import           Bound.Scope                      (unscope)
+import qualified Bound.Scope.Simple               as Bound.Simple
 import qualified Bound.Name                       as Bound
+import           Control.Comonad                  (Comonad, extract)
 import           Data.Foldable                    (Foldable, foldr)
 import           Data.Traversable                 (Traversable, traverse)
 import           Prelude.Extras                   (Eq1((==#)))
 import           Data.Void                        (Void, absurd)
 import           Data.Monoid                      (mempty, (<>), mconcat)
 import qualified Data.HashSet                     as HS
-import           Control.Monad                    (liftM)
 import           Data.Typeable                    (Typeable)
 import           Data.Hashable                    (Hashable)
 import           Data.Maybe                       (fromMaybe)
@@ -136,6 +138,10 @@ instance (Eq1 term) => Eq1 (Elim term) where
     Proj n1 f1 ==# Proj n2 f2 = n1 == n2 && f1 == f2
     _          ==# _          = False
 
+instance Subst' Elim where
+    subst' (Apply t)      f = Apply (subst t f)
+    subst' (Proj n field) _ = Proj n field
+
 instance Bound Elim where
     Apply t      >>>= f = Apply (t >>= f)
     Proj n field >>>= _ = Proj n field
@@ -175,6 +181,9 @@ type ClosedTermView term = TermView term Void
 -- Term typeclass
 ------------------------------------------------------------------------
 
+-- MetaVars
+-----------
+
 -- | Things that contain 'MetaVar's.
 class MetaVars t where
     metaVars :: t v -> HS.HashSet MetaVar
@@ -197,8 +206,57 @@ instance MetaVars t => MetaVars (Elim t) where
     metaVars (Apply t)  = metaVars t
     metaVars (Proj _ _) = mempty
 
+-- Subst
+--------
+
+-- | Substitution of variables.  We don't use monad because the monad
+-- laws will not be respected for some instances: for example `subst'
+-- might be strict on the first argument.
+class Subst t where
+  subst :: t a -> (a -> t b) -> t b
+
+  substMap :: (View t, Subst t) => (a -> b) -> t a -> t b
+  substMap f t = subst t (var . f)
+
+substFromScope :: (View f, Subst f) => Scope b f a -> f (Var b a)
+substFromScope (Scope s) = subst s $ \v -> case v of
+  F e -> substMap F e
+  B b -> var (B b)
+
+substToScope :: (View f, Subst f) => f (Var b a) -> Scope b f a
+substToScope e = Scope (substMap (fmap var) e)
+
+substInstantiateName
+  :: (View f, Subst f, Comonad n) => (b -> f a) -> Scope (n b) f a -> f a
+substInstantiateName k e = subst (unscope e) $ \v -> case v of
+  B b -> k (extract b)
+  F a -> a
+
+substVacuous :: (View t, Subst t) => t Void -> t a
+substVacuous = substMap absurd
+
+class Subst' t where
+  subst' :: (Subst f, View f) => t f a -> (a -> f b) -> t f b
+
+instance Subst' (Scope b) where
+  subst' (Scope s) f = Scope $ substMap (fmap (`subst` f)) s
+
+instance Subst' (Bound.Simple.Scope b) where
+  subst' (Bound.Simple.Scope s) f = Bound.Simple.Scope $ subst s $ \v -> case v of
+    B v' -> var $ B v'
+    F v' -> substMap F $ f v'
+
+subst'Map :: (Subst' t, Subst f, View f) => (a -> b) -> t f a -> t f b
+subst'Map f t = subst' t (var . f)
+
+subst'Vacuous :: (View f, Subst f, Subst' t) => t f Void -> t f a
+subst'Vacuous = subst'Map absurd
+
+-- HasAbs
+---------
+
 -- | Abstractions.
-class (Monad t) => HasAbs t where
+class (Subst t, View t) => HasAbs t where
     -- Methods present in the typeclass so that the instances can
     -- support a faster version.
 
@@ -211,19 +269,19 @@ class (Monad t) => HasAbs t where
         f (F _) Nothing  = Nothing
 
     weaken :: t v -> Abs t v
-    weaken = liftM F
+    weaken = substMap F
 
     strengthen :: Abs t v -> Maybe (t v)
     default strengthen :: (Traversable t) => Abs t v -> Maybe (t v)
     strengthen = traverse (unvar (const Nothing) Just)
 
     instantiate :: Abs t v -> t v -> t v
-    instantiate abs' t = abs' >>= \v -> case v of
+    instantiate abs' t = subst abs' $ \v -> case v of
         B _  -> t
-        F v' -> return v'
+        F v' -> var v'
 
     abstract :: (Eq v, VarName v) => v -> t v -> Abs t v
-    abstract v t = liftM f t
+    abstract v t = substMap f t
       where
         f v' = if v == v' then boundTermVar (varName v) else F v'
 
@@ -236,7 +294,7 @@ class View t where
     unview :: TermView t v -> t v
     view   :: t v -> TermView t v
 
-class (Eq1 t, Functor t, Monad t, Typeable t, View t, MetaVars t, HasAbs t) => IsTerm t
+class (Eq1 t, Subst t, Typeable t, View t, MetaVars t, HasAbs t) => IsTerm t
 
 -- Term utils
 -------------

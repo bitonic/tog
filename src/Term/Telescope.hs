@@ -33,7 +33,7 @@ import           Data.Void                        (Void)
 
 import           Syntax.Internal                  (Name)
 import qualified Term.Context                     as Ctx
-import           Term.Types                       (IsVar, IsTerm, TermVar)
+import           Term.Types                       (IsVar, IsTerm, TermVar, Subst, subst, Subst', subst')
 import qualified Term.Types                       as Term
 
 -- Tel
@@ -52,21 +52,21 @@ type ClosedTel t f = Tel t f Void
 -- | Instantiates an 'IdTel' repeatedly until we get to the bottom of
 -- it.  Fails If the length of the 'Tel' and the provided list don't
 -- match.
-substs :: (Monad f) => IdTel f v0 -> [f v0] -> f v0
+substs :: (IsTerm f) => IdTel f v0 -> [f v0] -> f v0
 substs (Empty t)     []           = unId t
 substs (Empty _)     (_ : _)      = error "Types.Telescope.instantiate: too many arguments"
 substs (Cons _ _)    []           = error "Types.Telescope.instantiate: too few arguments"
-substs (Cons _ tel') (arg : args) = substs (tel' >>>= instArg) args
+substs (Cons _ tel') (arg : args) = substs (subst' tel' instArg) args
   where
     instArg (B _) = arg
-    instArg (F v) = return v
+    instArg (F v) = Term.var v
 
 -- | Instantiates a bound variable.
-instantiate :: (Monad f, Bound t) => Tel t f (TermVar v) -> f v -> Tel t f v
-instantiate tel' t = tel' >>>= inst
+instantiate :: (IsTerm f, Subst' t) => Tel t f (TermVar v) -> f v -> Tel t f v
+instantiate tel' t = subst' tel' inst
   where
     inst (B _) = t
-    inst (F v) = return v
+    inst (F v) = Term.var v
 
 strengthen :: (IsTerm f) => IdTel f (TermVar v) -> Maybe (IdTel f v)
 strengthen (Empty (Id t)) =
@@ -95,6 +95,9 @@ instance Traversable (Proxy f) where
 instance Bound Proxy where
      Proxy >>>= _ = Proxy
 
+instance Subst' Proxy where
+     subst' Proxy _ = Proxy
+
 -- | An identity type, useful to have terms at the end of a 'Tel'.
 newtype Id f v = Id {unId :: f v}
   deriving (Functor, Foldable, Traversable)
@@ -102,11 +105,17 @@ newtype Id f v = Id {unId :: f v}
 instance Bound Id where
   Id t >>>= f = Id (t >>= f)
 
+instance Subst' Id where
+  subst' (Id t) f = Id (subst t f)
+
 data Prod2 (f :: * -> *) v = Prod2 (f v) (f v)
   deriving (Functor, Foldable, Traversable)
 
 instance Bound Prod2 where
   Prod2 x y >>>= f = Prod2 (x >>= f) (y >>= f)
+
+instance Subst' Prod2 where
+  subst' (Prod2 x y) f = Prod2 (subst x f) (subst y f)
 
 type IdTel    = Tel Id
 type ProxyTel = Tel Proxy
@@ -135,6 +144,13 @@ instance (Bound t) => Bound (Tel t) where
       where
         f' (B v) = return (B v)
         f' (F v) = liftM F (f v)
+
+instance (Subst' t) => Subst' (Tel t) where
+    subst' (Empty t)              f = Empty (subst' t f)
+    subst' (Cons (n, type_) tel') f = Cons (n, subst type_ f) (subst' tel' f')
+      where
+        f' (B v) = Term.var (B v)
+        f' (F v) = Term.substMap F (f v)
 
 -- To/from Ctx
 --------------

@@ -39,6 +39,11 @@ instance Monad LazySimpleScope where
                    J       -> App J         elims'
                    Meta mv -> App (Meta mv) elims'
 
+instance Subst LazySimpleScope where
+  subst = (>>=)
+
+  substMap = fmap
+
 instance Applicative LazySimpleScope where
     pure = return
     (<*>) = ap

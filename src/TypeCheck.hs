@@ -12,9 +12,9 @@ import           Control.Monad                    (when, void, guard, mzero, for
 import           Data.List                        (sortBy, groupBy)
 import           Data.Traversable                 (traverse, sequenceA)
 import           Prelude.Extras                   ((==#))
-import           Bound                            (Var(F, B), Bound, (>>>=), Scope(Scope), fromScope)
+import           Bound                            (Var(F, B), Scope(Scope))
 import           Data.Typeable                    (Typeable)
-import           Data.Void                        (vacuous, Void, vacuousM, absurd)
+import           Data.Void                        (Void, absurd)
 import           Control.Applicative              (Applicative(pure, (<*>)))
 import           Control.Monad.Trans              (lift)
 import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT)
@@ -143,7 +143,7 @@ checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
     atSrcLoc dataCon $ do
         dataConType <- isType tyConPars synDataConType
         unrollPiTC dataConType $ \vs endType -> do
-            let appliedTyConType' = fmap (Ctx.weaken vs) appliedTyConType
+            let appliedTyConType' = substMap (Ctx.weaken vs) appliedTyConType
             elimStuckTC (equalType (tyConPars Ctx.++ vs) appliedTyConType' endType) $ do
               checkError $ TermsNotEqual appliedTyConType' endType
         addDataCon dataCon tyCon (Tel.idTel tyConPars dataConType)
@@ -168,11 +168,11 @@ checkRec tyCon tyConPars dataCon fields = do
         let appliedTyConType = ctxApp (def tyCon []) tyConPars'
         addProjections
           tyCon tyConPars' (boundTermVar "_") (map A.typeSigName fields)
-          (fmap F fieldsTel)
+          (subst'Map F fieldsTel)
         Tel.unTel fieldsTel $ \fieldsCtx Tel.Proxy ->
             addDataCon dataCon tyCon $
             Tel.idTel tyConPars' $
-            ctxPi fieldsCtx (fmap (Ctx.weaken fieldsCtx) appliedTyConType)
+            ctxPi fieldsCtx (substMap (Ctx.weaken fieldsCtx) appliedTyConType)
 
 checkFields
     :: forall v t. (IsVar v, IsTerm t)
@@ -225,7 +225,7 @@ checkFunDef fun synClauses = do
     clauses <- forM synClauses $ \(A.Clause synPats synClauseBody) -> do
       checkPatterns fun synPats funType $ \ctx pats _ clauseType -> do
         clauseBody <- check ctx synClauseBody clauseType
-        return $ Clause pats $ Scope $ fmap (toIntVar ctx) clauseBody
+        return $ Clause pats $ Scope $ substMap (toIntVar ctx) clauseBody
     inv <- withSignature $ \sig -> checkInvertibility sig clauses
     addClauses fun inv
   where
@@ -247,10 +247,10 @@ checkPatterns _ [] type_ ret =
 checkPatterns funName (synPat : synPats) type0 ret = atSrcLoc synPat $ do
   stuck <- matchPi_ type0 $ \dom cod -> fmap NotStuck $ do
     checkPattern funName synPat dom $ \ctx pat patVar -> do
-      let cod'  = fmap (fmap (Ctx.weaken ctx)) cod
+      let cod'  = substMap (fmap (Ctx.weaken ctx)) cod
       let cod'' = instantiate cod' patVar
       checkPatterns funName synPats cod'' $ \ctx' pats patsVars -> do
-        let patVar' = fmap (Ctx.weaken ctx') patVar
+        let patVar' = substMap (Ctx.weaken ctx') patVar
         ret (ctx Ctx.++ ctx') (pat : pats) (patVar' : patsVars)
   checkPatternStuck funName stuck
 
@@ -277,7 +277,7 @@ checkPattern funName synPat type_ ret = case synPat of
         Constant (Record _ _) _ -> checkError $ PatternMatchOnRecord synPat typeCon
         _                       -> error $ "impossible.checkPattern" ++ render typeConDef
       stuck <- matchTyCon typeCon type_ $ \typeConArgs -> fmap NotStuck $ do
-        let dataConTypeNoPars = Tel.substs (vacuous dataConType) typeConArgs
+        let dataConTypeNoPars = Tel.substs (subst'Vacuous dataConType) typeConArgs
         checkPatterns funName synPats dataConTypeNoPars $ \ctx pats patsVars _ -> do
           let t = unview (Con dataCon patsVars)
           ret ctx (ConP dataCon pats) t
@@ -300,7 +300,7 @@ check ctx synT type_ = atSrcLoc synT $ case synT of
   A.Con dataCon synArgs -> do
     DataCon tyCon dataConType <- getDefinition dataCon
     metaVarIfStuck ctx type_ $ matchTyCon tyCon type_ $ \tyConArgs -> do
-      let appliedDataConType = Tel.substs (vacuous dataConType) tyConArgs
+      let appliedDataConType = Tel.substs (subst'Vacuous dataConType) tyConArgs
       checkConArgs ctx synArgs appliedDataConType `bindStuckTC`
         WaitingOn (con dataCon)
   A.Refl _ -> do
@@ -406,9 +406,9 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
       Just (v, type_) -> return (Var v, type_)
   A.Def name -> do
     type_ <- definitionType <$> getDefinition name
-    return (Def name, vacuous type_)
+    return (Def name, substVacuous type_)
   A.J{} ->
-    return (J, vacuous $ typeOfJ)
+    return (J, substVacuous typeOfJ)
 
 -- (A : Set) ->
 -- (x : A) ->
@@ -418,7 +418,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 -- (eq : _==_ A x y) ->
 -- P x y eq
 typeOfJ :: forall t. (IsTerm t) => Closed (Type t)
-typeOfJ = fmap close $
+typeOfJ = substMap close $
     ("A", set) -->
     ("x", var "A") -->
     ("y", var "A") -->
@@ -483,7 +483,7 @@ checkEqual ctx type_ x y = do
           | Just tyConPars <- mapM isApply tyConPars0
           , dataCon == dataCon' -> do
             DataCon _ dataConType <- getDefinition dataCon
-            let appliedDataConType = Tel.substs (vacuous dataConType) tyConPars
+            let appliedDataConType = Tel.substs (subst'Vacuous dataConType) tyConPars
             equalConArgs ctx appliedDataConType dataCon dataConArgs1 dataConArgs2
       (Set, Set, Set) -> do
         returnStuckTC ()
@@ -548,9 +548,9 @@ equalSpine
 equalSpine ctx h elims1 elims2 = do
   hType <- case h of
     Var v   -> return $ Ctx.getVar v ctx
-    Def f   -> vacuous . definitionType <$> getDefinition f
-    J       -> return $ vacuous typeOfJ
-    Meta mv -> vacuous <$> getMetaVarType mv
+    Def f   -> substVacuous . definitionType <$> getDefinition f
+    J       -> return $ substVacuous typeOfJ
+    Meta mv -> substVacuous <$> getMetaVarType mv
   checkEqualSpine ctx hType (app h []) elims1 elims2
 
 -- | INVARIANT: the two lists are the of the same length.
@@ -621,7 +621,7 @@ checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
       case tView of
         App (Meta mv) mvArgs -> do
           mvT <- instantiateDataCon mv dataCon
-          matchPat dataCon pats $ Apply $ eliminate (vacuous mvT) mvArgs
+          matchPat dataCon pats $ Apply $ eliminate (substVacuous mvT) mvArgs
         Con dataCon' dataConArgs | dataCon == dataCon' ->
           matchPats pats (map Apply dataConArgs)
         _ ->
@@ -659,7 +659,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
   case mbRecordDataCon of
     Just dataCon -> do
       mvT <- instantiateDataCon mv dataCon
-      checkEqual ctx0 type0 (eliminate (vacuous mvT) elims0) t0
+      checkEqual ctx0 type0 (eliminate (substVacuous mvT) elims0) t0
     Nothing -> do
       etaExpandVarsTC ctx0 elims0 type0 t0 $ \ctx elims type_ t -> do
         -- See if we can invert the metavariable
@@ -686,7 +686,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
               Nothing ->
                 newProblem mvs $ CheckEqual ctx type_ (metaVar mv elims) t
               Just mvT ->
-                checkEqual ctx type_ (eliminate (vacuous mvT) elims') t'
+                checkEqual ctx type_ (eliminate (substVacuous mvT) elims') t'
           Right inv -> do
             t1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t
             t2 <- withSignature $ \sig -> applyInvertMeta sig inv t1
@@ -724,7 +724,7 @@ pruneTerm vs t = do
       mbMvT <- prune vs mv elims
       return $ case mbMvT of
         Nothing  -> metaVar mv elims
-        Just mvT -> eliminate (vacuous mvT) elims
+        Just mvT -> eliminate (substVacuous mvT) elims
     App h elims -> do
       app h <$> mapM pruneElim elims
     Set ->
@@ -929,7 +929,7 @@ applyInvertMeta
   => Sig.Signature t -> InvertMeta t v0 -> Term t v0
   -> TermTraverse v0 (Closed (Term t))
 applyInvertMeta sig (InvertMeta sub vs) t =
-  fmap kill . lambdaAbstract vs <$> applyInvertMetaSubst sig sub t
+  substMap kill . lambdaAbstract vs <$> applyInvertMetaSubst sig sub t
   where
     kill = error "applyInvertMeta.impossible"
 
@@ -946,14 +946,14 @@ applyInvertMetaSubst
        (IsVar v0, IsVar mvV, IsTerm t)
     => Sig.Signature t -> [(v0, t mvV)] -> Term t v0
     -> TermTraverse v0 (Term t mvV)
-applyInvertMetaSubst sig subst t0 =
-  flip go t0 $ \v -> maybe (Left v) Right (lookup v subst)
+applyInvertMetaSubst sig sub t0 =
+  flip go t0 $ \v -> maybe (Left v) Right (lookup v sub)
   where
     lift' :: forall v v1.
              (v -> Either v0 (Term t v1))
           -> (TermVar v -> Either v0 (Term t (TermVar v1)))
     lift' _ (B v) = Right $ var $ B v
-    lift' f (F v) = fmap F <$> f v
+    lift' f (F v) = substMap F <$> f v
 
     go :: forall v v1. (IsVar v, IsVar v1)
        => (v -> Either v0 (Term t v1)) -> Term t v -> TermTraverse v0 (t v1)
@@ -996,8 +996,8 @@ applyInvertMetaSubst sig subst t0 =
 
 data EtaExpandVars t f v = EtaExpandVars [Elim f v] (t f v)
 
-instance (Bound t) => Bound (EtaExpandVars t) where
-  EtaExpandVars elims t >>>= f = EtaExpandVars (map (>>>= f) elims) (t >>>= f)
+instance (Subst' t) => Subst' (EtaExpandVars t) where
+  subst' (EtaExpandVars elims t) f = EtaExpandVars (map (\x -> subst' x f) elims) (subst' t f)
 
 etaExpandVarsTC
   :: (IsVar v, IsTerm t)
@@ -1013,7 +1013,7 @@ etaExpandVarsTC ctx elims type_ t ret = do
       ret ctx' elims' type' t'
 
 etaExpandVars
-  :: (IsVar v, IsTerm f, Bound t)
+  :: (IsVar v, IsTerm f, Subst' t)
   => Sig.Signature f
   -> Ctx.ClosedCtx f v
   -> [Elim f v]
@@ -1036,7 +1036,7 @@ etaExpandVars sig ctx0 elims0 t ret =
 -- type and the old telescope with the variable substituted with a
 -- constructed record.
 etaExpandVar
-  :: (IsVar v, IsTerm f, Bound t)
+  :: (IsVar v, IsTerm f, Subst' t)
   => Sig.Signature f
   -> Name
   -- ^ The type constructor of the record type.
@@ -1049,9 +1049,9 @@ etaExpandVar sig tyCon type_ tel =
       DataCon _ dataConType = Sig.getDefinition sig dataCon
       App (Def _) tyConPars0 = whnfView sig type_
       Just tyConPars = mapM isApply tyConPars0
-      appliedDataConType = Tel.substs (vacuous dataConType) tyConPars
+      appliedDataConType = Tel.substs (subst'Vacuous dataConType) tyConPars
       Right tel'' = unrollPiWithNames sig appliedDataConType (map fst projs) $ \dataConPars _ ->
-        let tel' = tel >>>= \v -> case v of
+        let tel' = subst' tel $ \v -> case v of
                      B _  -> con dataCon $ map var $ ctxVars dataConPars
                      F v' -> var $ Ctx.weaken dataConPars v'
         in dataConPars Tel.++ tel'
@@ -1242,7 +1242,8 @@ matchTyCon tyCon t handler = do
       mvType <- getMetaVarType mv
       mvT <- unrollPiTC mvType $ \ctxMvArgs _ -> do
         Constant _ tyConType <- getDefinition tyCon
-        tyConParsTel <- unrollPiTC (vacuous tyConType) $ \ctx -> return . Tel.idTel ctx
+        tyConParsTel <- unrollPiTC (substVacuous tyConType) $ \ctx ->
+                        return . Tel.idTel ctx
         tyConPars <- createMvsPars ctxMvArgs tyConParsTel
         return $ ctxLam ctxMvArgs $ def tyCon $ map Apply tyConPars
       instantiateMetaVar mv mvT
@@ -1328,7 +1329,7 @@ applyProjection proj h type_ = do
     Projection projIx tyCon projType -> do
       let h' = eliminate h [Proj proj projIx]
       matchTyCon tyCon type_ $ \tyConArgs -> do
-        let appliedProjType = view $ Tel.substs (vacuous projType) tyConArgs
+        let appliedProjType = view $ Tel.substs (subst'Vacuous projType) tyConArgs
         case appliedProjType of
           Pi _ endType ->
             returnStuckTC (h', instantiate endType h)
@@ -1352,7 +1353,7 @@ instantiateDataCon mv dataCon = do
     App (Def tyCon') tyConArgs0 <- whnfViewTC endType'
     Just tyConArgs <- return $ mapM isApply tyConArgs0
     True <- return $ tyCon == tyCon'
-    let dataConType = Tel.substs (vacuous dataConTypeTel) tyConArgs
+    let dataConType = Tel.substs (subst'Vacuous dataConTypeTel) tyConArgs
     dataConArgsTel <- unrollPiTC dataConType $ \ctx -> return . Tel.idTel ctx
     dataConArgs <- createMvsPars ctxMvArgs dataConArgsTel
     return $ ctxLam ctxMvArgs $ con dataCon $ dataConArgs
@@ -1526,7 +1527,7 @@ instantiateMetaVars sig t = unview $
     Set ->
       Set
     App (Meta mv) els | Just t' <- Sig.getMetaVarBody sig mv ->
-      view $ instantiateMetaVars sig $ eliminate (vacuousM t') els
+      view $ instantiateMetaVars sig $ eliminate (substVacuous t') els
     App h els ->
       App h $ map goElim els
   where
@@ -1564,7 +1565,7 @@ checkInvertibility sig = go []
     go injClauses [] =
       Invertible $ reverse injClauses
     go injClauses (clause@(Clause _ body) : clauses) =
-      case termHead sig (fromScope body) of
+      case termHead sig (substFromScope body) of
         Just tHead | Nothing <- lookup tHead injClauses ->
           go ((tHead, clause) : injClauses) clauses
         _ ->

@@ -149,7 +149,7 @@ instance PP.Pretty ConstantKind where
 
 instance (IsTerm t) => PP.Pretty (Closed (Clause t)) where
   pretty (Clause pats body) =
-    PP.pretty pats <+> "=" $$ PP.nest 2 (prettyView (fromScope body))
+    PP.pretty pats <+> "=" $$ PP.nest 2 (prettyView (substFromScope body))
 
 instance (IsTerm t) => Show (Closed (Clause t)) where
   show = PP.render . PP.pretty
