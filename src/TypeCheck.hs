@@ -13,7 +13,6 @@ import           Data.List                        (sortBy, groupBy)
 import           Data.Traversable                 (traverse, sequenceA)
 import           Prelude.Extras                   ((==#))
 import           Bound                            (Var(F, B), Bound, (>>>=), Scope(Scope), fromScope)
-import           Bound.Var                        (unvar)
 import           Data.Typeable                    (Typeable)
 import           Data.Void                        (vacuous, Void, vacuousM, absurd)
 import           Control.Applicative              (Applicative(pure, (<*>)))
@@ -212,7 +211,7 @@ addProjections tyCon tyConPars self fields0 =
       ([], Tel.Empty Tel.Proxy) ->
         return ()
       ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
-        let endType = pi (ctxApp (def tyCon []) tyConPars) (toAbs fieldType)
+        let endType = pi (ctxApp (def tyCon []) tyConPars) fieldType
         addProjection field ix tyCon (Tel.idTel tyConPars endType)
         go fields' $
          Tel.instantiate fieldTypes' $ unview $ App (Var self) [Proj field ix]
@@ -248,7 +247,7 @@ checkPatterns _ [] type_ ret =
 checkPatterns funName (synPat : synPats) type0 ret = atSrcLoc synPat $ do
   stuck <- matchPi_ type0 $ \dom cod -> fmap NotStuck $ do
     checkPattern funName synPat dom $ \ctx pat patVar -> do
-      let cod'  = fmap (Ctx.weaken ctx) cod
+      let cod'  = fmap (fmap (Ctx.weaken ctx)) cod
       let cod'' = instantiate cod' patVar
       checkPatterns funName synPats cod'' $ \ctx' pats patsVars -> do
         let patVar' = fmap (Ctx.weaken ctx') patVar
@@ -311,8 +310,8 @@ check ctx synT type_ = atSrcLoc synT $ case synT of
     addMetaVarInCtx ctx type_
   A.Lam name synBody -> do
     metaVarIfStuck ctx type_ $ matchPi name type_ $ \dom cod -> do
-      body <- check (Ctx.Snoc ctx (name, dom)) synBody (fromAbs cod)
-      returnStuckTC $ lam (toAbs body)
+      body <- check (Ctx.Snoc ctx (name, dom)) synBody cod
+      returnStuckTC $ lam body
   _ -> do
     metaVarIfStuck ctx type_ $
       infer ctx synT `bindStuckTC` CheckEqualInfer ctx type_
@@ -381,7 +380,7 @@ infer ctx synT = atSrcLoc synT $ case synT of
   A.Pi name synDomain synCodomain -> do
     domain   <- isType ctx synDomain
     codomain <- isType (Ctx.Snoc ctx (name, domain)) synCodomain
-    returnStuckTC (pi domain (toAbs codomain), set)
+    returnStuckTC (pi domain codomain, set)
   A.Fun synDomain synCodomain -> do
     infer ctx $ A.Pi "_" synDomain synCodomain
   A.App synH elims -> do
@@ -470,14 +469,10 @@ checkEqual ctx type_ x y = do
       -- types, and on the terms to be eta-expanded.
       (Pi dom cod, Lam body1, Lam body2) -> do
         -- TODO there is a bit of duplication between here and expansion.
-        let body1' = fromAbs body1
-        let body2' = fromAbs body2
-        let cod'   = fromAbs cod
-        checkEqual (Ctx.Snoc ctx (getName_ body1', dom)) cod' body1' body2'
+        checkEqual (Ctx.Snoc ctx (getAbsName_ body1, dom)) cod body1 body2
       (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
-        let cod1' = fromAbs cod1
         checkEqual ctx set dom1 dom2 `bindStuckTC`
-          CheckEqual (Ctx.Snoc ctx (getName_ cod1', dom1)) set cod1' (fromAbs cod2)
+          CheckEqual (Ctx.Snoc ctx (getAbsName_ cod1, dom1)) set cod1 cod2
       (Set, Equal type1 x1 y1, Equal type2 x2 y2) -> do
         checkEqual ctx set type1 type2 `bindStuckTC`
           CheckEqual ctx type1 x1 x2   `bindStuckTC`
@@ -504,11 +499,11 @@ checkEqual ctx type_ x y = do
           in \t ->
                def dataCon $ map (\(n, ix) -> Apply (eliminate t [Proj n ix])) projs
         Pi _ codomain ->
-          let name = getName_ $ fromAbs codomain
+          let name = getAbsName_ codomain
               v    = var $ boundTermVar name
           in \t -> case view t of
                Lam _ -> t
-               _     -> lam $ toAbs $ eliminate (fromAbs (weaken t)) [Apply v]
+               _     -> lam $ eliminate (weaken t) [Apply v]
         _ ->
           id
 
@@ -719,12 +714,10 @@ pruneTerm vs t = do
   tView <- whnfViewTC t
   case tView of
     Lam body -> do
-      let body' = fromAbs body
-      lam . toAbs <$> pruneTerm (addVar (getName_ body')) body'
+      lam <$> pruneTerm (addVar (getAbsName_ body)) body
     Pi domain codomain -> do
-      let codomain' = fromAbs codomain
       pi <$> pruneTerm vs domain
-         <*> (toAbs <$> pruneTerm (addVar (getName_ codomain')) codomain')
+         <*> pruneTerm (addVar (getAbsName_ codomain)) codomain
     Equal type_ x y -> do
       equal <$> pruneTerm vs type_ <*> pruneTerm vs x <*> pruneTerm vs y
     App (Meta mv) elims -> do
@@ -789,13 +782,12 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims =
     createNewMeta sig type_ (kill : kills) =
       case whnfView sig type_ of
         Pi domain codomain ->
-          let codomain' = fromAbs codomain
-              name = getName_ codomain'
-              (tel, kills') = createNewMeta sig codomain' kills
+          let name = getAbsName_ codomain
+              (tel, kills') = createNewMeta sig codomain kills
               notKilled = (Tel.Cons (name, domain) tel, named name False : kills')
           in if not kill
              then notKilled
-             else case traverse (unvar (const Nothing) Just) tel of
+             else case Tel.strengthen tel of
                Nothing   -> notKilled
                Just tel' -> (tel', named name True : kills')
         _ ->
@@ -809,7 +801,7 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims =
           metaVar newMv $ map (Apply . var) (reverse vs)
         go' vs (kill : kills) =
           let vs' = (if unNamed kill then [] else [B (() <$ kill)]) ++ map F vs
-          in lam $ toAbs $ go' vs' kills
+          in lam $ go' vs' kills
 prune _ _ _ = do
   -- TODO we could probably do something more.
   return Nothing
@@ -968,10 +960,9 @@ applyInvertMetaSubst sig subst t0 =
     go invert t =
       case whnfView sig t of
         Lam body ->
-          (lam . toAbs) <$> go (lift' invert) (fromAbs body)
+          lam <$> go (lift' invert) body
         Pi dom cod ->
-          (\dom' cod' -> pi dom' (toAbs cod'))
-            <$> go invert dom <*> go (lift' invert) (fromAbs cod)
+          (\dom' cod' -> pi dom' cod') <$> go invert dom <*> go (lift' invert) cod
         Equal type_ x y ->
           (\type' x' y' -> equal type' x' y')
             <$> (go invert type_) <*> (go invert x) <*> (go invert y)
@@ -1106,10 +1097,10 @@ etaContract :: (IsVar v, IsTerm t) => Sig.Signature t -> t v -> t v
 etaContract sig t0 = case whnfView sig t0 of
   -- TODO it should be possible to do it also for constructors
   Lam body
-    | App h elims@(_:_) <- whnfView sig (etaContract sig (fromAbs body))
+    | App h elims@(_:_) <- whnfView sig (etaContract sig body)
     , Apply t <- last elims
     , App (Var (B _)) [] <- whnfView sig t
-    , Just t' <- traverse (unvar (const Nothing) Just) (app h (init elims)) ->
+    , Just t' <- strengthen (app h (init elims)) ->
       t'
   Con dataCon args
     | DataCon tyCon _ <- Sig.getDefinition sig dataCon
@@ -1280,7 +1271,7 @@ matchPi name t handler = do
       mvT <- unrollPiTC mvType $ \ctxMvArgs _ -> do
         dom <- addMetaVarInCtx ctxMvArgs set
         cod <- addMetaVarInCtx (Ctx.Snoc ctxMvArgs (name, dom)) set
-        return $ ctxLam ctxMvArgs $ pi dom $ toAbs cod
+        return $ ctxLam ctxMvArgs $ pi dom cod
       instantiateMetaVar mv mvT
       -- TODO Dangerous recursion, relying on correct instantiation.
       -- Maybe remove and do it explicitly?
@@ -1398,7 +1389,7 @@ unrollPiWithNames _ type_ [] ret =
 unrollPiWithNames sig type_ (name : names) ret =
   case whnfView sig type_ of
     Pi domain codomain ->
-      unrollPiWithNames sig (fromAbs codomain) names $ \ctxVs endType ->
+      unrollPiWithNames sig codomain names $ \ctxVs endType ->
       ret (Ctx.singleton name domain Ctx.++ ctxVs) endType
     _ ->
       Left $ ExpectedFunctionType type_ Nothing
@@ -1425,9 +1416,8 @@ unrollPi
 unrollPi sig type_ ret = do
   case whnfView sig type_ of
     Pi domain codomain ->
-      let codomain' = fromAbs codomain
-          name      = getName_ codomain'
-      in unrollPi sig codomain' $ \ctxVs endType ->
+      let name      = getAbsName_ codomain
+      in unrollPi sig codomain $ \ctxVs endType ->
          ret (Ctx.singleton name domain Ctx.++ ctxVs) endType
     _ ->
       ret Ctx.Empty type_
@@ -1524,9 +1514,9 @@ instantiateMetaVars :: (IsVar v, IsTerm t) => Sig.Signature t -> t v -> t v
 instantiateMetaVars sig t = unview $
   case view t of
     Lam abs ->
-      Lam (goAbs abs)
+      Lam abs
     Pi dom cod ->
-      Pi (go dom) (goAbs cod)
+      Pi (go dom) cod
     Equal type_ x y ->
       Equal (go type_) (go x) (go y)
     Refl ->
@@ -1541,8 +1531,6 @@ instantiateMetaVars sig t = unview $
       App h $ map goElim els
   where
     go = instantiateMetaVars sig
-
-    goAbs = toAbs . instantiateMetaVars sig . fromAbs
 
     goElim (Proj n field) = Proj n field
     goElim (Apply t')     = Apply (go t')
@@ -1605,13 +1593,13 @@ ctxApp t ctx0 = eliminate t $ map (Apply . var) $ ctxVars ctx0
 -- terminating with the provided 't'.
 ctxPi :: IsTerm t => Ctx.Ctx v0 (Type t) v -> Type t v -> Type t v0
 ctxPi Ctx.Empty                  t = t
-ctxPi (Ctx.Snoc ctx (_n, type_)) t = ctxPi ctx $ pi type_ (toAbs t)
+ctxPi (Ctx.Snoc ctx (_n, type_)) t = ctxPi ctx $ pi type_ t
 
 -- | Creates a 'Lam' term with as many arguments there are in the
 -- 'Ctx.Ctx'.
 ctxLam :: IsTerm t => Ctx.Ctx v0 (Type t) v -> Term t v -> Term t v0
 ctxLam Ctx.Empty        t = t
-ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx $ lam $ toAbs t
+ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx $ lam t
 
 -- Miscellanea
 --------------

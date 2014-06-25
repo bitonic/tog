@@ -9,6 +9,7 @@ module Term.Telescope
     , substs
     , instantiate
     , (++)
+    , strengthen
       -- ** 'Tel' types
     , Proxy(..)
     , Id(..)
@@ -22,17 +23,18 @@ module Term.Telescope
 import           Prelude                          hiding (pi, length, lookup, (++))
 
 import           Bound                            hiding (instantiate)
-import           Data.Void                        (Void)
-import           Data.Foldable                    (Foldable(foldMap))
-import           Data.Traversable                 (Traversable, sequenceA)
-import           Control.Monad                    (liftM)
-import           Data.Monoid                      (mempty, (<>))
 import           Control.Applicative              ((<$>), (<*>), pure)
+import           Control.Monad                    (liftM)
+import           Data.Foldable                    (Foldable(foldMap))
+import           Data.Monoid                      (mempty, (<>))
+import           Data.Traversable                 (Traversable, sequenceA)
 import           Data.Typeable                    (Typeable)
+import           Data.Void                        (Void)
 
 import           Syntax.Internal                  (Name)
 import qualified Term.Context                     as Ctx
-import           Term.Types                       hiding (instantiate)
+import           Term.Types                       (IsVar, IsTerm, TermVar)
+import qualified Term.Types                       as Term
 
 -- Tel
 ------------------------------------------------------------------------
@@ -65,6 +67,14 @@ instantiate tel' t = tel' >>>= inst
   where
     inst (B _) = t
     inst (F v) = return v
+
+strengthen :: (IsTerm f) => IdTel f (TermVar v) -> Maybe (IdTel f v)
+strengthen (Empty (Id t)) =
+  Empty . Id <$> Term.strengthen t
+strengthen (Cons (n, t) tel0) = do
+  t' <- Term.strengthen t
+  tel' <- strengthen tel0
+  return $ Cons (n, t') tel'
 
 -- Useful types
 ---------------

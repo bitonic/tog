@@ -4,9 +4,10 @@ module Term.Types where
 import           Prelude                          hiding (pi, foldr)
 
 import           Bound                            hiding (instantiate)
+import           Bound.Var                        (unvar)
 import qualified Bound.Name                       as Bound
 import           Data.Foldable                    (Foldable, foldr)
-import           Data.Traversable                 (Traversable)
+import           Data.Traversable                 (Traversable, traverse)
 import           Prelude.Extras                   (Eq1((==#)))
 import           Data.Void                        (Void, absurd)
 import           Data.Monoid                      (mempty, (<>), mconcat)
@@ -43,16 +44,6 @@ boundTermVar :: Name -> TermVar v
 boundTermVar n = B $ named n ()
 
 type Closed t = t Void
-
-getName :: Foldable t => t (TermVar v) -> Maybe Name
-getName = foldr f Nothing
-  where
-    f _     (Just n) = Just n
-    f (B v) Nothing  = Just (Bound.name v)
-    f (F _) Nothing  = Nothing
-
-getName_ :: Foldable t => t (TermVar v) -> Name
-getName_ = fromMaybe "_" . getName
 
 
 -- 'IsVar' variables
@@ -160,10 +151,7 @@ data TermView term v
     | Con Name [term v]
     | Set
     | App (Head v) [Elim term v]
-
-deriving instance (IsTerm term) => Functor (TermView term)
-deriving instance (IsTerm term) => Foldable (TermView term)
-deriving instance (IsTerm term) => Traversable (TermView term)
+    deriving (Functor, Foldable, Traversable)
 
 instance (Eq v, IsTerm t) => Eq (TermView t v) where
     t1 == t2 = t1 ==# t2
@@ -193,8 +181,8 @@ class MetaVars t where
 
     default metaVars :: (View t, HasAbs t) => t v -> HS.HashSet MetaVar
     metaVars t = case view t of
-        Lam body           -> metaVars (fromAbs body)
-        Pi domain codomain -> metaVars domain <> metaVars (fromAbs codomain)
+        Lam body           -> metaVars body
+        Pi domain codomain -> metaVars domain <> metaVars codomain
         Equal type_ x y    -> metaVars type_ <> metaVars x <> metaVars y
         App h elims        -> metaVars h <> mconcat (map metaVars elims)
         Set                -> mempty
@@ -211,39 +199,44 @@ instance MetaVars t => MetaVars (Elim t) where
 
 -- | Abstractions.
 class (Monad t) => HasAbs t where
-    data Abs t :: * -> *
-
-    -- | Transform a term scoped over something into an abstraction.
-    toAbs   :: t (TermVar v) -> Abs t v
-    -- | Transform an abstraction into a term scoped over something.
-    fromAbs :: Abs t v -> t (TermVar v)
-
     -- Methods present in the typeclass so that the instances can
     -- support a faster version.
 
+    getAbsName :: Abs t v -> Maybe Name
+    default getAbsName :: (Foldable t) => Abs t v -> Maybe Name
+    getAbsName = foldr f Nothing
+      where
+        f _     (Just n) = Just n
+        f (B v) Nothing  = Just (Bound.name v)
+        f (F _) Nothing  = Nothing
+
     weaken :: t v -> Abs t v
-    weaken = toAbs . liftM F
+    weaken = liftM F
+
+    strengthen :: Abs t v -> Maybe (t v)
+    default strengthen :: (Traversable t) => Abs t v -> Maybe (t v)
+    strengthen = traverse (unvar (const Nothing) Just)
 
     instantiate :: Abs t v -> t v -> t v
-    instantiate abs' t = fromAbs abs' >>= \v -> case v of
+    instantiate abs' t = abs' >>= \v -> case v of
         B _  -> t
         F v' -> return v'
 
     abstract :: (Eq v, VarName v) => v -> t v -> Abs t v
-    abstract v t = toAbs $ liftM f t
+    abstract v t = liftM f t
       where
         f v' = if v == v' then boundTermVar (varName v) else F v'
+
+getAbsName_ :: HasAbs t => Abs t v -> Name
+getAbsName_ = fromMaybe "_" . getAbsName
+
+type Abs t v = t (TermVar v)
 
 class View t where
     unview :: TermView t v -> t v
     view   :: t v -> TermView t v
 
-class ( Eq1 t,       Functor t,       Foldable t,       Traversable t, Monad t, Typeable t
-      , Eq1 (Abs t), Functor (Abs t), Foldable (Abs t), Traversable (Abs t)
-      , View t, MetaVars t, HasAbs t
-      ) => IsTerm t
-
-deriving instance Typeable Abs
+class (Eq1 t, Functor t, Monad t, Typeable t, View t, MetaVars t, HasAbs t) => IsTerm t
 
 -- Term utils
 -------------
@@ -326,23 +319,21 @@ instance (IsTerm t, IsVar v) => PP.Pretty (TermView t v) where
       PP.text "Set"
     Equal a x y ->
       PP.prettyApp p (PP.text "_==_") [view a, view x, view y]
-    Pi a0 b0 ->
+    Pi a0 b ->
       let a   = view a0
-          b   = view $ fromAbs b0
-          mbN = getName b
+          mbN = getAbsName b
       in PP.condParens (p > 0) $
           PP.sep [ (PP.parens $ case mbN of
                       Nothing -> PP.pretty a
                       Just n  -> PP.pretty n <> PP.text " : " <> PP.pretty a) PP.<+>
                    PP.text "->"
-                 , PP.nest 2 $ PP.pretty b
+                 , PP.nest 2 $ PP.pretty $ view b
                  ]
-    Lam b0 ->
-      let b = view $ fromAbs b0
-          n = getName_ b
+    Lam b ->
+      let n = getAbsName_ b
       in PP.condParens (p > 0) $
          PP.sep [ PP.text "\\" <> PP.pretty n <> PP.text " ->"
-                , PP.nest 2 $ PP.pretty b
+                , PP.nest 2 $ PP.pretty $ view b
                 ]
     App h es ->
       PP.prettyApp p (PP.pretty h) es

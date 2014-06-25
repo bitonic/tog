@@ -40,26 +40,26 @@ freeVars sig = go Just
     lift f (F v) = f v
 
     go :: (IsVar v) => (v -> Maybe v0) -> t v -> FreeVars v0
-    go strengthen t0 = case whnfView sig t0 of
+    go strengthen' t0 = case whnfView sig t0 of
       Lam body ->
-        go (lift strengthen) (fromAbs body)
+        go (lift strengthen') body
       Pi domain codomain ->
-        go strengthen domain <> go (lift strengthen) (fromAbs codomain)
+        go strengthen' domain <> go (lift strengthen') codomain
       Equal type_ x y ->
-        go strengthen type_ <> go strengthen x <> go strengthen y
+        go strengthen' type_ <> go strengthen' x <> go strengthen' y
       App (Var v) elims ->
-        FreeVars (maybe Set.empty Set.singleton (strengthen v)) Set.empty <>
-        foldMap (go strengthen) [t | Apply t <- elims]
+        FreeVars (maybe Set.empty Set.singleton (strengthen' v)) Set.empty <>
+        foldMap (go strengthen') [t | Apply t <- elims]
       App (Meta _) elims ->
-        let fvs = foldMap (go strengthen) [t | Apply t <- elims]
+        let fvs = foldMap (go strengthen') [t | Apply t <- elims]
         in FreeVars{fvRigid = Set.empty, fvFlexible = fvAll fvs}
       App (Def _) elims ->
-        foldMap (go strengthen) [t | Apply t <- elims]
+        foldMap (go strengthen') [t | Apply t <- elims]
       App J elims ->
-        foldMap (go strengthen) [t | Apply t <- elims]
+        foldMap (go strengthen') [t | Apply t <- elims]
       Set ->
         mempty
       Refl ->
         mempty
       Con _ args ->
-        foldMap (go strengthen) args
+        foldMap (go strengthen') args

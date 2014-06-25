@@ -10,7 +10,6 @@ import           Data.Foldable                    (Foldable)
 import           Data.Traversable                 (Traversable)
 import           Control.Monad                    (ap)
 import           Control.Applicative              (Applicative(pure, (<*>)))
-import           Data.Monoid                      ((<>), mempty, mconcat)
 import           Data.Typeable                    (Typeable)
 
 import           Term.Types
@@ -26,8 +25,8 @@ instance Monad LazySimpleScope where
     return v = LSS (App (Var v) [])
 
     LSS term0 >>= f = LSS $ case term0 of
-        Lam body           -> Lam (LSSAbs (unLSSAbs body >>>= f))
-        Pi domain codomain -> Pi (domain >>= f) (LSSAbs (unLSSAbs codomain >>>= f))
+        Lam body           -> Lam (unscope (Scope body >>>= f))
+        Pi domain codomain -> Pi (domain >>= f) (unscope (Scope codomain >>>= f))
         Equal type_ x y    -> Equal (type_ >>= f) (x >>= f) (y >>= f)
         Set                -> Set
         Con n elims        -> Con n (map (>>= f) elims)
@@ -45,24 +44,11 @@ instance Applicative LazySimpleScope where
     (<*>) = ap
 
 instance MetaVars LazySimpleScope where
-    metaVars t = case view t of
-        Lam body           -> metaVars $ unscope $ unLSSAbs $ body
-        Pi domain codomain -> metaVars domain <> metaVars (unscope (unLSSAbs (codomain)))
-        Equal type_ x y    -> metaVars type_ <> metaVars x <> metaVars y
-        App h elims        -> metaVars h <> mconcat (map metaVars elims)
-        Set                -> mempty
-        Refl               -> mempty
-        Con _ args         -> mconcat (map metaVars args)
 
 instance HasAbs LazySimpleScope where
-    newtype Abs LazySimpleScope v = LSSAbs {unLSSAbs :: Scope (Named ()) LazySimpleScope v}
+    instantiate abs t = instantiate1 t $ Scope abs
 
-    toAbs   = LSSAbs . toScope
-    fromAbs = fromScope . unLSSAbs
-
-    instantiate abs t = instantiate1 t (unLSSAbs abs)
-
-    abstract v = LSSAbs . Bound.abstract f
+    abstract v = unscope . Bound.abstract f
       where
         f v' = if v == v' then Just (named (varName v) ()) else Nothing
 
@@ -72,7 +58,7 @@ instance View LazySimpleScope where
 
 instance IsTerm LazySimpleScope
 
-deriving instance Eq1 (Abs LazySimpleScope)
-deriving instance Functor (Abs LazySimpleScope)
-deriving instance Foldable (Abs LazySimpleScope)
-deriving instance Traversable (Abs LazySimpleScope)
+-- deriving instance Eq1 (Abs LazySimpleScope)
+-- deriving instance Functor (Abs LazySimpleScope)
+-- deriving instance Foldable (Abs LazySimpleScope)
+-- deriving instance Traversable (Abs LazySimpleScope)

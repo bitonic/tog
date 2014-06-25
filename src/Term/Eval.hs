@@ -132,9 +132,9 @@ whnfView sig = view . ignoreBlocking . whnf sig
 nf :: (IsTerm t) => Sig.Signature t -> t v -> t v
 nf sig t = case view (ignoreBlocking (whnf sig t)) of
   Lam body ->
-    lam $ nfAbs body
+    lam body
   Pi domain codomain ->
-    pi (nf sig domain) (nfAbs codomain)
+    pi (nf sig domain) codomain
   Equal type_ x y ->
     equal (nf sig type_) (nf sig x) (nf sig y)
   Refl ->
@@ -146,8 +146,6 @@ nf sig t = case view (ignoreBlocking (whnf sig t)) of
   App h elims ->
     app h $ map nfElim elims
   where
-    nfAbs = toAbs . nf sig . fromAbs
-
     nfElim (Apply t') = Apply $ nf sig t'
     nfElim (Proj n f) = Proj n f
 
