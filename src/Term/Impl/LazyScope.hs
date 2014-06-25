@@ -11,7 +11,7 @@ module Term.Impl.LazyScope () where
 -- import           Data.Monoid                      ((<>), mempty, mconcat)
 -- import           Data.Typeable                    (Typeable)
 
--- import           Term.Types
+-- import           Term.Class
 -- import           Term.Eval
 
 -- -- Base terms

@@ -7,7 +7,7 @@ import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT,
 import           Syntax.Raw                       (parseProgram)
 import           Syntax.Internal                  (checkScope)
 import           TypeCheck                        (checkProgram, TCState')
-import           Term
+import           Term.Impl.LazySimpleScope
 
 checkFile :: FilePath -> IO (Either String (TCState' LazySimpleScope))
 checkFile file = runEitherT $ do

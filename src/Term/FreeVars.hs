@@ -10,8 +10,8 @@ import           Bound
 import           Data.Foldable                    (foldMap)
 
 import qualified Term.Signature                   as Sig
-import           Term.Types
-import           Term.Eval
+import           Term.Class
+import           Term.Var
 
 -- Free variables
 ------------------------------------------------------------------------

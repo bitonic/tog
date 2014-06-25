@@ -14,11 +14,12 @@ module Term.Signature
     ) where
 
 import qualified Data.HashMap.Strict              as HMS
+import           Data.Void                        (Void)
 
 import           Syntax.Internal                  (Name)
 import           Term.Definition
 import           Text.PrettyPrint.Extended        (render)
-import           Term.Types
+import           Term.MetaVar
 
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
@@ -112,3 +113,10 @@ metaVarsTypes = sMetasTypes
 -- | Gets the bodies for the instantiated 'MetaVar's.
 metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (Closed (Term t))
 metaVarsBodies = sMetasBodies
+
+-- Quickly redefining useful type synonyms...
+---------------------------------------------
+
+type Closed t = t Void
+type Type (t :: * -> *) = t
+type Term (t :: * -> *) = t

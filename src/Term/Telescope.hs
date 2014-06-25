@@ -9,7 +9,6 @@ module Term.Telescope
     , substs
     , instantiate
     , (++)
-    , strengthen
       -- ** 'Tel' types
     , Proxy(..)
     , Id(..)
@@ -33,8 +32,8 @@ import           Data.Void                        (Void)
 
 import           Syntax.Internal                  (Name)
 import qualified Term.Context                     as Ctx
-import           Term.Types                       (IsVar, IsTerm, TermVar, Subst, subst, Subst', subst')
-import qualified Term.Types                       as Term
+import           Term.Subst
+import           Term.Var
 
 -- Tel
 ------------------------------------------------------------------------
@@ -52,29 +51,21 @@ type ClosedTel t f = Tel t f Void
 -- | Instantiates an 'IdTel' repeatedly until we get to the bottom of
 -- it.  Fails If the length of the 'Tel' and the provided list don't
 -- match.
-substs :: (IsTerm f) => IdTel f v0 -> [f v0] -> f v0
+substs :: (Subst f) => IdTel f v0 -> [f v0] -> f v0
 substs (Empty t)     []           = unId t
 substs (Empty _)     (_ : _)      = error "Types.Telescope.instantiate: too many arguments"
 substs (Cons _ _)    []           = error "Types.Telescope.instantiate: too few arguments"
 substs (Cons _ tel') (arg : args) = substs (subst' tel' instArg) args
   where
     instArg (B _) = arg
-    instArg (F v) = Term.var v
+    instArg (F v) = var v
 
 -- | Instantiates a bound variable.
-instantiate :: (IsTerm f, Subst' t) => Tel t f (TermVar v) -> f v -> Tel t f v
+instantiate :: (Subst f, Subst' t) => Tel t f (TermVar v) -> f v -> Tel t f v
 instantiate tel' t = subst' tel' inst
   where
     inst (B _) = t
-    inst (F v) = Term.var v
-
-strengthen :: (IsTerm f) => IdTel f (TermVar v) -> Maybe (IdTel f v)
-strengthen (Empty (Id t)) =
-  Empty . Id <$> Term.strengthen t
-strengthen (Cons (n, t) tel0) = do
-  t' <- Term.strengthen t
-  tel' <- strengthen tel0
-  return $ Cons (n, t') tel'
+    inst (F v) = var v
 
 -- Useful types
 ---------------
@@ -149,8 +140,8 @@ instance (Subst' t) => Subst' (Tel t) where
     subst' (Empty t)              f = Empty (subst' t f)
     subst' (Cons (n, type_) tel') f = Cons (n, subst type_ f) (subst' tel' f')
       where
-        f' (B v) = Term.var (B v)
-        f' (F v) = Term.substMap F (f v)
+        f' (B v) = var (B v)
+        f' (F v) = substMap F (f v)
 
 -- To/from Ctx
 --------------

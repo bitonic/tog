@@ -19,7 +19,8 @@ import           Control.Arrow                    ((***))
 import           Data.Typeable                    (Typeable)
 
 import           Syntax.Internal                  (Name)
-import           Term.Types                       hiding (weaken)
+import           Term.Subst
+import           Term.Var
 
 -- Ctx
 ------------------------------------------------------------------------
@@ -36,18 +37,18 @@ type ClosedCtx = Ctx Void
 singleton :: (IsVar v0) => Name -> t v0 -> Ctx v0 t (TermVar v0)
 singleton name t = Snoc Empty (name, t)
 
-lookupName :: IsTerm t => Name -> Ctx v0 t v -> Maybe (v, t v)
+lookupName :: Subst t => Name -> Ctx v0 t v -> Maybe (v, t v)
 lookupName n ctx0 = go ctx0
   where
     -- Helper function so that we have the proof of equality when
     -- pattern matching the variable.
-    go :: IsTerm t => Ctx v0 t v -> Maybe (v, t v)
+    go :: Subst t => Ctx v0 t v -> Maybe (v, t v)
     go Empty                  = Nothing
     go (Snoc ctx (n', type_)) = if n == n'
                                 then Just (boundTermVar n, substMap F type_)
                                 else fmap (F *** substMap F) (go ctx)
 
-getVar :: forall t v. IsTerm t => v -> ClosedCtx t v -> t v
+getVar :: forall t v. Subst t => v -> ClosedCtx t v -> t v
 getVar v0 ctx0 = go ctx0 v0
   where
     go :: forall v'. ClosedCtx t v' -> v' -> t v'

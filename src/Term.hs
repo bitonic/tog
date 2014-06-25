@@ -1,17 +1,21 @@
 module Term
-  ( module Term.Types
+  ( module Term.Class
   , module Term.Definition
-  , module Term.Eval
+  , module Term.Nf
   , module Term.FreeVars
-
-  , module Term.Impl.LazyScope
-  , module Term.Impl.LazySimpleScope
+  , module Term.Var
+  , module Term.Subst
+  , module Term.Synonyms
+  , module Term.MetaVar
+  , module Term.Pretty
   ) where
 
-import Term.Types
+import Term.Var
+import Term.Subst
+import Term.Synonyms
+import Term.Class
 import Term.Definition
-import Term.Eval
+import Term.Nf
 import Term.FreeVars
-
-import Term.Impl.LazyScope
-import Term.Impl.LazySimpleScope
+import Term.MetaVar
+import Term.Pretty

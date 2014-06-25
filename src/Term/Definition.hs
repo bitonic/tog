@@ -21,9 +21,8 @@ import           Control.Arrow                    (second)
 
 import           Syntax.Internal                  (Name)
 import qualified Term.Telescope                   as Tel
-import           Term.Types
-import qualified Text.PrettyPrint.Extended        as PP
-import           Text.PrettyPrint.Extended        ((<+>), ($$))
+import           Term.Var
+import           Term.Synonyms
 
 -- Clauses
 ------------------------------------------------------------------------
@@ -91,7 +90,8 @@ data Invertible t v
   | Invertible [(TermHead, Clause t v)]
   -- ^ Each clause is paired with a 'TermHead' that doesn't happend
   -- anywhere else in the list.
-deriving instance (IsTerm t) => Show (Closed (Invertible t))
+
+-- deriving instance (IsTerm t) => Show (Closed (Invertible t))
 
 -- | A 'TermHead' is an injective type- or data-former.
 --
@@ -111,50 +111,50 @@ mapInvertible f (Invertible injClauses) = Invertible $ map (second f) injClauses
 -- Pretty printing
 ------------------------------------------------------------------------
 
-instance (IsTerm t) => PP.Pretty (Closed (Definition t)) where
-  pretty (Constant Postulate type_) =
-    prettyView type_
-  pretty (Constant (Data dataCons) type_) =
-    "data" <+> prettyView type_ <+> "where" $$
-    PP.nest 2 (PP.vcat (map PP.pretty dataCons))
-  pretty (Constant (Record dataCon fields) type_) =
-    "record" <+> prettyView type_ <+> "where" $$
-    PP.nest 2 ("constructor" <+> PP.pretty dataCon) $$
-    PP.nest 2 ("field" $$ PP.nest 2 (PP.vcat (map (PP.pretty . fst) fields)))
-  pretty (DataCon tyCon type_) =
-    "constructor" <+> PP.pretty tyCon $$ PP.nest 2 (prettyTele type_)
-  pretty (Projection _ tyCon type_) =
-    "projection" <+> PP.pretty tyCon $$ PP.nest 2 (prettyTele type_)
-  pretty (Function type_ clauses) =
-    prettyView type_ $$
-    PP.vcat (map PP.pretty (ignoreInvertible clauses))
+-- instance (IsTerm t) => PP.Pretty (Closed (Definition t)) where
+--   pretty (Constant Postulate type_) =
+--     prettyView type_
+--   pretty (Constant (Data dataCons) type_) =
+--     "data" <+> prettyView type_ <+> "where" $$
+--     PP.nest 2 (PP.vcat (map PP.pretty dataCons))
+--   pretty (Constant (Record dataCon fields) type_) =
+--     "record" <+> prettyView type_ <+> "where" $$
+--     PP.nest 2 ("constructor" <+> PP.pretty dataCon) $$
+--     PP.nest 2 ("field" $$ PP.nest 2 (PP.vcat (map (PP.pretty . fst) fields)))
+--   pretty (DataCon tyCon type_) =
+--     "constructor" <+> PP.pretty tyCon $$ PP.nest 2 (prettyTele type_)
+--   pretty (Projection _ tyCon type_) =
+--     "projection" <+> PP.pretty tyCon $$ PP.nest 2 (prettyTele type_)
+--   pretty (Function type_ clauses) =
+--     prettyView type_ $$
+--     PP.vcat (map PP.pretty (ignoreInvertible clauses))
 
-prettyTele :: (IsVar v, IsTerm t) => Tel.IdTel t v -> PP.Doc
-prettyTele (Tel.Empty (Tel.Id t)) =
-   prettyView t
-prettyTele (Tel.Cons (n0, type0) tel0) =
-  "[" <+> PP.pretty n0 <+> ":" <+> prettyView type0 PP.<> go tel0
-  where
-    go :: (IsVar v, IsTerm t) => Tel.IdTel t v -> PP.Doc
-    go (Tel.Empty (Tel.Id t)) =
-      "]" <+> prettyView t
-    go (Tel.Cons (n, type_) tel) =
-      ";" <+> PP.pretty n <+> ":" <+> prettyView type_ <+> prettyTele tel
+-- prettyTele :: (IsVar v, IsTerm t) => Tel.IdTel t v -> PP.Doc
+-- prettyTele (Tel.Empty (Tel.Id t)) =
+--    prettyView t
+-- prettyTele (Tel.Cons (n0, type0) tel0) =
+--   "[" <+> PP.pretty n0 <+> ":" <+> prettyView type0 PP.<> go tel0
+--   where
+--     go :: (IsVar v, IsTerm t) => Tel.IdTel t v -> PP.Doc
+--     go (Tel.Empty (Tel.Id t)) =
+--       "]" <+> prettyView t
+--     go (Tel.Cons (n, type_) tel) =
+--       ";" <+> PP.pretty n <+> ":" <+> prettyView type_ <+> prettyTele tel
 
-instance (IsTerm t) => Show (Closed (Definition t)) where
-  show = PP.render . PP.pretty
+-- instance (IsTerm t) => Show (Closed (Definition t)) where
+--   show = PP.render . PP.pretty
 
-instance PP.Pretty ConstantKind where
-  pretty = PP.text . show
+-- instance PP.Pretty ConstantKind where
+--   pretty = PP.text . show
 
-instance (IsTerm t) => PP.Pretty (Closed (Clause t)) where
-  pretty (Clause pats body) =
-    PP.pretty pats <+> "=" $$ PP.nest 2 (prettyView (substFromScope body))
+-- instance (IsTerm t) => PP.Pretty (Closed (Clause t)) where
+--   pretty (Clause pats body) =
+--     PP.pretty pats <+> "=" $$ PP.nest 2 (prettyView (substFromScope body))
 
-instance (IsTerm t) => Show (Closed (Clause t)) where
-  show = PP.render . PP.pretty
+-- instance (IsTerm t) => Show (Closed (Clause t)) where
+--   show = PP.render . PP.pretty
 
-instance PP.Pretty Pattern where
-  prettyPrec p e = case e of
-    VarP      -> PP.text "_"
-    ConP c es -> PP.prettyApp p (PP.pretty c) es
+-- instance PP.Pretty Pattern where
+--   prettyPrec p e = case e of
+--     VarP      -> PP.text "_"
+--     ConP c es -> PP.prettyApp p (PP.pretty c) es
