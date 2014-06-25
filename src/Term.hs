@@ -10,12 +10,12 @@ module Term
   , module Term.Pretty
   ) where
 
-import Term.Var
-import Term.Subst
-import Term.Synonyms
 import Term.Class
 import Term.Definition
-import Term.Nf
 import Term.FreeVars
 import Term.MetaVar
+import Term.Nf
 import Term.Pretty
+import Term.Subst
+import Term.Synonyms
+import Term.Var

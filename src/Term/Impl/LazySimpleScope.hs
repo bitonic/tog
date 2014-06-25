@@ -70,20 +70,20 @@ instance Subst LazySimpleScope where
 
 instance IsTerm LazySimpleScope where
   unview = LSS
+  view = return . unLSS
 
-  whnfView sig t = unLSS $ ignoreBlocking $ whnf sig t
+  whnf sig = return . whnf' sig
 
-  whnf = whnf'
-
-whnf' :: Sig.Signature LazySimpleScope -> LazySimpleScope v -> Blocked LazySimpleScope v
+whnf' :: Sig.Signature LazySimpleScope -> LazySimpleScope v
+      -> Blocked LazySimpleScope v
 whnf' sig t = case unLSS t of
   App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv ->
-    whnf sig $ eliminate' (substVacuous t') es
+    whnf' sig $ eliminate' (substVacuous t') es
   App (Def defName) es | Function _ cs <- Sig.getDefinition sig defName ->
     whnfFun sig defName es $ ignoreInvertible cs
   App J (_ : x : _ : _ : Apply p : Apply refl' : es) ->
-    case whnfView sig refl' of
-      Refl -> whnf sig $ eliminate' p (x : es)
+    case unLSS (ignoreBlocking (whnf' sig refl')) of
+      Refl -> whnf' sig $ eliminate' p (x : es)
       _    -> NotBlocked t
   App (Meta mv) elims ->
     MetaVarHead mv elims
@@ -108,7 +108,7 @@ whnfFun sig funName es (Clause patterns body : clauses) =
                     then error "Eval.whnf: too few arguments"
                     else args !! n
       let body' = substInstantiateName ixArg (subst'Vacuous body)
-      whnf sig $ eliminate' body' leftoverEs
+      whnf' sig $ eliminate' body' leftoverEs
 
 matchClause
   :: Sig.Signature LazySimpleScope -> [Elim LazySimpleScope v] -> [Pattern]
@@ -119,7 +119,7 @@ matchClause sig (Apply arg : es) (VarP : patterns) =
   (\(args, leftoverEs) -> (arg : args, leftoverEs)) <$>
   matchClause sig es patterns
 matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
-  case whnf sig arg of
+  case whnf' sig arg of
     MetaVarHead mv _ ->
       TTMetaVars (HS.singleton mv) <*> matchClause sig es patterns
     NotBlocked t | Con dataCon' dataConArgs <- unLSS t ->

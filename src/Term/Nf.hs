@@ -5,60 +5,67 @@ module Term.Nf
 
 import           Prelude                          hiding (pi)
 
+import           Control.Applicative              ((<$>), (<*>))
+
 import           Term.Definition
 import qualified Term.Signature                   as Sig
 import           Term.Subst
 import qualified Term.Telescope                   as Tel
 import           Term.Class
 
-nf :: (IsTerm t) => Sig.Signature t -> t v -> t v
-nf sig t = case whnfView sig (ignoreBlocking (whnf sig t)) of
-  Lam body ->
-    lam body
-  Pi domain codomain ->
-    pi (nf sig domain) codomain
-  Equal type_ x y ->
-    equal (nf sig type_) (nf sig x) (nf sig y)
-  Refl ->
-    refl
-  Con dataCon args ->
-    con dataCon $ map (nf sig) args
-  Set ->
-    set
-  App h elims ->
-    app h $ map nfElim elims
-  where
-    nfElim (Apply t') = Apply $ nf sig t'
-    nfElim (Proj n f) = Proj n f
+nf :: forall t v. (IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
+nf sig t = do
+  tView <- whnfView sig t
+  case tView of
+    Lam body ->
+      return $ (lam body :: t v)
+    Pi domain codomain ->
+      pi <$> nf sig domain <*> nf sig codomain
+    Equal type_ x y ->
+      equal <$> nf sig type_ <*> nf sig x <*> nf sig y
+    Refl ->
+      return refl
+    Con dataCon args ->
+      con dataCon <$> mapM (nf sig) args
+    Set ->
+      return set
+    App h elims ->
+      app h <$> mapM (nf' sig) elims
 
 class Nf t where
-  nf' :: (IsTerm f) => Sig.Signature f -> t f v -> t f v
+  nf' :: (IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)
 
 instance Nf Elim where
-  nf' _   (Proj ix field) = Proj ix field
-  nf' sig (Apply t)       = Apply $ nf sig t
+  nf' _   (Proj ix field) = return $ Proj ix field
+  nf' sig (Apply t)       = Apply <$> nf sig t
 
 instance (Nf t) => Nf (Tel.Tel t) where
-  nf' sig (Tel.Empty t)             = Tel.Empty $ nf' sig t
-  nf' sig (Tel.Cons (n, type_) tel) = Tel.Cons (n, nf sig type_) (nf' sig tel)
+  nf' sig (Tel.Empty t)             = Tel.Empty <$> nf' sig t
+  nf' sig (Tel.Cons (n, type_) tel) = Tel.Cons <$> ((n,) <$> nf sig type_) <*> nf' sig tel
 
 instance Nf Tel.Id where
-  nf' sig (Tel.Id t) = Tel.Id $ nf sig t
+  nf' sig (Tel.Id t) = Tel.Id <$> nf sig t
 
 instance Nf Tel.Proxy where
-  nf' _ Tel.Proxy = Tel.Proxy
+  nf' _ Tel.Proxy = return Tel.Proxy
 
 instance Nf Clause where
-  nf' sig (Clause pats body) = Clause pats $ substToScope $ nf sig $ substFromScope body
+  nf' sig (Clause pats body) =
+    Clause pats . substToScope <$> nf sig (substFromScope body)
 
 instance Nf Definition where
-  nf' sig (Constant kind t)              = Constant kind (nf sig t)
-  nf' sig (DataCon tyCon type_)          = DataCon tyCon $ nf' sig type_
-  nf' sig (Projection field tyCon type_) = Projection field tyCon $ nf' sig type_
-  nf' sig (Function type_ clauses)       = Function (nf sig type_) (mapInvertible (nf' sig) clauses)
+  nf' sig (Constant kind t)              = Constant kind <$> nf sig t
+  nf' sig (DataCon tyCon type_)          = DataCon tyCon <$> nf' sig type_
+  nf' sig (Projection field tyCon type_) = Projection field tyCon <$> nf' sig type_
+  nf' sig (Function type_ clauses)       = Function <$> nf sig type_ <*> nfInvertible clauses
+    where
+      nfInvertible (NotInvertible clauses') =
+        NotInvertible <$> mapM (nf' sig) clauses'
+      nfInvertible (Invertible injClauses) =
+        Invertible <$> mapM (\(th, clause) -> (th ,) <$> nf' sig clause) injClauses
 
 instance Nf TermView where
-  nf' sig = whnfView sig . nf sig . unview
+  nf' sig t = whnfView sig =<< nf sig (unview t)
 
 
 --     ( -- * Elimination

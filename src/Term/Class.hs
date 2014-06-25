@@ -7,6 +7,7 @@ import           Bound                            (Var(B, F), Bound, (>>>=))
 import           Bound.Var                        (unvar)
 import qualified Bound.Name                       as Bound
 import           Data.Foldable                    (Foldable, foldr)
+import           Data.Functor                     ((<$>))
 import           Data.Traversable                 (Traversable, traverse)
 import           Prelude.Extras                   (Eq1((==#)))
 import           Data.Void                        (Void)
@@ -94,37 +95,30 @@ type ClosedTermView term = TermView term Void
 -- MetaVars
 -----------
 
-metaVars :: (IsTerm t) => Sig.Signature t -> t v -> HS.HashSet MetaVar
-metaVars sig t = case whnfView sig t of
+metaVars :: (IsTerm t) => Sig.Signature t -> t v -> TermM (HS.HashSet MetaVar)
+metaVars sig t = do
+  tView <- whnfView sig t
+  case tView of
     Lam body           -> metaVars sig body
-    Pi domain codomain -> metaVars sig domain <> metaVars sig codomain
-    Equal type_ x y    -> metaVars sig type_ <> metaVars sig x <> metaVars sig y
-    App h elims        -> metaVarsHead h <> mconcat (map metaVarsElim elims)
-    Set                -> mempty
-    Refl               -> mempty
-    Con _ elims        -> mconcat (map (metaVars sig) elims)
+    Pi domain codomain -> (<>) <$> metaVars sig domain <*> metaVars sig codomain
+    Equal type_ x y    -> mconcat <$> mapM (metaVars sig) [type_, x, y]
+    App h elims        -> (<>) <$> metaVarsHead h <*> (mconcat <$> mapM metaVarsElim elims)
+    Set                -> return mempty
+    Refl               -> return mempty
+    Con _ elims        -> mconcat <$> mapM (metaVars sig) elims
   where
     metaVarsElim (Apply t') = metaVars sig t'
-    metaVarsElim (Proj _ _) = mempty
+    metaVarsElim (Proj _ _) = return mempty
 
-    metaVarsHead (Meta mv) = HS.singleton mv
-    metaVarsHead _         = mempty
-
-
--- -- | Things that contain 'MetaVar's.
--- class MetaVars' t where
---     metaVars' :: Sig.Signature f -> t f v -> HS.HashSet MetaVar
-
--- instance MetaVars t => MetaVars Elim where
---     metaVars sig (Apply t)  = metaVars sig t
---     metaVars _   (Proj _ _) = mempty
-
-
+    metaVarsHead (Meta mv) = return $ HS.singleton mv
+    metaVarsHead _         = return mempty
 
 -- HasAbs
 ---------
 
 type Abs t v = t (TermVar v)
+
+type TermM = IO
 
 class (Eq1 t, Subst t, Typeable t) => IsTerm t where
     -- Abstraction related
@@ -155,14 +149,17 @@ class (Eq1 t, Subst t, Typeable t) => IsTerm t where
         f (B v) Nothing  = Just (Bound.name v)
         f (F _) Nothing  = Nothing
 
-    -- Evaluation and view
+    -- Evaluation
     --------------------------------------------------------------------
+    whnf     :: Sig.Signature t -> t v -> TermM (Blocked t v)
 
-    whnf :: Sig.Signature t -> t v -> Blocked t v
-    whnfView :: Sig.Signature t -> t v -> TermView t v
-
-    -- Unviewing
+    -- View / Unview
     --------------------------------------------------------------------
+    view   :: t v -> TermM (TermView t v)
+
+    whnfView :: Sig.Signature t -> t v -> TermM (TermView t v)
+    whnfView sig t = view . ignoreBlocking =<< whnf sig t
+
     unview :: TermView t v -> t v
 
 getAbsName_ :: IsTerm t => Abs t v -> Name
@@ -198,10 +195,12 @@ ignoreBlocking (BlockedOn _ funName es) = def funName es
 
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
-eliminate :: (IsTerm t) => Sig.Signature t -> t v -> [Elim t v] -> t v
-eliminate sig t elims = case (whnfView sig t, elims) of
+eliminate :: (IsTerm t) => Sig.Signature t -> t v -> [Elim t v] -> TermM (t v)
+eliminate sig t elims = do
+  tView <- whnfView sig t
+  case (tView, elims) of
     (_, []) ->
-        t
+        return t
     (Con _c args, Proj _ field : es) ->
         if unField field >= length args
         then error "Eval.eliminate: Bad elimination"
@@ -209,7 +208,7 @@ eliminate sig t elims = case (whnfView sig t, elims) of
     (Lam body, Apply argument : es) ->
         eliminate sig (instantiate body argument) es
     (App h es1, es2) ->
-        unview $ App h (es1 ++ es2)
+        return $ app h (es1 ++ es2)
     (_, _) ->
         error $ "Eval.eliminate: Bad elimination"
 
@@ -254,7 +253,7 @@ data TermTraverse err a
     = TTOK a
     | TTFail err
     | TTMetaVars (HS.HashSet MetaVar)
-    deriving (Functor)
+    deriving (Functor, Foldable, Traversable)
 
 instance Applicative (TermTraverse err) where
     pure = TTOK

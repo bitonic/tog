@@ -4,10 +4,11 @@ module Term.FreeVars
   , freeVars
   ) where
 
-import           Data.Monoid                      (Monoid, mappend, mempty, (<>))
-import qualified Data.Set                         as Set
 import           Bound
-import           Data.Foldable                    (foldMap)
+import           Control.Applicative              ((<*>))
+import           Data.Functor                     ((<$>))
+import           Data.Monoid                      (Monoid, mappend, mempty, (<>), mconcat)
+import qualified Data.Set                         as Set
 
 import qualified Term.Signature                   as Sig
 import           Term.Class
@@ -32,34 +33,36 @@ instance Ord v => Monoid (FreeVars v) where
 
 freeVars
   :: forall t v0. (IsVar v0, IsTerm t)
-  => Sig.Signature t -> t v0 -> FreeVars v0
+  => Sig.Signature t -> t v0 -> TermM (FreeVars v0)
 freeVars sig = go Just
   where
     lift :: (v -> Maybe v0) -> (TermVar v -> Maybe v0)
     lift _ (B _) = Nothing
     lift f (F v) = f v
 
-    go :: (IsVar v) => (v -> Maybe v0) -> t v -> FreeVars v0
-    go strengthen' t0 = case whnfView sig t0 of
-      Lam body ->
-        go (lift strengthen') body
-      Pi domain codomain ->
-        go strengthen' domain <> go (lift strengthen') codomain
-      Equal type_ x y ->
-        go strengthen' type_ <> go strengthen' x <> go strengthen' y
-      App (Var v) elims ->
-        FreeVars (maybe Set.empty Set.singleton (strengthen' v)) Set.empty <>
-        foldMap (go strengthen') [t | Apply t <- elims]
-      App (Meta _) elims ->
-        let fvs = foldMap (go strengthen') [t | Apply t <- elims]
-        in FreeVars{fvRigid = Set.empty, fvFlexible = fvAll fvs}
-      App (Def _) elims ->
-        foldMap (go strengthen') [t | Apply t <- elims]
-      App J elims ->
-        foldMap (go strengthen') [t | Apply t <- elims]
-      Set ->
-        mempty
-      Refl ->
-        mempty
-      Con _ args ->
-        foldMap (go strengthen') args
+    go :: (IsVar v) => (v -> Maybe v0) -> t v -> TermM (FreeVars v0)
+    go strengthen' t0 = do
+      tView <- whnfView sig t0
+      case tView of
+        Lam body ->
+          go (lift strengthen') body
+        Pi domain codomain ->
+          (<>) <$> go strengthen' domain <*> go (lift strengthen') codomain
+        Equal type_ x y ->
+          mconcat <$> mapM (go strengthen') [type_, x, y]
+        App (Var v) elims -> do
+          let fvs = FreeVars (maybe Set.empty Set.singleton (strengthen' v)) Set.empty
+          (fvs <>) <$> (mconcat <$> mapM (go strengthen') [t | Apply t <- elims])
+        App (Meta _) elims -> do
+          fvs <- mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
+          return FreeVars{fvRigid = Set.empty, fvFlexible = fvAll fvs}
+        App (Def _) elims ->
+          mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
+        App J elims ->
+          mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
+        Set ->
+          return mempty
+        Refl ->
+          return mempty
+        Con _ args ->
+          mconcat <$> mapM (go strengthen') args

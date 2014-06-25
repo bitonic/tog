@@ -14,8 +14,11 @@ module TypeCheck.Monad
   , typeError
     -- ** Source location
   , atSrcLoc
+    -- ** 'TermM'
+  , liftTermM
     -- ** Using the 'Signature'
   , withSignature
+  , withSignatureTermM
     -- ** Definition handling
   , addDefinition
   , getDefinition
@@ -71,7 +74,7 @@ import           Term
 -- Moreover, it lets us suspend computations waiting on a 'MetaVar' to
 -- be instantiated, or on another suspended computation to be completed.
 -- See 'ProblemId' and related functions.
-newtype TC t p a = TC {unTC :: (TCEnv t p, TCState t p) -> TCRes t p a}
+newtype TC t p a = TC {unTC :: (TCEnv t p, TCState t p) -> IO (TCRes t p a)}
   deriving (Functor)
 
 data TCRes t p a
@@ -84,20 +87,24 @@ instance Applicative (TC t v) where
   (<*>) = ap
 
 instance Monad (TC t v) where
-  return x = TC $ \(_, ts) -> OK ts x
+  return x = TC $ \(_, ts) -> return $ OK ts x
 
   TC m >>= f =
-    TC $ \s@(loc, _) -> case m s of
-      OK ts x   -> unTC (f x) (loc, ts)
-      Error err -> Error err
+    TC $ \s@(loc, _) -> do
+      res <- m s
+      case res of
+        OK ts x   -> unTC (f x) (loc, ts)
+        Error err -> return $ Error err
 
 -- | Takes a 'TCState' and a computation on a closed context and
 -- produces an error or a result with a new state.
 runTC :: InterpretProblem t p -> TCState t p
       -> TC t p a -> IO (Either PP.Doc (a, TCState t p))
-runTC int ts (TC m) = return $ case m (initEnv int, ts) of
-  OK ts' x  -> Right (x, ts')
-  Error err -> Left $ PP.pretty err
+runTC int ts (TC m) = do
+  res <- m (initEnv int, ts)
+  return $ case res of
+    OK ts' x  -> Right (x, ts')
+    Error err -> Left $ PP.pretty err
 
 data TCEnv t p = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
@@ -159,7 +166,7 @@ tcReport ts = TCReport
 
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t v b
-typeError err = TC $ \(te, _) -> Error $ DocErr (teCurrentSrcLoc te) err
+typeError err = TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
 
 -- SrcLoc
 ------------------------------------------------------------------------
@@ -167,6 +174,14 @@ typeError err = TC $ \(te, _) -> Error $ DocErr (teCurrentSrcLoc te) err
 -- | Run some action with the given 'SrcLoc'.
 atSrcLoc :: HasSrcLoc a => a -> TC t v b -> TC t v b
 atSrcLoc x (TC m) = TC $ \(te, ts) -> m (te{teCurrentSrcLoc = srcLoc x}, ts)
+
+-- TermM
+------------------------------------------------------------------------
+
+liftTermM :: TermM a -> TC t p a
+liftTermM m = TC $ \(_, ts) -> do
+  x <- m
+  return $ OK ts x
 
 -- Signature
 ------------------------------------------------------------------------
@@ -176,6 +191,11 @@ withSignature :: (Sig.Signature t -> a) -> TC t v a
 withSignature f = do
   sig <- modify $ \ts -> (ts, tsSignature ts)
   return $ f sig
+
+withSignatureTermM :: (Sig.Signature t -> TermM a) -> TC t p a
+withSignatureTermM f = do
+  sig <- modify $ \ts -> (ts, tsSignature ts)
+  liftTermM $ f sig
 
 getDefinition
   :: (IsTerm t) => Name -> TC t p (Closed (Definition t))
@@ -425,7 +445,7 @@ bindStuckTC m p = do
 ------------------------------------------------------------------------
 
 modify :: (TCState t p -> (TCState t p, a)) -> TC t p a
-modify f = TC $ \(_, ts) -> let (ts', x) = f ts in OK ts' x
+modify f = TC $ \(_, ts) -> let (ts', x) = f ts in return $ OK ts' x
 
 modify_ :: (TCState t p -> TCState t p) -> TC t p ()
 modify_ f = modify $ \ts -> (f ts, ())
@@ -434,4 +454,4 @@ get :: TC t p (TCState t p)
 get = modify $ \ts -> (ts, ts)
 
 ask :: TC t p (TCEnv t p)
-ask = TC $ \(te, ts) -> OK ts te
+ask = TC $ \(te, ts) -> return $ OK ts te
