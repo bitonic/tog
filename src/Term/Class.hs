@@ -21,6 +21,8 @@ import           Syntax.Internal                  (Name)
 import           Term.MetaVar
 import           Term.Subst
 import           Term.Var
+import           Term.Definition
+import           Term.Synonyms
 import qualified Term.Signature                   as Sig
 
 -- Terms
@@ -151,7 +153,8 @@ class (Eq1 t, Subst t, Typeable t) => IsTerm t where
 
     -- Evaluation
     --------------------------------------------------------------------
-    whnf     :: Sig.Signature t -> t v -> TermM (Blocked t v)
+    whnf :: Sig.Signature t -> t v -> TermM (Blocked t v)
+    whnf = genericWhnf
 
     -- View / Unview
     --------------------------------------------------------------------
@@ -211,6 +214,76 @@ eliminate sig t elims = do
         return $ app h (es1 ++ es2)
     (_, _) ->
         error $ "Eval.eliminate: Bad elimination"
+
+-- Generic whnf
+---------------
+
+genericWhnf :: (IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
+genericWhnf sig t = do
+  tView <- view t
+  case tView of
+    App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv ->
+      genericWhnf sig =<< eliminate sig (substVacuous t') es
+    App (Def defName) es | Function _ cs <- Sig.getDefinition sig defName ->
+      whnfFun sig defName es $ ignoreInvertible cs
+    App J (_ : x : _ : _ : Apply p : Apply refl' : es) -> do
+      reflView <- whnfView sig refl'
+      case reflView of
+        Refl -> genericWhnf sig =<< eliminate sig p (x : es)
+        _    -> return $ NotBlocked t
+    App (Meta mv) elims ->
+      return $ MetaVarHead mv elims
+    _ ->
+      return $ NotBlocked t
+
+whnfFun
+  :: (IsTerm t)
+  => Sig.Signature t
+  -> Name -> [Elim t v] -> [Closed (Clause t)]
+  -> TermM (Blocked t v)
+whnfFun _ funName es [] =
+  return $ NotBlocked $ def funName es
+whnfFun sig funName es (Clause patterns body : clauses) = do
+  matched <- matchClause sig es patterns
+  case matched of
+    TTMetaVars mvs ->
+      return $ BlockedOn mvs funName es
+    TTFail () ->
+      whnfFun sig funName es clauses
+    TTOK (args0, leftoverEs) -> do
+      let args = reverse args0
+      let ixArg n = if n >= length args
+                    then error "Eval.whnf: too few arguments"
+                    else args !! n
+      let body' = substInstantiateName ixArg (subst'Vacuous body)
+      genericWhnf sig =<< eliminate sig body' leftoverEs
+
+matchClause
+  :: (IsTerm t)
+  => Sig.Signature t -> [Elim t v] -> [Pattern]
+  -> TermM (TermTraverse () ([t v], [Elim t v]))
+matchClause _ es [] =
+  return $ pure ([], es)
+matchClause sig (Apply arg : es) (VarP : patterns) = do
+  matched <- matchClause sig es patterns
+  return $ (\(args, leftoverEs) -> (arg : args, leftoverEs)) <$> matched
+matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
+  blockedArg <- whnf sig arg
+  case blockedArg of
+    MetaVarHead mv _ -> do
+      matched <- matchClause sig es patterns
+      return $ TTMetaVars (HS.singleton mv) <*> matched
+    NotBlocked t -> do
+      tView <- view t
+      case tView of
+        Con dataCon' dataConArgs | dataCon == dataCon' ->
+          matchClause sig (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
+        _ ->
+          return $ TTFail ()
+    _ ->
+      return $ TTFail ()
+matchClause _ _ _ =
+  return $ TTFail ()
 
 -- Term utils
 -------------
