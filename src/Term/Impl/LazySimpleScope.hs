@@ -2,12 +2,14 @@ module Term.Impl.LazySimpleScope (LazySimpleScope) where
 
 import Prelude                                    hiding (pi, abs, foldr)
 
+import           Bound.Var                        (Var(B, F))
 import           Bound.Class
 import           Bound.Scope.Simple               hiding (instantiate)
 import           Prelude.Extras                   (Eq1)
 import           Data.Foldable                    (Foldable)
-import           Data.Traversable                 (Traversable)
-import           Control.Monad                    (ap)
+import           Data.Functor                     ((<$>))
+import           Data.Traversable                 (Traversable, traverse)
+import           Control.Monad                    (ap, join)
 import           Control.Applicative              (Applicative(pure, (<*>)))
 import           Data.Typeable                    (Typeable)
 
@@ -41,6 +43,11 @@ instance Monad LazySimpleScope where
                    J       -> App J         elims'
                    Meta mv -> App (Meta mv) elims'
 
+instantiate' :: Abs LazySimpleScope v -> LazySimpleScope v -> LazySimpleScope v
+instantiate' abs' t = abs' >>= \v -> case v of
+  B _  -> t
+  F v' -> var v'
+
 eliminate' :: LazySimpleScope v -> [Elim LazySimpleScope v] -> LazySimpleScope v
 eliminate' (LSS tView) elims = case (tView, elims) of
     (_, []) ->
@@ -50,7 +57,7 @@ eliminate' (LSS tView) elims = case (tView, elims) of
         then error "LazySimpleScope.eliminate: Bad elimination"
         else eliminate' (args !! unField field) es
     (Lam body, Apply argument : es) ->
-        eliminate' (instantiate body argument) es
+        eliminate' (instantiate' body argument) es
     (App h es1, es2) ->
         unview $ App h (es1 ++ es2)
     (_, _) ->
@@ -59,9 +66,9 @@ eliminate' (LSS tView) elims = case (tView, elims) of
 instance Subst LazySimpleScope where
   var v = LSS $ App (Var v) []
 
-  subst = (>>=)
+  subst t f = join <$> traverse f t
 
-  substMap = fmap
+  substMap f t = return $ fmap f t
 
 instance IsTerm LazySimpleScope where
   unview = LSS

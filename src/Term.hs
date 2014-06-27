@@ -8,6 +8,7 @@ module Term
   , module Term.Synonyms
   , module Term.MetaVar
   , module Term.Pretty
+  , module Term.TermM
   ) where
 
 import Term.Class
@@ -19,3 +20,4 @@ import Term.Pretty
 import Term.Subst
 import Term.Synonyms
 import Term.Var
+import Term.TermM

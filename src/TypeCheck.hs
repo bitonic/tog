@@ -12,9 +12,9 @@ import           Control.Monad                    (when, void, guard, mzero, for
 import           Data.List                        (sortBy, groupBy)
 import           Data.Traversable                 (traverse, sequenceA)
 import           Prelude.Extras                   ((==#))
-import           Bound                            (Var(F, B), Scope(Scope))
+import           Bound                            (Var(F, B))
 import           Data.Typeable                    (Typeable)
-import           Data.Void                        (Void, absurd)
+import           Data.Void                        (absurd)
 import           Control.Applicative              (Applicative(pure, (<*>)))
 import           Control.Monad.Trans              (lift)
 import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT)
@@ -145,7 +145,7 @@ checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
   atSrcLoc dataCon $ do
     dataConType <- isType tyConPars synDataConType
     unrollPi dataConType $ \vs endType -> do
-      let appliedTyConType' = substMap (Ctx.weaken vs) appliedTyConType
+      appliedTyConType' <- liftTermM $ substMap (Ctx.weaken vs) appliedTyConType
       elimStuckTC (equalType (tyConPars Ctx.++ vs) appliedTyConType' endType) $ do
         checkError $ TermsNotEqual appliedTyConType' endType
     addDataCon dataCon tyCon (Tel.idTel tyConPars dataConType)
@@ -168,13 +168,13 @@ checkRec tyCon tyConPars dataCon fields = do
         void $ equalType tyConPars' endType set
         fieldsTel <- checkFields tyConPars' fields
         appliedTyConType <- ctxAppTC (def tyCon []) tyConPars'
+        fieldsTel' <- liftTermM $ subst'Map F fieldsTel
         addProjections
           tyCon tyConPars' (boundTermVar "_") (map A.typeSigName fields)
-          (subst'Map F fieldsTel)
-        Tel.unTel fieldsTel $ \fieldsCtx Tel.Proxy ->
-            addDataCon dataCon tyCon $
-            Tel.idTel tyConPars' $
-            ctxPi fieldsCtx (substMap (Ctx.weaken fieldsCtx) appliedTyConType)
+          fieldsTel'
+        Tel.unTel fieldsTel $ \fieldsCtx Tel.Proxy -> do
+          appliedTyConType' <- liftTermM $ substMap (Ctx.weaken fieldsCtx) appliedTyConType
+          addDataCon dataCon tyCon $ Tel.idTel tyConPars' $ ctxPi fieldsCtx appliedTyConType'
 
 checkFields
     :: forall v t. (IsVar v, IsTerm t)
@@ -215,8 +215,7 @@ addProjections tyCon tyConPars self fields0 =
       ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
         endType <- (`pi` fieldType) <$> ctxAppTC (def tyCon []) tyConPars
         addProjection field ix tyCon (Tel.idTel tyConPars endType)
-        go fields' $
-         Tel.instantiate fieldTypes' $ unview $ App (Var self) [Proj field ix]
+        go fields' =<< liftTermM (Tel.instantiate fieldTypes' $ unview $ App (Var self) [Proj field ix])
       (_, _) -> error "impossible.addProjections: impossible: lengths do not match"
 
 -- TODO what about pattern coverage?
@@ -227,7 +226,7 @@ checkFunDef fun synClauses = do
     clauses <- forM synClauses $ \(A.Clause synPats synClauseBody) -> do
       checkPatterns fun synPats funType $ \ctx pats _ clauseType -> do
         clauseBody <- check ctx synClauseBody clauseType
-        return $ Clause pats $ Scope $ substMap (toIntVar ctx) clauseBody
+        Clause pats <$> liftTermM (substMap (toIntVar ctx) clauseBody)
     inv <- checkInvertibility clauses
     addClauses fun inv
   where
@@ -249,11 +248,11 @@ checkPatterns _ [] type_ ret =
 checkPatterns funName (synPat : synPats) type0 ret = atSrcLoc synPat $ do
   stuck <- matchPi_ type0 $ \dom cod -> fmap NotStuck $ do
     checkPattern funName synPat dom $ \ctx pat patVar -> do
-      let cod'  = substMap (fmap (Ctx.weaken ctx)) cod
-      let cod'' = instantiate cod' patVar
-      checkPatterns funName synPats cod'' $ \ctx' pats patsVars -> do
-        let patVar' = substMap (Ctx.weaken ctx') patVar
-        ret (ctx Ctx.++ ctx') (pat : pats) (patVar' : patsVars)
+      cod'  <- liftTermM $ substMap (fmap (Ctx.weaken ctx)) cod
+      cod'' <- liftTermM $ instantiate cod' patVar
+      checkPatterns funName synPats cod'' $ \ctx' pats patsVars bodyType -> do
+        patVar' <- liftTermM $ substMap (Ctx.weaken ctx') patVar
+        ret (ctx Ctx.++ ctx') (pat : pats) (patVar' : patsVars) bodyType
   checkPatternStuck funName stuck
 
 checkPattern
@@ -280,7 +279,7 @@ checkPattern funName synPat type_ ret = case synPat of
         _                       -> do doc <- prettyDefinitionTC typeConDef
                                       error $ "impossible.checkPattern " ++ render doc
       stuck <- matchTyCon typeCon type_ $ \typeConArgs -> fmap NotStuck $ do
-        let dataConTypeNoPars = Tel.substs (subst'Vacuous dataConType) typeConArgs
+        dataConTypeNoPars <- liftTermM $ Tel.substs (subst'Vacuous dataConType) typeConArgs
         checkPatterns funName synPats dataConTypeNoPars $ \ctx pats patsVars _ -> do
           let t = unview (Con dataCon patsVars)
           ret ctx (ConP dataCon pats) t
@@ -303,7 +302,7 @@ check ctx synT type_ = atSrcLoc synT $ case synT of
   A.Con dataCon synArgs -> do
     DataCon tyCon dataConType <- getDefinition dataCon
     metaVarIfStuck ctx type_ $ matchTyCon tyCon type_ $ \tyConArgs -> do
-      let appliedDataConType = Tel.substs (subst'Vacuous dataConType) tyConArgs
+      appliedDataConType <- liftTermM $ Tel.substs (subst'Vacuous dataConType) tyConArgs
       checkConArgs ctx synArgs appliedDataConType `bindStuckTC`
         WaitingOn (con dataCon)
   A.Refl _ -> do
@@ -354,7 +353,7 @@ checkSpine ctx h (el : els) type_ = atSrcLoc el $ case el of
   A.Apply synArg -> do
     matchPi_ type_ $ \dom cod -> do
       arg <- check ctx synArg dom
-      let cod' = instantiate cod arg
+      cod' <- liftTermM $ instantiate cod arg
       h' <- eliminateTC h [Apply arg]
       checkSpine ctx h' els cod'
 
@@ -366,7 +365,8 @@ checkConArgs _ [] _ = do
 checkConArgs ctx (synArg : synArgs) type_ = atSrcLoc synArg $ do
   matchPi_ type_ $ \dom cod -> do
     arg <- check ctx synArg dom
-    checkConArgs ctx synArgs (instantiate cod arg) `bindStuckTC` WaitingOn (arg :)
+    cod' <- liftTermM $ instantiate cod arg
+    checkConArgs ctx synArgs cod' `bindStuckTC` WaitingOn (arg :)
 
 isType :: (IsVar v, IsTerm t) => Ctx t v -> A.Expr -> TC' t (Type t v)
 isType ctx abs = check ctx abs set
@@ -404,14 +404,15 @@ inferHead
   => Ctx t v -> A.Head -> TC' t (Head v, Type t v)
 inferHead ctx synH = atSrcLoc synH $ case synH of
   A.Var name -> do
-    case Ctx.lookupName name ctx of
+    mbV <- liftTermM $ Ctx.lookupName name ctx
+    case mbV of
       Nothing         -> checkError $ NameNotInScope name
       Just (v, type_) -> return (Var v, type_)
   A.Def name -> do
-    type_ <- definitionType <$> getDefinition name
-    return (Def name, substVacuous type_)
-  A.J{} ->
-    return (J, substVacuous typeOfJ)
+    type_ <- substVacuous . definitionType <$> getDefinition name
+    return (Def name, type_)
+  A.J{} -> do
+    (J, ) <$> typeOfJ
 
 -- (A : Set) ->
 -- (x : A) ->
@@ -420,25 +421,28 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 -- (p : (x : A) -> P x x refl) ->
 -- (eq : _==_ A x y) ->
 -- P x y eq
-typeOfJ :: forall t. (IsTerm t) => Closed (Type t)
-typeOfJ = substMap close $
-    ("A", set) -->
-    ("x", var "A") -->
-    ("y", var "A") -->
-    ("P", ("x", var "A") --> ("y", var "A") -->
-          ("eq", equal (var "A") (var "x") (var "y")) -->
-          set
+typeOfJ :: forall t v. (IsVar v, IsTerm t) => TC' t (Type t v)
+typeOfJ = do
+  liftTermM $ substMap close =<<
+    ("A", return set) -->
+    ("x", return (var "A")) -->
+    ("y", return (var "A")) -->
+    ("P", ("x", return (var "A")) --> ("y", return (var "A")) -->
+          ("eq", return (equal (var "A") (var "x") (var "y"))) -->
+          return set
     ) -->
-    ("p", ("x", var "A") --> app (Var "P") (map Apply [var "x", var "x", refl])) -->
-    ("eq", equal (var "A") (var "x") (var "y")) -->
-    app (Var "P") (map Apply [var "x", var "y", refl])
+    ("p", ("x", return (var "A")) --> return (app (Var "P") (map Apply [var "x", var "x", refl]))) -->
+    ("eq", return (equal (var "A") (var "x") (var "y"))) -->
+    return (app (Var "P") (map Apply [var "x", var "y", refl]))
   where
-    close :: Name -> Void
     close v = error $ "impossible.typeOfJ: Free variable " ++ PP.render v
 
     infixr 9 -->
-    (-->) :: (Name, t Name) -> t Name -> t Name
-    (x, type_) --> t = pi type_ $ abstract x t
+    (-->) :: (Name, TermM (t Name)) -> TermM (t Name) -> TermM (t Name)
+    (x, type_) --> t = do
+      type' <- type_
+      t' <- t
+      pi type' <$> abstract x t'
 
 -- Equality
 ------------
@@ -489,7 +493,7 @@ checkEqual ctx type_ x y = do
              | Just tyConPars <- mapM isApply tyConPars0
              , dataCon == dataCon' -> do
                DataCon _ dataConType <- getDefinition dataCon
-               let appliedDataConType = Tel.substs (subst'Vacuous dataConType) tyConPars
+               appliedDataConType <- liftTermM $ Tel.substs (subst'Vacuous dataConType) tyConPars
                equalConArgs ctx appliedDataConType dataCon dataConArgs1 dataConArgs2
          (Set, Set, Set) -> do
            returnStuckTC ()
@@ -516,7 +520,8 @@ checkEqual ctx type_ x y = do
             tView <- whnfViewTC t
             case tView of
               Lam _ -> return t
-              _     -> lam <$> eliminateTC (weaken t) [Apply v]
+              _     -> do t' <- liftTermM $ weaken t
+                          lam <$> eliminateTC t' [Apply v]
         _ ->
           return return
 
@@ -543,7 +548,8 @@ checkEqualSpine ctx type_ h (elim1 : elims1) (elim2 : elims2) = do
           arg1' <- metaVarIfStuck ctx domain $
             checkEqual ctx domain arg1 arg2 `bindStuckTC` WaitingOn (\() -> arg1)
           h' <- eliminateTC h [Apply arg1']
-          checkEqualSpine ctx (instantiate codomain arg1') h' elims1 elims2
+          codomain' <- liftTermM $ instantiate codomain arg1'
+          checkEqualSpine ctx codomain' h' elims1 elims2
         _ -> do
           doc <- prettyTermTC type_
           error $ "impossible.checkEqualSpine: Expected function type " ++ render doc
@@ -561,9 +567,9 @@ equalSpine
   => Ctx t v -> Head v -> [Elim t v] -> [Elim t v] -> StuckTC' t ()
 equalSpine ctx h elims1 elims2 = do
   hType <- case h of
-    Var v   -> return $ Ctx.getVar v ctx
+    Var v   -> liftTermM $ Ctx.getVar v ctx
     Def f   -> substVacuous . definitionType <$> getDefinition f
-    J       -> return $ substVacuous typeOfJ
+    J       -> typeOfJ
     Meta mv -> substVacuous <$> getMetaVarType mv
   checkEqualSpine ctx hType (app h []) elims1 elims2
 
@@ -634,8 +640,8 @@ checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
       tView <- whnfViewTC t
       case tView of
         App (Meta mv) mvArgs -> do
-          mvT <- instantiateDataCon mv dataCon
-          matchPat dataCon pats . Apply =<< eliminateTC (substVacuous mvT) mvArgs
+          mvT <- substVacuous <$> instantiateDataCon mv dataCon
+          matchPat dataCon pats . Apply =<< eliminateTC mvT mvArgs
         Con dataCon' dataConArgs | dataCon == dataCon' ->
           matchPats pats (map Apply dataConArgs)
         _ -> do
@@ -673,8 +679,8 @@ metaAssign ctx0 type0 mv elims0 t0 = do
     return dataCon
   case mbRecordDataCon of
     Just dataCon -> do
-      mvT <- instantiateDataCon mv dataCon
-      mvT' <- eliminateTC (substVacuous mvT) elims0
+      mvT <- substVacuous <$> instantiateDataCon mv dataCon
+      mvT' <- eliminateTC mvT elims0
       checkEqual ctx0 type0 mvT' t0
     Nothing -> do
       etaExpandVars ctx0 elims0 (Tel.Prod2 type0 t0) $ \ctx elims (Tel.Prod2 type_ t) -> do
@@ -960,16 +966,24 @@ applyInvertMeta
   => InvertMeta t v0 -> Term t v0
   -> TC' t (TermTraverse v0 (Closed (Term t)))
 applyInvertMeta (InvertMeta sub vs) t = do
-  t' <- applyInvertMetaSubst sub t
-  return $ substMap kill . lambdaAbstract vs <$> t'
+  tt <- applyInvertMetaSubst sub t
+  case tt of
+    TTFail v ->
+      return $ TTFail v
+    TTMetaVars mvs ->
+      return $ TTMetaVars mvs
+    TTOK t0 -> do
+      t1 <- liftTermM $ lambdaAbstract vs t0
+      t2 <- liftTermM $ substMap kill t1
+      return $ TTOK t2
   where
     kill = error "applyInvertMeta.impossible"
 
 -- | Creates a term in the same context as the original term but lambda
 -- abstracted over the given variables.
-lambdaAbstract :: (IsVar v, IsTerm t) => [v] -> Term t v -> Term t v
-lambdaAbstract []       t = t
-lambdaAbstract (v : vs) t = unview $ Lam $ abstract v $ lambdaAbstract vs t
+lambdaAbstract :: (IsVar v, IsTerm t) => [v] -> Term t v -> TermM (Term t v)
+lambdaAbstract []       t = return t
+lambdaAbstract (v : vs) t = unview . Lam <$> (abstract v =<< lambdaAbstract vs t)
 
 -- TODO improve efficiency of this traversal, we shouldn't need all
 -- those `fromAbs'.  Also in `freeVars'.
@@ -978,16 +992,20 @@ applyInvertMetaSubst
        (IsVar v0, IsVar mvV, IsTerm t)
     => [(v0, t mvV)] -> Term t v0 -> TC' t (TermTraverse v0 (Term t mvV))
 applyInvertMetaSubst sub t0 =
-  flip go t0 $ \v -> maybe (Left v) Right (lookup v sub)
+  flip go t0 $ \v -> return $ maybe (Left v) Right (lookup v sub)
   where
     lift' :: forall v v1.
-             (v -> Either v0 (Term t v1))
-          -> (TermVar v -> Either v0 (Term t (TermVar v1)))
-    lift' _ (B v) = Right $ var $ B v
-    lift' f (F v) = substMap F <$> f v
+             (v -> TC' t (Either v0 (Term t v1)))
+          -> (TermVar v -> TC' t (Either v0 (Term t (TermVar v1))))
+    lift' _ (B v) = return $ Right $ var $ B v
+    lift' f (F v) = do
+      e <- f v
+      case e of
+        Left v' -> return $ Left v'
+        Right t -> Right <$> (liftTermM (substMap F t))
 
     go :: forall v v1. (IsVar v, IsVar v1)
-       => (v -> Either v0 (Term t v1)) -> Term t v -> TC' t (TermTraverse v0 (t v1))
+       => (v -> TC' t (Either v0 (Term t v1))) -> Term t v -> TC' t (TermTraverse v0 (t v1))
     go invert t = do
       tView <- whnfViewTC t
       case tView of
@@ -1019,8 +1037,9 @@ applyInvertMetaSubst sub t0 =
               return $ TTMetaVars $ HS.insert mv mvs
             (Meta mv, TTFail _) ->
               return $ TTMetaVars $ HS.singleton mv
-            (Var v, _) ->
-              sequenceA $ eliminateTC <$> either TTFail pure (invert v) <*> resElims
+            (Var v, _) -> do
+              inv <- invert v
+              sequenceA $ eliminateTC <$> either TTFail pure inv <*> resElims
             (Def f, _) ->
               return $ app (Def f) <$> resElims
             (J, _) ->
@@ -1034,7 +1053,8 @@ applyInvertMetaSubst sub t0 =
 data EtaExpandVars t f v = EtaExpandVars [Elim f v] (t f v)
 
 instance (Subst' t) => Subst' (EtaExpandVars t) where
-  subst' (EtaExpandVars elims t) f = EtaExpandVars (map (\x -> subst' x f) elims) (subst' t f)
+  subst' (EtaExpandVars elims t) f =
+    EtaExpandVars <$> mapM (\x -> subst' x f) elims <*> subst' t f
 
 etaExpandVars
   :: (IsVar v, IsTerm f, Subst' t)
@@ -1072,12 +1092,12 @@ etaExpandVar tyCon type_ tel = do
   DataCon _ dataConType <- getDefinition dataCon
   App (Def _) tyConPars0 <- whnfViewTC type_
   let Just tyConPars = mapM isApply tyConPars0
-  let appliedDataConType = Tel.substs (subst'Vacuous dataConType) tyConPars
+  appliedDataConType <- liftTermM $ Tel.substs (subst'Vacuous dataConType) tyConPars
   -- TODO this should be an assertion (unrollPiWithNamesTC must not fail)
   unrollPiWithNames appliedDataConType (map fst projs) $ \dataConPars _ -> do
-    let tel' = subst' tel $ \v -> case v of
-                 B _  -> con dataCon $ map var $ ctxVars dataConPars
-                 F v' -> var $ Ctx.weaken dataConPars v'
+    tel' <- liftTermM $ subst' tel $ \v -> return $ case v of
+      B _  -> con dataCon $ map var $ ctxVars dataConPars
+      F v' -> var $ Ctx.weaken dataConPars v'
     return $ dataConPars Tel.++ tel'
 
 -- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
@@ -1160,7 +1180,7 @@ createMvsPars _ (Tel.Empty _) =
   return []
 createMvsPars ctx (Tel.Cons (_, type') tel) = do
   mv  <- addMetaVarInCtx ctx type'
-  mvs <- createMvsPars ctx (Tel.instantiate tel mv)
+  mvs <- createMvsPars ctx =<< liftTermM (Tel.instantiate tel mv)
   return (mv : mvs)
 
 -- Problem handling
@@ -1267,8 +1287,7 @@ matchTyCon tyCon t0 handler = do
       mvType <- getMetaVarType mv
       mvT <- unrollPi mvType $ \ctxMvArgs _ -> do
         Constant _ tyConType <- getDefinition tyCon
-        tyConParsTel <- unrollPi (substVacuous tyConType) $ \ctx ->
-                        return . Tel.idTel ctx
+        tyConParsTel <- unrollPi (substVacuous tyConType) $ \ctx -> return . Tel.idTel ctx
         tyConPars <- createMvsPars ctxMvArgs tyConParsTel
         return $ ctxLam ctxMvArgs $ def tyCon $ map Apply tyConPars
       instantiateMetaVar mv mvT
@@ -1351,12 +1370,14 @@ applyProjection proj h type_ = do
   Projection projIx tyCon projType <- getDefinition proj
   h' <- eliminateTC h [Proj proj projIx]
   matchTyCon tyCon type_ $ \tyConArgs -> do
-    appliedProjType <- whnfViewTC $ Tel.substs (subst'Vacuous projType) tyConArgs
-    case appliedProjType of
-      Pi _ endType ->
-        returnStuckTC (h', instantiate endType h)
+    appliedProjType <- liftTermM $ Tel.substs (subst'Vacuous projType) tyConArgs
+    appliedProjTypeView <- whnfViewTC appliedProjType
+    case appliedProjTypeView of
+      Pi _ endType -> do
+        endType' <- liftTermM $ instantiate endType h
+        returnStuckTC (h', endType')
       _ -> do
-        doc <- prettyTermTC $ unview appliedProjType
+        doc <- prettyTermTC appliedProjType
         error $ "impossible.applyProjection: " ++ render doc
 
 instantiateDataCon
@@ -1374,7 +1395,7 @@ instantiateDataCon mv dataCon = do
     App (Def tyCon') tyConArgs0 <- whnfViewTC endType'
     Just tyConArgs <- return $ mapM isApply tyConArgs0
     True <- return $ tyCon == tyCon'
-    let dataConType = Tel.substs (subst'Vacuous dataConTypeTel) tyConArgs
+    dataConType <- liftTermM $ Tel.substs (subst'Vacuous dataConTypeTel) tyConArgs
     dataConArgsTel <- unrollPi dataConType $ \ctx -> return . Tel.idTel ctx
     dataConArgs <- createMvsPars ctxMvArgs dataConArgsTel
     return $ ctxLam ctxMvArgs $ con dataCon $ dataConArgs
@@ -1559,7 +1580,7 @@ checkInvertibility = go []
     go injClauses [] =
       return $ Invertible $ reverse injClauses
     go injClauses (clause@(Clause _ body) : clauses) = do
-      th <- termHead (substFromScope body)
+      th <- termHead body
       case th of
         Just tHead | Nothing <- lookup tHead injClauses ->
           go ((tHead, clause) : injClauses) clauses

@@ -16,6 +16,7 @@ import           Term.Definition
 import qualified Term.Signature                   as Sig
 import           Term.Subst
 import           Term.Synonyms
+import           Term.TermM
 import qualified Term.Telescope                   as Tel
 import           Term.Var
 import           Text.PrettyPrint.Extended        ((<+>), (<>), ($$))
@@ -81,7 +82,7 @@ instantiateMetaVars sig t = do
       Con dataCon <$> mapM go ts
     Set ->
       return $ Set
-    App (Meta mv) els | Just t' <- Sig.getMetaVarBody sig mv ->
+    App (Meta mv) els | Just t' <- Sig.getMetaVarBody sig mv -> do
       instantiateMetaVars sig =<< eliminate sig (substVacuous t') els
     App h els ->
       App h <$> mapM goElim els
@@ -92,17 +93,17 @@ instantiateMetaVars sig t = do
     goElim (Proj n field) = return $ Proj n field
     goElim (Apply t')     = Apply <$> go t'
 
-prettyElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Elim t v -> IO PP.Doc
+prettyElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Elim t v -> TermM PP.Doc
 prettyElim sig = prettyPrecElim sig 0
 
-prettyPrecElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Int -> Elim t v -> IO PP.Doc
+prettyPrecElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Int -> Elim t v -> TermM PP.Doc
 prettyPrecElim p sig (Apply e)  = prettyPrecTerm p sig e
 prettyPrecElim _ _   (Proj n _) = return $ PP.text $ show n
 
-prettyElims :: (IsVar v, IsTerm t) => Sig.Signature t -> [Elim t v] -> IO PP.Doc
+prettyElims :: (IsVar v, IsTerm t) => Sig.Signature t -> [Elim t v] -> TermM PP.Doc
 prettyElims sig elims = PP.pretty <$> mapM (prettyElim sig) elims
 
-prettyDefinition :: (IsTerm t) => Sig.Signature t -> Closed (Definition t) -> IO PP.Doc
+prettyDefinition :: (IsTerm t) => Sig.Signature t -> Closed (Definition t) -> TermM PP.Doc
 prettyDefinition sig (Constant Postulate type_) =
   prettyTerm sig type_
 prettyDefinition sig (Constant (Data dataCons) type_) = do
@@ -125,15 +126,15 @@ prettyDefinition sig (Function type_ clauses) = do
   clausesDoc <- mapM (prettyClause sig) $ ignoreInvertible clauses
   return $ typeDoc $$ PP.vcat clausesDoc
 
-prettyClause :: (IsTerm t) => Sig.Signature t -> Closed (Clause t) -> IO PP.Doc
+prettyClause :: (IsTerm t) => Sig.Signature t -> Closed (Clause t) -> TermM PP.Doc
 prettyClause sig (Clause pats body) = do
-  bodyDoc <- prettyTerm sig $ substFromScope body
+  bodyDoc <- prettyTerm sig body
   return $ PP.pretty pats <+> "=" $$ PP.nest 2 bodyDoc
 
 prettyTele
   :: forall v t.
      (IsVar v, IsTerm t)
-  => Sig.Signature t -> Tel.IdTel t v -> IO PP.Doc
+  => Sig.Signature t -> Tel.IdTel t v -> TermM PP.Doc
 prettyTele sig (Tel.Empty (Tel.Id t)) = do
    prettyTerm sig t
 prettyTele sig (Tel.Cons (n0, type0) tel0) = do
@@ -141,7 +142,7 @@ prettyTele sig (Tel.Cons (n0, type0) tel0) = do
   tel0Doc <- go tel0
   return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc PP.<> tel0Doc
   where
-    go :: forall v'. (IsVar v') => Tel.IdTel t v' -> IO PP.Doc
+    go :: forall v'. (IsVar v') => Tel.IdTel t v' -> TermM PP.Doc
     go (Tel.Empty (Tel.Id t)) =
       ("]" <+>) <$> prettyTerm sig t
     go (Tel.Cons (n, type_) tel) = do

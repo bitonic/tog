@@ -14,13 +14,14 @@ module Term.Context
 import           Prelude                          hiding (pi, length, lookup, (++))
 
 import           Bound
-import           Data.Void                        (Void, absurd)
-import           Control.Arrow                    ((***))
+import           Data.Functor                     ((<$>))
 import           Data.Typeable                    (Typeable)
+import           Data.Void                        (Void, absurd)
 
 import           Syntax.Internal                  (Name)
 import           Term.Subst
 import           Term.Var
+import           Term.TermM
 
 -- Ctx
 ------------------------------------------------------------------------
@@ -37,24 +38,29 @@ type ClosedCtx = Ctx Void
 singleton :: (IsVar v0) => Name -> t v0 -> Ctx v0 t (TermVar v0)
 singleton name t = Snoc Empty (name, t)
 
-lookupName :: Subst t => Name -> Ctx v0 t v -> Maybe (v, t v)
+lookupName :: Subst t => Name -> Ctx v0 t v -> TermM (Maybe (v, t v))
 lookupName n ctx0 = go ctx0
   where
     -- Helper function so that we have the proof of equality when
     -- pattern matching the variable.
-    go :: Subst t => Ctx v0 t v -> Maybe (v, t v)
-    go Empty                  = Nothing
-    go (Snoc ctx (n', type_)) = if n == n'
-                                then Just (boundTermVar n, substMap F type_)
-                                else fmap (F *** substMap F) (go ctx)
+    go :: Subst t => Ctx v0 t v -> TermM (Maybe (v, t v))
+    go Empty                  = return Nothing
+    go (Snoc ctx (n', type_)) =
+      if n == n'
+      then Just . (boundTermVar n, ) <$> substMap F type_
+      else do
+        mbT <- go ctx
+        case mbT of
+          Nothing     -> return Nothing
+          Just (v, t) -> Just . (F v, ) <$> substMap F t
 
-getVar :: forall t v. Subst t => v -> ClosedCtx t v -> t v
+getVar :: forall t v. Subst t => v -> ClosedCtx t v -> TermM (t v)
 getVar v0 ctx0 = go ctx0 v0
   where
-    go :: forall v'. ClosedCtx t v' -> v' -> t v'
-    go Empty               v     = absurd v
+    go :: forall v'. ClosedCtx t v' -> v' -> TermM (t v')
+    go Empty               v     = return $ absurd v
     go (Snoc _ (_, type_)) (B _) = substMap F type_
-    go (Snoc ctx _)        (F v) = substMap F (go ctx v)
+    go (Snoc ctx _)        (F v) = substMap F =<< go ctx v
 
 length :: Ctx v0 t v -> Int
 length Empty        = 0

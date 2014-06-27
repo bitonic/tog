@@ -24,6 +24,7 @@ import           Term.Var
 import           Term.Definition
 import           Term.Synonyms
 import qualified Term.Signature                   as Sig
+import           Term.TermM
 
 -- Terms
 ------------------------------------------------------------------------
@@ -52,8 +53,8 @@ instance (Eq1 term) => Eq1 (Elim term) where
     _          ==# _          = False
 
 instance Subst' Elim where
-    subst' (Apply t)      f = Apply (subst t f)
-    subst' (Proj n field) _ = Proj n field
+    subst' (Apply t)      f = Apply <$> subst t f
+    subst' (Proj n field) _ = return $ Proj n field
 
 instance Bound Elim where
     Apply t      >>>= f = Apply (t >>= f)
@@ -120,25 +121,23 @@ metaVars sig t = do
 
 type Abs t v = t (TermVar v)
 
-type TermM = IO
-
 class (Eq1 t, Subst t, Typeable t) => IsTerm t where
     -- Abstraction related
     --------------------------------------------------------------------
 
-    weaken :: t v -> Abs t v
+    weaken :: t v -> TermM (Abs t v)
     weaken = substMap F
 
     strengthen :: Abs t v -> Maybe (t v)
     default strengthen :: (Traversable t) => Abs t v -> Maybe (t v)
     strengthen = traverse (unvar (const Nothing) Just)
 
-    instantiate :: Abs t v -> t v -> t v
+    instantiate :: Abs t v -> t v -> TermM (t v)
     instantiate abs' t = subst abs' $ \v -> case v of
-        B _  -> t
-        F v' -> var v'
+        B _  -> return $ t
+        F v' -> return $ var v'
 
-    abstract :: (Eq v, VarName v) => v -> t v -> Abs t v
+    abstract :: (Eq v, VarName v) => v -> t v -> TermM (Abs t v)
     abstract v t = substMap f t
       where
         f v' = if v == v' then boundTermVar (varName v) else F v'
@@ -208,8 +207,9 @@ eliminate sig t elims = do
         if unField field >= length args
         then error "Eval.eliminate: Bad elimination"
         else eliminate sig (args !! unField field) es
-    (Lam body, Apply argument : es) ->
-        eliminate sig (instantiate body argument) es
+    (Lam body, Apply argument : es) -> do
+        body' <- instantiate body argument
+        eliminate sig body' es
     (App h es1, es2) ->
         return $ app h (es1 ++ es2)
     (_, _) ->
@@ -222,7 +222,7 @@ genericWhnf :: (IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
 genericWhnf sig t = do
   tView <- view t
   case tView of
-    App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv ->
+    App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv -> do
       genericWhnf sig =<< eliminate sig (substVacuous t') es
     App (Def defName) es | Function _ cs <- Sig.getDefinition sig defName ->
       whnfFun sig defName es $ ignoreInvertible cs
@@ -250,12 +250,8 @@ whnfFun sig funName es (Clause patterns body : clauses) = do
       return $ BlockedOn mvs funName es
     TTFail () ->
       whnfFun sig funName es clauses
-    TTOK (args0, leftoverEs) -> do
-      let args = reverse args0
-      let ixArg n = if n >= length args
-                    then error "Eval.whnf: too few arguments"
-                    else args !! n
-      let body' = substInstantiateName ixArg (subst'Vacuous body)
+    TTOK (args, leftoverEs) -> do
+      body' <- instantiateClauseBody body args
       genericWhnf sig =<< eliminate sig body' leftoverEs
 
 matchClause

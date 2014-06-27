@@ -3,6 +3,7 @@ module Term.Definition
     ( -- * 'Clause'
       Clause(..)
     , ClauseBody
+    , instantiateClauseBody
     , Pattern(..)
     , patternBindings
     , patternsBindings
@@ -15,14 +16,20 @@ module Term.Definition
     , mapInvertible
     ) where
 
-import           Bound
-import           Data.Typeable                    (Typeable)
+import           Bound                            (Bound, (>>>=), Var(B, F))
+import qualified Bound.Name                       as Bound
+import           Bound.Scope.Simple               (Scope(Scope), fromScope)
 import           Control.Arrow                    (second)
+import           Data.Typeable                    (Typeable)
+import           Data.Void                        (Void, absurd)
+import           Prelude.Extras                   (Eq1, (==#))
 
 import           Syntax.Internal                  (Name)
 import qualified Term.Telescope                   as Tel
 import           Term.Var
 import           Term.Synonyms
+import           Term.Subst
+import           Term.TermM
 
 -- Clauses
 ------------------------------------------------------------------------
@@ -30,14 +37,30 @@ import           Term.Synonyms
 -- | A 'ClauseBody' scopes a term over a number of variables.  The
 -- lowest number refers to the rightmost variable in the patterns, the
 -- highest to the leftmost.
-type ClauseBody t v = Scope (Named Int) t v
+type ClauseBody t v = t (Var (Named Int) v)
+
+instantiateClauseBody
+  :: Subst t => ClauseBody t Void -> [t v] -> TermM (t v)
+instantiateClauseBody body args0 = subst body $ \v -> case v of
+  B (Bound.Name _ i) -> return $ ixArg i
+  F v'               -> absurd v'
+  where
+    args = reverse args0
+
+    ixArg n = if n >= length args
+              then error "Definition.instantiateClauseBody: too many arguments"
+              else args !! n
+
 
 -- | One clause of a function definition.
 data Clause t v = Clause [Pattern] (ClauseBody t v)
-    deriving (Eq, Typeable)
+    deriving (Typeable)
+
+instance (Eq1 t) => Eq1 (Clause t) where
+  Clause pats1 body1 ==# Clause pats2 body2 = pats1 == pats2 && body1 ==# body2
 
 instance Bound Clause where
-  Clause pats body >>>= f = Clause pats (body >>>= f)
+  Clause pats body >>>= f = Clause pats $ fromScope (Scope body >>>= f)
 
 data Pattern
     = VarP

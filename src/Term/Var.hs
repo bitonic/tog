@@ -1,24 +1,13 @@
 module Term.Var where
 
-import           Bound                            (Scope(Scope), Var(B, F), Bound, (>>>=))
-import           Bound.Var                        (unvar)
-import           Bound.Scope                      (unscope)
-import qualified Bound.Scope.Simple               as Bound.Simple
+import           Bound                            (Var(B, F))
 import qualified Bound.Name                       as Bound
-import           Control.Comonad                  (Comonad, extract)
-import           Data.Foldable                    (Foldable, foldr)
-import           Data.Traversable                 (Traversable, traverse)
-import           Prelude.Extras                   (Eq1((==#)))
 import           Data.Void                        (Void, absurd)
-import           Data.Monoid                      (mempty, (<>))
-import qualified Data.HashSet                     as HS
 import           Data.Typeable                    (Typeable)
-import           Data.Maybe                       (fromMaybe)
-import           Control.Applicative              (Applicative, pure, (<*>))
 
 import           Syntax.Internal                  (Name)
 
--- Named
+-- Var
 ------------------------------------------------------------------------
 
 -- | We use this type for bound variables of which we want to remember

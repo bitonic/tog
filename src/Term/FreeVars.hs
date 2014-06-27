@@ -13,6 +13,7 @@ import qualified Data.Set                         as Set
 import qualified Term.Signature                   as Sig
 import           Term.Class
 import           Term.Var
+import           Term.TermM
 
 -- Free variables
 ------------------------------------------------------------------------
