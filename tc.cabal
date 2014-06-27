@@ -26,6 +26,7 @@ executable tc
                      , either >= 4.1
                      , hashable >= 1.2
                      , mtl >= 2.1
+                     , optparse-applicative >= 0.9
                      , prelude-extras >= 0.4
                      , pretty >= 1.1
                      , tagged >= 0.7

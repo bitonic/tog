@@ -34,7 +34,7 @@ prettyPrecTerm sig p t0 = do
     Equal a x y ->
       prettyApp (prettyPrecTerm sig) p (PP.text "_==_") [a, x, y]
     Pi a b -> do
-      let mbN = getAbsName b
+      mbN <- getAbsName b
       aDoc <- prettyTerm sig a
       bDoc <- prettyTerm sig b
       return $ PP.condParens (p > 0) $
@@ -45,7 +45,7 @@ prettyPrecTerm sig p t0 = do
                  , PP.nest 2 bDoc
                  ]
     Lam b -> do
-      let n = getAbsName_ b
+      n <- getAbsName_ b
       bDoc <- prettyTerm sig b
       return $ PP.condParens (p > 0) $
          PP.sep [ PP.text "\\" <> PP.pretty n <> PP.text " ->"
@@ -88,7 +88,7 @@ instantiateMetaVars sig t = do
       App h <$> mapM goElim els
   where
     go :: forall v'. (IsVar v') => t v' -> TermM (t v')
-    go t' = unview <$> instantiateMetaVars sig t'
+    go t' = unview =<< instantiateMetaVars sig t'
 
     goElim (Proj n field) = return $ Proj n field
     goElim (Apply t')     = Apply <$> go t'

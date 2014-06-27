@@ -6,6 +6,7 @@ module Term.Nf
 import           Prelude                          hiding (pi)
 
 import           Control.Applicative              ((<$>), (<*>))
+import           Control.Monad                    (join, (<=<))
 
 import           Term.Definition
 import qualified Term.Signature                   as Sig
@@ -18,19 +19,19 @@ nf sig t = do
   tView <- whnfView sig t
   case tView of
     Lam body ->
-      return $ (lam body :: t v)
+      lam body
     Pi domain codomain ->
-      pi <$> nf sig domain <*> nf sig codomain
+      join $ pi <$> nf sig domain <*> nf sig codomain
     Equal type_ x y ->
-      equal <$> nf sig type_ <*> nf sig x <*> nf sig y
+      join $ equal <$> nf sig type_ <*> nf sig x <*> nf sig y
     Refl ->
       return refl
     Con dataCon args ->
-      con dataCon <$> mapM (nf sig) args
+      join $ con dataCon <$> mapM (nf sig) args
     Set ->
       return set
     App h elims ->
-      app h <$> mapM (nf' sig) elims
+      join $ app h <$> mapM (nf' sig) elims
 
 class Nf t where
   nf' :: (IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)
@@ -65,4 +66,4 @@ instance Nf Definition where
         Invertible <$> mapM (\(th, clause) -> (th ,) <$> nf' sig clause) injClauses
 
 instance Nf TermView where
-  nf' sig t = whnfView sig =<< nf sig (unview t)
+  nf' sig t = (whnfView sig <=< nf sig <=< unview) t

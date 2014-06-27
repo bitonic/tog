@@ -59,14 +59,14 @@ substs (Cons _ _)    []           = error "Types.Telescope.instantiate: too few 
 substs (Cons _ tel') (arg : args) = (`substs` args) =<< subst' tel' instArg
   where
     instArg (B _) = return arg
-    instArg (F v) = return $ var v
+    instArg (F v) = var v
 
 -- | Instantiates a bound variable.
 instantiate :: (Subst f, Subst' t) => Tel t f (TermVar v) -> f v -> TermM (Tel t f v)
 instantiate tel' t = subst' tel' inst
   where
     inst (B _) = return t
-    inst (F v) = return $ var v
+    inst (F v) = var v
 
 -- Useful types
 ---------------
@@ -141,7 +141,7 @@ instance (Subst' t) => Subst' (Tel t) where
     subst' (Empty t)              f = Empty <$> subst' t f
     subst' (Cons (n, type_) tel') f = Cons <$> ((n, ) <$> subst type_ f) <*> subst' tel' f'
       where
-        f' (B v) = return $ var (B v)
+        f' (B v) = var (B v)
         f' (F v) = substMap F =<< f v
 
 -- To/from Ctx

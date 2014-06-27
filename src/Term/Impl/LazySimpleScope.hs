@@ -46,7 +46,7 @@ instance Monad LazySimpleScope where
 instantiate' :: Abs LazySimpleScope v -> LazySimpleScope v -> LazySimpleScope v
 instantiate' abs' t = abs' >>= \v -> case v of
   B _  -> t
-  F v' -> var v'
+  F v' -> return v'
 
 eliminate' :: LazySimpleScope v -> [Elim LazySimpleScope v] -> LazySimpleScope v
 eliminate' (LSS tView) elims = case (tView, elims) of
@@ -59,18 +59,20 @@ eliminate' (LSS tView) elims = case (tView, elims) of
     (Lam body, Apply argument : es) ->
         eliminate' (instantiate' body argument) es
     (App h es1, es2) ->
-        unview $ App h (es1 ++ es2)
+        LSS $ App h (es1 ++ es2)
     (_, _) ->
         error $ "Eval.eliminate: Bad elimination"
 
 instance Subst LazySimpleScope where
-  var v = LSS $ App (Var v) []
+  var = return . return
 
   subst t f = join <$> traverse f t
 
   substMap f t = return $ fmap f t
 
 instance IsTerm LazySimpleScope where
-  unview = LSS
-  view = return . unLSS
- 
+  unview = return . LSS
+  view  = return . unLSS
+
+  set  = LSS Set
+  refl = LSS Refl
