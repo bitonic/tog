@@ -19,12 +19,12 @@ record Equiv {A} R where
   field
     ref : (x : A) -> R x x
     sym : (x : A) (y : A) -> R x y -> R y x
-    trans : {x y z : A} -> R x y -> R y z -> R x z
+    trans : (x y z : A) -> R x y -> R y z -> R x z
 
 open Equiv
 
 trans1 : {A : Set}{R : A -> A -> Set}{x y z : A} -> Equiv R -> R x y -> R y z -> R x z
-trans1 eq p q = trans eq p q
+trans1 eq p q = trans eq _ _ _ p q
 
 postulate
   symId   : {A : Set} (x y : A) -> x == y -> y == x

@@ -23,16 +23,16 @@ import           Data.Traversable                 (traverse, sequenceA)
 import           Data.Typeable                    (Typeable)
 import           Data.Void                        (absurd)
 
-import qualified Text.PrettyPrint.Extended        as PP
-import           Text.PrettyPrint.Extended        (($$), (<>), (<+>), render)
 import           Syntax.Internal                  (Name)
 import qualified Syntax.Internal                  as A
 import           Term
-import           Term.Impl.LazySimpleScope
-import           Term.Impl.GraphReduce
 import qualified Term.Context                     as Ctx
-import qualified Term.Telescope                   as Tel
+import qualified Term.Context.Utils               as Ctx
+import           Term.Impl
 import qualified Term.Signature                   as Sig
+import qualified Term.Telescope                   as Tel
+import           Text.PrettyPrint.Extended        (($$), (<>), (<+>), render)
+import qualified Text.PrettyPrint.Extended        as PP
 import           TypeCheck.Monad
 
 -- Configuration
@@ -69,8 +69,8 @@ checkProgram
   -> IO (Either PP.Doc a)
 checkProgram conf decls ret =
   case tccTermType conf of
-    "LSS" -> checkProgram' (Proxy :: Proxy LazySimpleScope) conf decls ret
-    "GR"  -> checkProgram' (Proxy :: Proxy GraphReduce)     conf decls ret
+    "S"  -> checkProgram' (Proxy :: Proxy Simple)      conf decls ret
+    "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
     type_ -> return $ Left $ "Invalid term type" <+> PP.text type_
 
 checkProgram'
@@ -182,7 +182,7 @@ checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
   atSrcLoc dataCon $ do
     dataConType <- isType tyConPars synDataConType
     unrollPi dataConType $ \vs endType -> do
-      appliedTyConType' <- liftTermM $ substMap (Ctx.weaken vs) appliedTyConType
+      appliedTyConType' <- liftTermM $ Ctx.weaken vs appliedTyConType
       elimStuckTC (equalType (tyConPars Ctx.++ vs) appliedTyConType' endType) $ do
         checkError $ TermsNotEqual appliedTyConType' endType
     addDataCon dataCon tyCon (Tel.idTel tyConPars dataConType)
@@ -210,7 +210,7 @@ checkRec tyCon tyConPars dataCon fields = do
           tyCon tyConPars' (boundTermVar "_") (map A.typeSigName fields)
           fieldsTel'
         Tel.unTel fieldsTel $ \fieldsCtx Tel.Proxy -> do
-          appliedTyConType' <- liftTermM $ substMap (Ctx.weaken fieldsCtx) appliedTyConType
+          appliedTyConType' <- liftTermM $ Ctx.weaken fieldsCtx appliedTyConType
           addDataCon dataCon tyCon . Tel.idTel tyConPars' =<< ctxPiTC fieldsCtx appliedTyConType'
 
 checkFields
@@ -285,10 +285,11 @@ checkPatterns _ [] type_ ret =
 checkPatterns funName (synPat : synPats) type0 ret = atSrcLoc synPat $ do
   stuck <- matchPi_ type0 $ \dom cod -> fmap NotStuck $ do
     checkPattern funName synPat dom $ \ctx pat patVar -> do
-      cod'  <- liftTermM $ substMap (fmap (Ctx.weaken ctx)) cod
+      -- TODO remove the substMap
+      cod'  <- liftTermM $ substMap (fmap (Ctx.weakenVar ctx)) cod
       cod'' <- liftTermM $ instantiate cod' patVar
       checkPatterns funName synPats cod'' $ \ctx' pats patsVars bodyType -> do
-        patVar' <- liftTermM $ substMap (Ctx.weaken ctx') patVar
+        patVar' <- liftTermM $ Ctx.weaken ctx' patVar
         ret (ctx Ctx.++ ctx') (pat : pats) (patVar' : patsVars) bodyType
   checkPatternStuck funName stuck
 
@@ -1036,12 +1037,10 @@ lambdaAbstract :: (IsVar v, IsTerm t) => [v] -> Term t v -> TC' t (Term t v)
 lambdaAbstract []       t = return t
 lambdaAbstract (v : vs) t = (lamTC <=< abstractTC v <=< lambdaAbstract vs) t
 
--- TODO improve efficiency of this traversal, we shouldn't need all
--- those `fromAbs'.  Also in `freeVars'.
 applyInvertMetaSubst
-    :: forall t v0 mvV.
-       (IsVar v0, IsVar mvV, IsTerm t)
-    => [(v0, t mvV)] -> Term t v0 -> TC' t (TermTraverse v0 (Term t mvV))
+  :: forall t v0 mvV.
+     (IsVar v0, IsVar mvV, IsTerm t)
+  => [(v0, t mvV)] -> Term t v0 -> TC' t (TermTraverse v0 (Term t mvV))
 applyInvertMetaSubst sub t0 =
   flip go t0 $ \v -> return $ maybe (Left v) Right (lookup v sub)
   where
@@ -1053,7 +1052,7 @@ applyInvertMetaSubst sub t0 =
       e <- f v
       case e of
         Left v' -> return $ Left v'
-        Right t -> Right <$> (liftTermM (substMap F t))
+        Right t -> Right <$> (liftTermM (weaken t))
 
     go :: forall v v1. (IsVar v, IsVar v1)
        => (v -> TC' t (Either v0 (Term t v1))) -> Term t v -> TC' t (TermTraverse v0 (t v1))
@@ -1148,7 +1147,7 @@ etaExpandVar tyCon type_ tel = do
   unrollPiWithNames appliedDataConType (map fst projs) $ \dataConPars _ -> do
     tel' <- liftTermM $ subst' tel $ \v -> case v of
       B _  -> con dataCon =<< mapM var (ctxVars dataConPars)
-      F v' -> var $ Ctx.weaken dataConPars v'
+      F v' -> var $ Ctx.weakenVar dataConPars v'
     return $ dataConPars Tel.++ tel'
 
 -- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
