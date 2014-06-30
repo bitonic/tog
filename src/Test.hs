@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Test (parseTest) where
 
-import           Control.Monad                    (forM_, unless)
+import           Control.Monad                    (forM_, unless, when)
 import           Control.Monad.Trans.Class        (lift)
 import           Control.Monad.Trans.Either       (runEitherT, left)
 import qualified Data.HashMap.Strict              as HMS
@@ -26,7 +26,9 @@ implConsistency
   -> IO (Either PP.Doc PP.Doc)
 implConsistency termType1 termType2 prog = do
   errOrReport1 <- checkProgram defaultTypeCheckConf{tccTermType = termType1} prog captureReport
+  putStrLn "First typecheck"
   errOrReport2 <- checkProgram defaultTypeCheckConf{tccTermType = termType2} prog captureReport
+  putStrLn "Finished typechecking"
   case (errOrReport1, errOrReport2) of
     (Left err1, Left err2) ->
       return $ Right $ "Both failed, with errors" $$ PP.nest 2 err1 $$
@@ -72,10 +74,13 @@ parseTest = info (go <$> argument Just (metavar "FILE")) (progDesc "Run tests.")
       s <- readFile file
       let Right raw = parseProgram s
       let Right int = checkScope raw
-      mbErr <- implConsistency "S" "GR" int
-      case mbErr of
-        Left err -> do
-          putStrLn $ PP.render err
-          exitFailure
-        Right ok ->
-          putStrLn $ PP.render ok
+      forM_ [(tt1, tt2) | tt1 <- availableTermTypes, tt2 <- availableTermTypes] $ \(tt1, tt2) -> do
+        when (tt1 < tt2) $ do
+          putStrLn $ "## Checking consistency of " ++ tt1 ++ " and " ++ tt2
+          mbErr <- implConsistency tt1 tt2 int
+          case mbErr of
+            Left err -> do
+              putStrLn $ PP.render err
+              exitFailure
+            Right ok ->
+              putStrLn $ PP.render ok

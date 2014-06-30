@@ -2,6 +2,7 @@
 module TypeCheck
   ( TypeCheckConf(..)
   , defaultTypeCheckConf
+  , availableTermTypes
   , checkProgram
   , TCState'
   , TCReport'
@@ -73,6 +74,9 @@ type TCReport' t = TCReport t (TypeCheckProblem t)
 
 -- Checking programs
 --------------------
+
+availableTermTypes :: [String]
+availableTermTypes = ["GR", "S"]
 
 checkProgram
   :: TypeCheckConf -> [A.Decl]
