@@ -18,11 +18,12 @@ instance Subst Simple where
   subst = genericSubst
 
 instance IsTerm Simple where
-  termEq = genericTermEq
+  termEq = termEq'
   strengthen = genericStrengthen
   getAbsName = genericGetAbsName
 
   whnf = genericWhnf
+  nf = genericNf
 
   view = return . unS
   unview = return . S

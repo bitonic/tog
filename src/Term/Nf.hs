@@ -6,32 +6,13 @@ module Term.Nf
 import           Prelude                          hiding (pi)
 
 import           Control.Applicative              ((<$>), (<*>))
-import           Control.Monad                    (join, (<=<))
+import           Control.Monad                    ((<=<))
 
 import           Term.Definition
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import           Term.Class
 import           Term.TermM
-
-nf :: forall t v. (IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
-nf sig t = do
-  tView <- whnfView sig t
-  case tView of
-    Lam body ->
-      lam body
-    Pi domain codomain ->
-      join $ pi <$> nf sig domain <*> nf sig codomain
-    Equal type_ x y ->
-      join $ equal <$> nf sig type_ <*> nf sig x <*> nf sig y
-    Refl ->
-      return refl
-    Con dataCon args ->
-      join $ con dataCon <$> mapM (nf sig) args
-    Set ->
-      return set
-    App h elims ->
-      join $ app h <$> mapM (nf' sig) elims
 
 class Nf t where
   nf' :: (IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)

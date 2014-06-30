@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Term.Impl.Common where
 
 import           Prelude                          hiding (pi, foldr)
@@ -139,42 +140,6 @@ matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
 matchClause _ _ _ =
   return $ TTFail ()
 
-genericTermEq
-  :: (IsTerm t, Eq v)
-  => t v -> t v -> TermM Bool
-genericTermEq t1 t2 = do
-  tView1 <- view t1
-  tView2 <- view t2
-  case (tView1, tView2) of
-    (Lam body1, Lam body2) ->
-      genericTermEq body1 body2
-    (Pi domain1 codomain1, Pi domain2 codomain2) ->
-      (&&) <$> genericTermEq domain1 domain2
-           <*> genericTermEq codomain1 codomain2
-    (Equal type1 x1 y1, Equal type2 x2 y2) ->
-      (&&) <$> ((&&) <$> genericTermEq type1 type2 <*> genericTermEq x1 x2)
-           <*> genericTermEq y1 y2
-    (App h1 els1, App h2 els2) ->
-      (h1 == h2 &&) <$> genericElimsEq els1 els2
-    (Set, Set) ->
-      return True
-    (_, _) ->
-      return False
-  where
-    genericElimsEq [] [] =
-      return True
-    genericElimsEq (el1 : els1) (el2 : els2) =
-      (&&) <$> genericElimEq el1 el2 <*> genericElimsEq els1 els2
-    genericElimsEq _ _ =
-      return False
-
-genericElimEq
-  :: (IsTerm t, Eq v)
-  => Elim t v -> Elim t v -> TermM Bool
-genericElimEq (Apply t1)   (Apply t2)   = genericTermEq t1 t2
-genericElimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
-genericElimEq _            _            = return False
-
 genericGetAbsName
   :: forall t v0.
      (IsTerm t)
@@ -237,3 +202,22 @@ genericStrengthen = runMaybeT . go (unvar (const Nothing) Just)
           h' <- MaybeT $ return $ traverse f h
           els' <- mapM (mapElimM (go f)) els
           lift $ app h' els'
+
+genericNf :: forall t v. (IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
+genericNf sig t = do
+  tView <- whnfView sig t
+  case tView of
+    Lam body ->
+      lam =<< nf sig body
+    Pi domain codomain ->
+      join $ pi <$> nf sig domain <*> nf sig codomain
+    Equal type_ x y ->
+      join $ equal <$> nf sig type_ <*> nf sig x <*> nf sig y
+    Refl ->
+      return refl
+    Con dataCon args ->
+      join $ con dataCon <$> mapM (nf sig) args
+    Set ->
+      return set
+    App h elims ->
+      join $ app h <$> mapM (nf' sig) elims

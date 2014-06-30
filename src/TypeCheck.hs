@@ -1,5 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck (TypeCheckConf(..), checkProgram, TCState') where
+module TypeCheck
+  ( TypeCheckConf(..)
+  , defaultTypeCheckConf
+  , checkProgram
+  , TCState'
+  , TCReport'
+  ) where
 
 import           Prelude                          hiding (abs, pi)
 
@@ -40,12 +46,16 @@ import           TypeCheck.Monad
 
 data TypeCheckConf = TypeCheckConf
   { tccTermType             :: String
+  , tccQuiet                :: Bool
   , tccMetaVarsSummary      :: Bool
   , tccMetaVarsReport       :: Bool
   , tccMetaVarsOnlyUnsolved :: Bool
   , tccProblemsSummary      :: Bool
   , tccProblemsReport       :: Bool
   }
+
+defaultTypeCheckConf :: TypeCheckConf
+defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False
 
 -- Useful types
 ------------------------------------------------------------------------
@@ -55,7 +65,8 @@ type Ctx t v = Ctx.ClosedCtx t v
 type TC'      t a = TC      t (TypeCheckProblem t) a
 type StuckTC' t a = StuckTC t (TypeCheckProblem t) a
 
-type TCState' t = TCState t (TypeCheckProblem t)
+type TCState'  t = TCState t (TypeCheckProblem t)
+type TCReport' t = TCReport t (TypeCheckProblem t)
 
 -- Type checking
 ------------------------------------------------------------------------
@@ -79,9 +90,10 @@ checkProgram'
     -> (TCState' t -> IO a)
     -> IO (Either PP.Doc a)
 checkProgram' _ conf decls0 ret = do
-    drawLine
-    putStrLn "-- Checking declarations"
-    drawLine
+    unless (tccQuiet conf) $ do
+      drawLine
+      putStrLn "-- Checking declarations"
+      drawLine
     errOrTs <- runEitherT (goDecls initTCState decls0)
     case errOrTs of
       Left err -> return $ Left err
@@ -89,10 +101,10 @@ checkProgram' _ conf decls0 ret = do
   where
     goDecls :: TCState' t -> [A.Decl] -> EitherT PP.Doc IO (TCState' t)
     goDecls ts [] = do
-      lift $ report ts
+      lift $ unless (tccQuiet conf) $ report ts
       return ts
     goDecls ts (decl : decls) = do
-      lift $ putStrLn $ render decl
+      lift $ unless (tccQuiet conf) $ putStrLn $ render decl
       ((), ts') <- EitherT $ runTC typeCheckProblem ts $ checkDecl decl >> solveProblems_
       goDecls ts' decls
 
@@ -285,7 +297,8 @@ checkPatterns _ [] type_ ret =
 checkPatterns funName (synPat : synPats) type0 ret = atSrcLoc synPat $ do
   stuck <- matchPi_ type0 $ \dom cod -> fmap NotStuck $ do
     checkPattern funName synPat dom $ \ctx pat patVar -> do
-      -- TODO remove the substMap
+      -- TODO it's a pity that we destroy sharing here with this
+      -- 'substMap'.  Can we do something else?
       cod'  <- liftTermM $ substMap (fmap (Ctx.weakenVar ctx)) cod
       cod'' <- liftTermM $ instantiate cod' patVar
       checkPatterns funName synPats cod'' $ \ctx' pats patsVars bodyType -> do

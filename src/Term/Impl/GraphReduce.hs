@@ -20,7 +20,9 @@ instance Subst GraphReduce where
   subst = genericSubst
 
 instance IsTerm GraphReduce where
-  termEq = genericTermEq
+  termEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
+  termEq t1 t2 = termEq' t1 t2
+
   strengthen = genericStrengthen
   getAbsName = genericGetAbsName
 
@@ -29,6 +31,12 @@ instance IsTerm GraphReduce where
     tView <- readIORef . unGR =<< ignoreBlocking blockedT
     writeIORef (unGR t) (tView)
     return $ blockedT
+
+  nf sig t = do
+    t' <- genericNf sig t
+    tView <- readIORef $ unGR t'
+    writeIORef (unGR t) (tView)
+    return t
 
   view = readIORef . unGR
 

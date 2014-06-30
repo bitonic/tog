@@ -4,6 +4,7 @@ module Term.Signature
       -- * Definitions
     , getDefinition
     , addDefinition
+    , definedNames
       -- * MetaVars
     , getMetaVarType
     , getMetaVarBody
@@ -76,6 +77,9 @@ addDefinition sig name def' = case def' of
                      render name ++ " and " ++ render dataCon
       _ ->
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a data type"
+
+definedNames :: Signature t -> [Name]
+definedNames = HMS.keys . sDefinitions
 
 -- | Gets the type of a 'MetaVar'.  Fails if the 'MetaVar' if not
 -- present.
