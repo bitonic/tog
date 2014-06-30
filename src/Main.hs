@@ -1,16 +1,13 @@
 module Main where
 
 import           Control.Monad                    (join)
-import           Control.Monad.Trans.Class        (lift)
-import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT, hoistEither)
 import           Options.Applicative
 import           System.Exit                      (exitFailure)
 
-import           Syntax.Internal                  (checkScope)
-import           Syntax.Raw                       (parseProgram)
-import           Term                             (IsTerm)
-import           Test                             (parseTest)
-import           TypeCheck                        (TypeCheckConf(TypeCheckConf), checkProgram, TCState')
+import           Main.Common
+import           Main.Test
+import qualified Text.PrettyPrint.Extended        as PP
+import           TypeCheck                        (TypeCheckConf(TypeCheckConf))
 
 parseTypeCheckConf :: Parser TypeCheckConf
 parseTypeCheckConf = TypeCheckConf
@@ -41,19 +38,6 @@ parseTypeCheckConf = TypeCheckConf
         help "Print a detailed report of the unsolved problems."
       )
 
-checkFile
-  :: TypeCheckConf -> FilePath
-  -> (forall t. (IsTerm t) => TCState' t -> IO a)
-  -> IO (Either String a)
-checkFile conf file ret = runEitherT $ do
-    s   <- lift $ readFile file
-    raw <- hoistEither $ showError "Parse" $ parseProgram s
-    int <- hoistEither $ showError "Scope" $ checkScope raw
-    EitherT $ fmap (showError "Type") $ checkProgram conf int ret
-  where
-    showError :: Show a => String -> Either a b -> Either String b
-    showError errType = either (\err -> Left $ errType ++ " error: " ++ show err) Right
-
 parseMain :: Parser (IO ())
 parseMain =
   subparser
@@ -66,17 +50,8 @@ parseMain =
     typeCheck file conf = do
       errOrTs <- checkFile conf file $ \_ -> return ()
       case errOrTs of
-        Left err -> putStrLn err >> exitFailure
+        Left err -> putStrLn (PP.render err) >> exitFailure
         _        -> return ()
-
--- main :: IO ()
--- main = do
---   let p = (,) <$> argument Just (metavar "FILE") <*> parseTypeCheckConf
---   (file, conf) <- execParser $ info (helper <*> p) fullDesc
---   errOrTs <- checkFile conf file $ \_ -> return ()
---   case errOrTs of
---     Left err -> putStrLn err >> exitFailure
---     _        -> return ()
 
 main :: IO ()
 main = do

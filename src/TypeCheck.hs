@@ -279,7 +279,11 @@ checkFunDef fun synClauses = do
     clauses <- forM synClauses $ \(A.Clause synPats synClauseBody) -> do
       checkPatterns fun synPats funType $ \ctx pats _ clauseType -> do
         clauseBody <- check ctx synClauseBody clauseType
-        Clause pats <$> liftTermM (substMap (toIntVar ctx) clauseBody)
+        -- This is an optimization: we want to remove as many MetaVars
+        -- as possible so that we'll avoid recomputing things.
+        -- TODO generalize this to everything which adds a term.
+        clauseBody' <- withSignatureTermM $ \sig -> instantiateMetaVars sig clauseBody
+        Clause pats <$> liftTermM (substMap (toIntVar ctx) clauseBody')
     inv <- checkInvertibility clauses
     addClauses fun inv
   where
@@ -470,37 +474,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
     type_ <- substVacuous <$> (definitionType =<< getDefinition name)
     return (Def name, type_)
   A.J{} -> do
-    (J, ) <$> typeOfJ
-
--- (A : Set) ->
--- (x : A) ->
--- (y : A) ->
--- (P : (x : A) -> (y : A) -> (eq : _==_ A x y) -> Set) ->
--- (p : (x : A) -> P x x refl) ->
--- (eq : _==_ A x y) ->
--- P x y eq
-typeOfJ :: forall t v. (IsVar v, IsTerm t) => TC' t (Type t v)
-typeOfJ =
-  liftTermM $ substMap close =<<
-    ("A", return set) -->
-    ("x", var "A") -->
-    ("y", var "A") -->
-    ("P", ("x", var "A") --> ("y", var "A") -->
-          ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
-          return set
-    ) -->
-    ("p", ("x", var "A") --> (app (Var "P") . map Apply =<< sequence [var "x", var "x", return refl])) -->
-    ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
-    (app (Var "P") . map Apply =<< sequence [var "x", var "y", return refl])
-  where
-    close v = error $ "impossible.typeOfJ: Free variable " ++ PP.render v
-
-    infixr 9 -->
-    (-->) :: (Name, TermM (t Name)) -> TermM (t Name) -> TermM (t Name)
-    (x, type_) --> t = do
-      type' <- type_
-      t' <- t
-      pi type' =<< abstract x t'
+    return (J, substVacuous typeOfJ)
 
 -- Equality
 ------------
@@ -632,7 +606,7 @@ equalSpine ctx h elims1 elims2 = do
   hType <- case h of
     Var v   -> liftTermM $ Ctx.getVar v ctx
     Def f   -> substVacuous <$> (definitionType =<< getDefinition f)
-    J       -> typeOfJ
+    J       -> return $ substVacuous typeOfJ
     Meta mv -> substVacuous <$> getMetaVarType mv
   h' <- appTC h []
   checkEqualSpine ctx hType h' elims1 elims2

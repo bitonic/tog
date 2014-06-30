@@ -4,6 +4,7 @@ import           Data.Typeable                    (Typeable)
 
 import           Term
 import           Term.Impl.Common
+import           System.IO.Unsafe                 (unsafePerformIO)
 
 -- Base terms
 ------------------------------------------------------------------------
@@ -29,5 +30,10 @@ instance IsTerm Simple where
   unview = return . S
 
   set = S Set
-
   refl = S Refl
+  typeOfJ = typeOfJS
+
+{-# NOINLINE typeOfJS #-}
+typeOfJS :: Closed Simple
+typeOfJS = unsafePerformIO genericTypeOfJ
+

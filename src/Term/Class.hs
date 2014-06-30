@@ -14,7 +14,7 @@ import qualified Data.HashSet                     as HS
 import           Data.Typeable                    (Typeable)
 import           Data.Maybe                       (fromMaybe)
 import           Control.Applicative              (Applicative, pure, (<*>))
-import           Control.Monad                    (liftM, (<=<))
+import           Control.Monad                    (liftM, (<=<), join)
 
 import           Syntax.Internal                  (Name)
 import           Term.MetaVar
@@ -24,6 +24,7 @@ import           Term.Subst
 import           Term.TermM
 import           Term.Var
 import           Term.Definition
+import           Term.Synonyms
 
 -- Terms
 ------------------------------------------------------------------------
@@ -132,8 +133,6 @@ metaVars sig t = do
 type Abs t v = t (TermVar v)
 
 class (Subst t, Typeable t) => IsTerm t where
-    -- Syn. equality
-    --------------------------------------------------------------------
     termEq :: (Eq v) => t v -> t v -> TermM Bool
     default termEq :: (Eq1 t, Eq v) => t v -> t v -> TermM Bool
     termEq t1 t2 = return $ t1 ==# t2
@@ -171,8 +170,9 @@ class (Subst t, Typeable t) => IsTerm t where
 
     unview :: TermView t v -> TermM (t v)
 
-    set  :: t v
-    refl :: t v
+    set     :: t v
+    refl    :: t v
+    typeOfJ :: Closed t
 
 getAbsName_ :: IsTerm t => Abs t v -> TermM Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
@@ -305,6 +305,35 @@ invertibleEq' clauses01 clauses02 =
         (&&) <$> termEq' body1 body2 <*> clausesEq' clauses1 clauses2
     clausesEq' _ _ =
       return False
+
+instantiateMetaVars
+  :: forall t v. (IsVar v, IsTerm t)
+  => Sig.Signature t -> t v -> TermM (t v)
+instantiateMetaVars sig t = do
+  tView <- view t
+  case tView of
+    Lam abs' ->
+      lam abs'
+    Pi dom cod ->
+      join $ pi <$> go dom <*> go cod
+    Equal type_ x y ->
+      join $ equal <$> go type_ <*> go x <*> go y
+    Refl ->
+      return refl
+    Con dataCon ts ->
+      con dataCon =<< mapM go ts
+    Set ->
+      return set
+    App (Meta mv) els | Just t' <- Sig.getMetaVarBody sig mv -> do
+      instantiateMetaVars sig =<< eliminate sig (substVacuous t') els
+    App h els ->
+      app h =<< mapM goElim els
+  where
+    go :: forall v'. (IsVar v') => t v' -> TermM (t v')
+    go t' = instantiateMetaVars sig t'
+
+    goElim (Proj n field) = return $ Proj n field
+    goElim (Apply t')     = Apply <$> go t'
 
 -- Term utils
 -------------

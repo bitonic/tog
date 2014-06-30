@@ -36,8 +36,8 @@ executable tc
 
   hs-source-dirs:      src, bnfc
   default-language:    Haskell2010
-  ghc-options:         -Wall
-  -- ghc-options:         -Wall -prof -fprof-auto -fprof-auto-calls
+  -- ghc-options:         -Wall
+  ghc-options:         -Wall -prof -fprof-auto -fprof-auto-calls
 
   build-tools:         alex, happy
 

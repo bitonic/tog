@@ -11,16 +11,17 @@ module Syntax.Raw
 import           Data.Maybe                       (isJust, fromJust, isNothing, fromJust)
 
 import           Syntax.Raw.Abs
-import           Syntax.Raw.Par                   (myLexer, pProgram)
 import           Syntax.Raw.ErrM                  (Err(Bad, Ok))
-import           Syntax.Raw.Lex
 import           Syntax.Raw.Layout                (sToken, layoutOpen, layoutClose, layoutSep, layoutWords, layoutStopWords, topLayout)
+import           Syntax.Raw.Lex
+import           Syntax.Raw.Par                   (myLexer, pProgram)
 import           Syntax.Raw.Print
+import qualified Text.PrettyPrint.Extended        as PP
 
-parseProgram :: String -> Either String Program
+parseProgram :: String -> Either PP.Doc Program
 parseProgram s =
   case pProgram (resolveLayout (myLexer s)) of
-    Bad err -> Left err
+    Bad err -> Left $ PP.text err
     Ok p    -> Right p
 
 -- | Replace layout syntax with explicit layout tokens.

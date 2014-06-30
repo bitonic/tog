@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Test (parseTest) where
+module Main.Test (parseTest) where
 
-import           Control.Monad                    (forM_, unless, when)
+import           Control.Monad                    (forM_, unless)
 import           Control.Monad.Trans.Class        (lift)
 import           Control.Monad.Trans.Either       (runEitherT, left)
 import qualified Data.HashMap.Strict              as HMS
@@ -9,6 +9,7 @@ import           Data.List                        (sort)
 import           Options.Applicative
 import           System.Exit                      (exitFailure)
 
+import           Main.Common
 import           Syntax.Internal                  (checkScope)
 import qualified Syntax.Internal                  as A
 import           Syntax.Raw                       (parseProgram)
@@ -21,14 +22,15 @@ import           TypeCheck.Monad
 
 newtype CaptureReport = CR (forall a. (forall t. (IsTerm t) => TCReport' t -> a) -> a)
 
+testTypeCheckConf :: String -> TypeCheckConf
+testTypeCheckConf tt = defaultTypeCheckConf{tccTermType = tt}
+
 implConsistency
   :: String -> String -> [A.Decl]
   -> IO (Either PP.Doc PP.Doc)
 implConsistency termType1 termType2 prog = do
-  errOrReport1 <- checkProgram defaultTypeCheckConf{tccTermType = termType1} prog captureReport
-  putStrLn "First typecheck"
-  errOrReport2 <- checkProgram defaultTypeCheckConf{tccTermType = termType2} prog captureReport
-  putStrLn "Finished typechecking"
+  errOrReport1 <- checkProgram (testTypeCheckConf termType1) prog captureReport
+  errOrReport2 <- checkProgram (testTypeCheckConf termType2) prog captureReport
   case (errOrReport1, errOrReport2) of
     (Left err1, Left err2) ->
       return $ Right $ "Both failed, with errors" $$ PP.nest 2 err1 $$
@@ -67,20 +69,55 @@ compareSignatures sig1 sig2 = do
     else do
       return $ Left "Different defined names"
 
-parseTest :: ParserInfo (IO ())
-parseTest = info (go <$> argument Just (metavar "FILE")) (progDesc "Run tests.")
+parseTest' :: Parser (IO ())
+parseTest' =
+  subparser
+    (command "consistency" (info parseConsistency (progDesc "Check consistency of two term types.")) <>
+     command "fail" (info parseShouldFail (progDesc "Check that a file fails to compile.")) <>
+     command "succeed" (info parseShouldSucceed (progDesc "Check that a file compiles.")))
   where
-    go file = do
+    parseConsistency =
+      consistency <$> argument Just (metavar "TERMTYPE")
+                  <*> argument Just (metavar "TERMTYPE")
+                  <*> argument Just (metavar "FILE")
+
+    consistency tt1 tt2 file = do
       s <- readFile file
       let Right raw = parseProgram s
       let Right int = checkScope raw
-      forM_ [(tt1, tt2) | tt1 <- availableTermTypes, tt2 <- availableTermTypes] $ \(tt1, tt2) -> do
-        when (tt1 < tt2) $ do
-          putStrLn $ "## Checking consistency of " ++ tt1 ++ " and " ++ tt2
-          mbErr <- implConsistency tt1 tt2 int
-          case mbErr of
-            Left err -> do
-              putStrLn $ PP.render err
-              exitFailure
-            Right ok ->
-              putStrLn $ PP.render ok
+      mbErr <- implConsistency tt1 tt2 int
+      case mbErr of
+        Left err -> do
+          putStrLn $ PP.render err
+          exitFailure
+        Right ok ->
+          putStrLn $ PP.render ok
+
+    parseShouldFail =
+      shouldFail <$> argument Just (metavar "TERMTYPE") <*> argument Just (metavar "FILE")
+
+    shouldFail tt file = do
+      mbErr <- checkFile (testTypeCheckConf tt) file $ \_ -> return ()
+      case mbErr of
+        Left _ -> do
+          putStrLn "OK"
+        Right _ -> do
+          putStrLn "Expecting failure, but the file compiled."
+          exitFailure
+
+    parseShouldSucceed =
+      shouldSucceed <$> argument Just (metavar "TERMTYPE") <*> argument Just (metavar "FILE")
+
+    shouldSucceed tt file = do
+      mbErr <- checkFile (testTypeCheckConf tt) file $ \_ -> return ()
+      case mbErr of
+        Left err -> do
+          putStrLn $ PP.render $
+            "Expecting success, but we got an error:" $$ PP.nest 2 err
+          exitFailure
+        Right _ -> do
+          putStrLn "OK"
+
+
+parseTest :: ParserInfo (IO ())
+parseTest = info (helper <*> parseTest') fullDesc

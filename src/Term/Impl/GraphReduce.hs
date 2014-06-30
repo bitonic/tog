@@ -43,8 +43,8 @@ instance IsTerm GraphReduce where
   unview tView = GR <$> newIORef tView
 
   set = setGR
-
   refl = reflGR
+  typeOfJ = typeOfJGR
 
 
 {-# NOINLINE setGR #-}
@@ -54,3 +54,7 @@ setGR = unsafePerformIO $ GR <$> newIORef Set
 {-# NOINLINE reflGR #-}
 reflGR :: GraphReduce v
 reflGR = unsafePerformIO $ GR <$> newIORef Refl
+
+{-# NOINLINE typeOfJGR #-}
+typeOfJGR :: Closed GraphReduce
+typeOfJGR = unsafePerformIO genericTypeOfJ

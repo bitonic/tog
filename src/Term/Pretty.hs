@@ -9,12 +9,11 @@ module Term.Pretty
   , prettyTele
   ) where
 
-import           Control.Applicative              ((<$>), (<*>))
+import           Control.Applicative              ((<$>))
 
 import           Term.Class
 import           Term.Definition
 import qualified Term.Signature                   as Sig
-import           Term.Subst
 import           Term.Synonyms
 import           Term.TermM
 import qualified Term.Telescope                   as Tel
@@ -27,7 +26,7 @@ prettyTerm sig = prettyPrecTerm sig 0
 
 prettyPrecTerm :: (IsVar v, IsTerm t) => Sig.Signature t -> Int -> t v -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
-  t <- instantiateMetaVars sig t0
+  t <- view =<< instantiateMetaVars sig t0
   case t of
     Set ->
       return $ PP.text "Set"
@@ -63,35 +62,6 @@ prettyApp _f _p h [] = return h
 prettyApp f   p h xs = do
   xsDoc <- mapM (f 4) xs
   return $ PP.condParens (p > 3) $ h <+> PP.fsep xsDoc
-
-instantiateMetaVars
-  :: forall t v. (IsVar v, IsTerm t)
-  => Sig.Signature t -> t v -> TermM (TermView t v)
-instantiateMetaVars sig t = do
-  tView <- view t
-  case tView of
-    Lam abs' ->
-      return $ Lam abs'
-    Pi dom cod ->
-      Pi <$> go dom <*> go cod
-    Equal type_ x y ->
-      Equal <$> go type_ <*> go x <*> go y
-    Refl ->
-      return $ Refl
-    Con dataCon ts ->
-      Con dataCon <$> mapM go ts
-    Set ->
-      return $ Set
-    App (Meta mv) els | Just t' <- Sig.getMetaVarBody sig mv -> do
-      instantiateMetaVars sig =<< eliminate sig (substVacuous t') els
-    App h els ->
-      App h <$> mapM goElim els
-  where
-    go :: forall v'. (IsVar v') => t v' -> TermM (t v')
-    go t' = unview =<< instantiateMetaVars sig t'
-
-    goElim (Proj n field) = return $ Proj n field
-    goElim (Apply t')     = Apply <$> go t'
 
 prettyElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Elim t v -> TermM PP.Doc
 prettyElim sig = prettyPrecElim sig 0

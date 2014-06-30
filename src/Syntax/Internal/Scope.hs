@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Internal.Scope
     ( checkScope
-    , ScopeError
     ) where
 
 import Control.Arrow ((***), (&&&), first)
@@ -15,6 +14,7 @@ import Data.Map (Map)
 
 import qualified Syntax.Raw as C
 import Syntax.Internal.Abs
+import qualified Text.PrettyPrint.Extended        as PP
 
 data ScopeError = ScopeError SrcLoc String
 
@@ -146,8 +146,11 @@ checkHiding e = case e of
       (n, bs, stop) <- telHiding bs
       return (n + length xs, C.Bind xs e : bs, stop)
 
-checkScope :: C.Program -> Either ScopeError Program
-checkScope (C.Prog _ ds) = flip runReaderT initScope $ unCheck $ checkDecls ds
+checkScope :: C.Program -> Either PP.Doc Program
+checkScope (C.Prog _ ds) =
+  case flip runReaderT initScope (unCheck (checkDecls ds)) of
+    Left err -> Left $ PP.text $ show err
+    Right x  -> Right x
 
 isSet :: C.Name -> Check ()
 isSet (C.Name ((l, c), "Set")) = return ()

@@ -17,6 +17,7 @@ import           Data.Traversable                 (traverse)
 import           Syntax.Internal                  (Name)
 import           Term
 import qualified Term.Signature                   as Sig
+import qualified Text.PrettyPrint.Extended        as PP
 
 -- TODO remove duplication between this and the actual `eliminate'
 -- | Tries to apply the eliminators to the term.  Trows an error
@@ -221,3 +222,33 @@ genericNf sig t = do
       return set
     App h elims ->
       join $ app h <$> mapM (nf' sig) elims
+
+-- (A : Set) ->
+-- (x : A) ->
+-- (y : A) ->
+-- (P : (x : A) -> (y : A) -> (eq : _==_ A x y) -> Set) ->
+-- (p : (x : A) -> P x x refl) ->
+-- (eq : _==_ A x y) ->
+-- P x y eq
+genericTypeOfJ :: forall t. (IsTerm t) => TermM (Closed (Type t))
+genericTypeOfJ =
+  substMap close =<<
+    ("A", return set) -->
+    ("x", var "A") -->
+    ("y", var "A") -->
+    ("P", ("x", var "A") --> ("y", var "A") -->
+          ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
+          return set
+    ) -->
+    ("p", ("x", var "A") --> (app (Var "P") . map Apply =<< sequence [var "x", var "x", return refl])) -->
+    ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
+    (app (Var "P") . map Apply =<< sequence [var "x", var "y", return refl])
+  where
+    close v = error $ "genericTypeOfJ: Free variable " ++ PP.render v
+
+    infixr 9 -->
+    (-->) :: (Name, TermM (t Name)) -> TermM (t Name) -> TermM (t Name)
+    (x, type_) --> t = do
+      type' <- type_
+      t' <- t
+      pi type' =<< abstract x t'
