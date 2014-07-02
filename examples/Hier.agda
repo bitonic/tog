@@ -1,3 +1,13 @@
+-- TODO inference that agda can support and we don't:
+--
+--   PRF : (n : Nat) -> raise prop n -> raise set n
+--   PRF n P = Prf' _ P -- one
+--
+-- And many variations of a metavariable that should be instantiated
+-- with `one' as an argument of a a datacon of UpU (see U', Two').
+--
+--   COE : {S T : Set} -> S == T -> S -> T
+--   COE p s = subst _ p s -- (\z -> z)
 {-# OPTIONS --type-in-type #-}
 module Hier where
 
@@ -29,10 +39,10 @@ record Sg S T where
     snd : T fst
 open Sg
 
-data Wi (I : Set)(S : I -> Set)(P : (i : I) -> S i -> Set)
-        (r : (i : I)(s : S i) -> P i s -> I)(i : I) : Set
-data Wi I S P r i where
-  wi : (s : S i) (f : (p : P i s) -> Wi I S P r (r i s p)) -> Wi I S P r i
+-- data Wi (I : Set)(S : I -> Set)(P : (i : I) -> S i -> Set)
+--         (r : (i : I)(s : S i) -> P i s -> I)(i : I) : Set
+-- data Wi I S P r i where
+--   wi : (s : S i) (f : (p : P i s) -> Wi I S P r (r i s p)) -> Wi I S P r i
 
 Zero : Set
 Zero = (A : Set) -> A
@@ -89,28 +99,28 @@ UpEl : {L : LEVEL}{k : Ki} -> UpU L k -> Set
 UpEl = UpEl' _ _
 
 data UpU L k where
-  U' : {q : isSet k} -> Ki -> UpU L k
+  U' : (q : isSet k) -> Ki -> UpU L k
   El' : (T : uni L k) -> UpU L k
   Prf' : (q : isSet k)(P : UpU L prop) -> UpU L k
   B' : Two -> UpU L k
-  Two' : {q : isSet k} -> UpU L k
+  Two' : (q : isSet k) -> UpU L k
   Pi' : (S : UpU L set)(T : UpEl S -> UpU L k) -> UpU L k
   Sg' : (S : UpU L k)(T : UpEl S -> UpU L k) -> UpU L k
-  Wi' : (I : UpU L set)
-        (S : UpEl I ->  UpU L k)
-        (P : (i : UpEl I)(s : UpEl (S i)) -> UpU L set)
-        (r : (i : UpEl I)(s : UpEl (S i))(p : UpEl (P i s)) -> UpEl I)
-        (i : UpEl I) -> UpU L k
+  -- Wi' : (I : UpU L set)
+  --       (S : UpEl I ->  UpU L k)
+  --       (P : (i : UpEl I)(s : UpEl (S i)) -> UpU L set)
+  --       (r : (i : UpEl I)(s : UpEl (S i))(p : UpEl (P i s)) -> UpEl I)
+  --       (i : UpEl I) -> UpU L k
 
-UpEl' L _ (U' k) = uni L k
+UpEl' L _ (U' _ k) = uni L k
 UpEl' L _ (El' T) = el L _ T
 UpEl' _ _ (Prf' _ P) = UpEl' _ _ P
 UpEl' _ _ (B' b) = Tt b
-UpEl' _ _ Two' = Two
+UpEl' _ _ (Two' _) = Two
 UpEl' _ _ (Pi' S T) = Pi (UpEl' _ _ S) (\ s -> UpEl' _ _ (T s))
 UpEl' _ _ (Sg' S T) = Sg (UpEl' _ _ S) (\ s -> UpEl' _ _ (T s))
-UpEl' _ _ (Wi' I S P r i) =
-  Wi (UpEl' _ _ I) (\ i -> UpEl' _ _ (S i)) (\ i s -> UpEl' _ _ (P i s)) r i
+-- UpEl' _ _ (Wi' I S P r i) =
+--   Wi (UpEl' _ _ I) (\ i -> UpEl' _ _ (S i)) (\ i s -> UpEl' _ _ (P i s)) r i
 
 data Nat : Set
 data Nat where
@@ -126,10 +136,6 @@ raise k n = UpU (Level n) k
 
 EL : (n : Nat) -> raise set n -> Set
 EL n T = UpEl' (Level n) _ T
-
--- TODO Agda accepts this, we don't.
--- PRF : (n : Nat) -> raise prop n -> raise set n
--- PRF n P = Prf' _ P
 
 PRF : (n : Nat) -> raise prop n -> raise set n
 PRF n P = Prf' one P
@@ -159,11 +165,6 @@ idEm = embed (\ k T -> T) (\ k T -> refl)
 
 suEm : {m n : Nat} -> Embedding (su m) n -> Embedding m n
 suEm em = embed (\ k T -> Em em k (El' T)) (\ k T -> Nop em k (El' T))
-
--- TODO Agda accepts this but we don't:
--- COE : {S T : Set} -> S == T -> S -> T
--- COE p s = subst _ p s
-
 
 COE : {S T : Set} -> S == T -> S -> T
 COE p s = subst (\ z -> z) p s
@@ -197,48 +198,48 @@ VALEQ : (m : Nat)(S : raise set m)(s : EL m S)
         (p : Nat)(mp : Embedding m p)(np : Embedding n p) ->
         raise prop p
 
-SETEQ m (U' _) n (Prf' _ _) _ _ _ = (B' ff)
-SETEQ m (U' _) n (B' _) _ _ _ = (B' ff)
-SETEQ m (U' _) n Two' _ _ _ = (B' ff)
-SETEQ m (U' _) n (Pi' _ _) _ _ _ = (B' ff)
-SETEQ m (U' _) n (Sg' _ _) _ _ _ = (B' ff)
-SETEQ m (U' _) n (Wi' _ _ _ _ _) _ _ _ = (B' ff)
-SETEQ m (U' set) n (U' set) p mp np = natEq p m n
-SETEQ m (U' prop) n (U' prop) p mp np = natEq p m n
-SETEQ m (U' _) n (U' _) _ _ _ = (B' ff)
+SETEQ m (U' _ _) n (Prf' _ _) _ _ _ = (B' ff)
+SETEQ m (U' _ _) n (B' _) _ _ _ = (B' ff)
+SETEQ m (U' _ _) n (Two' _) _ _ _ = (B' ff)
+SETEQ m (U' _ _) n (Pi' _ _) _ _ _ = (B' ff)
+SETEQ m (U' _ _) n (Sg' _ _) _ _ _ = (B' ff)
+-- SETEQ m (U' _ _) n (Wi' _ _ _ _ _) _ _ _ = (B' ff)
+SETEQ m (U' _ set) n (U' _ set) p mp np = natEq p m n
+SETEQ m (U' _ prop) n (U' _ prop) p mp np = natEq p m n
+SETEQ m (U' _ _) n (U' _ _) _ _ _ = (B' ff)
 SETEQ m (Prf' _ P) n (Prf' _ Q) p mp np = PROPEQ m P n Q p mp np
-SETEQ m (Prf' _ P) n (U' _) _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (U' _ _) _ _ _ = B' ff
 SETEQ m (Prf' _ P) n (B' _) _ _ _ = B' ff
-SETEQ m (Prf' _ P) n Two' _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (Two' _) _ _ _ = B' ff
 SETEQ m (Prf' _ P) n (Pi' _ _) _ _ _ = B' ff
 SETEQ m (Prf' _ P) n (Sg' _ _) _ _ _ = B' ff
-SETEQ m (Prf' _ P) n (Wi' _ _ _ _ _) _ _ _ = B' ff
+-- SETEQ m (Prf' _ P) n (Wi' _ _ _ _ _) _ _ _ = B' ff
 SETEQ m (B' b) n (B' c) p mp np = B' (twoEq b c)
-SETEQ m (B' b) n (U' _) _ _ _ = B' ff
+SETEQ m (B' b) n (U' _ _) _ _ _ = B' ff
 SETEQ m (B' b) n (Prf' _ _) _ _ _ = B' ff
-SETEQ m (B' b) n Two' _ _ _ = B' ff
+SETEQ m (B' b) n (Two' _) _ _ _ = B' ff
 SETEQ m (B' b) n (Pi' _ _) _ _ _ = B' ff
 SETEQ m (B' b) n (Sg' _ _) _ _ _ = B' ff
-SETEQ m (B' b) n (Wi' _ _ _ _ _) _ _ _ = B' ff
-SETEQ m Two' n Two' p mp np = (B' tt)
-SETEQ m Two' n (U' _) _ _ _ = B' ff
-SETEQ m Two' n (Prf' _ _) _ _ _ = B' ff
-SETEQ m Two' n (B' b) _ _ _ = B' ff
-SETEQ m Two' n (Pi' _ _) _ _ _ = B' ff
-SETEQ m Two' n (Sg' _ _) _ _ _ = B' ff
-SETEQ m Two' n (Wi' _ _ _ _ _) _ _ _ = B' ff
+-- SETEQ m (B' b) n (Wi' _ _ _ _ _) _ _ _ = B' ff
+SETEQ m (Two' _) n (Two' _) p mp np = (B' tt)
+SETEQ m (Two' _) n (U' _ _) _ _ _ = B' ff
+SETEQ m (Two' _) n (Prf' _ _) _ _ _ = B' ff
+SETEQ m (Two' _) n (B' b) _ _ _ = B' ff
+SETEQ m (Two' _) n (Pi' _ _) _ _ _ = B' ff
+SETEQ m (Two' _) n (Sg' _ _) _ _ _ = B' ff
+-- SETEQ m (Two' _) n (Wi' _ _ _ _ _) _ _ _ = B' ff
 SETEQ m (Pi' S S') n (Pi' T T') p mp np =
   times p
     (SETEQ n T m S p np mp)
     (upPi' np T (\ t ->
        upPi' mp S (\ s ->
          fun p (VALEQ n T t m S s p np mp) (SETEQ m (S' s) n (T' t) p mp np))))
-SETEQ m (Pi' S S') n (U' _) _ _ _ = B' ff
+SETEQ m (Pi' S S') n (U' _ _) _ _ _ = B' ff
 SETEQ m (Pi' S S') n (Prf' _ _) _ _ _ = B' ff
 SETEQ m (Pi' S S') n (B' b) _ _ _ = B' ff
 SETEQ m (Pi' S S') n (Sg' _ _) _ _ _ = B' ff
-SETEQ m (Pi' S S') n Two' _ _ _ = B' ff
-SETEQ m (Pi' S S') n (Wi' _ _ _ _ _) _ _ _ = B' ff
+SETEQ m (Pi' S S') n (Two' _) _ _ _ = B' ff
+-- SETEQ m (Pi' S S') n (Wi' _ _ _ _ _) _ _ _ = B' ff
 SETEQ m (Sg' S S') n (Sg' T T') p mp np =
   times p
     (SETEQ m S n T p mp np)
@@ -246,44 +247,44 @@ SETEQ m (Sg' S S') n (Sg' T T') p mp np =
      upPi' np T (\ t ->
      fun p (VALEQ m S s n T t p mp np)
            (SETEQ m (S' s) n (T' t) p mp np))))
-SETEQ m (Sg' S S') n (U' _) _ _ _ = B' ff
+SETEQ m (Sg' S S') n (U' _ _) _ _ _ = B' ff
 SETEQ m (Sg' S S') n (Prf' _ _) _ _ _ = B' ff
 SETEQ m (Sg' S S') n (B' b) _ _ _ = B' ff
 SETEQ m (Sg' S S') n (Pi' _ _) _ _ _ = B' ff
-SETEQ m (Sg' S S') n Two' _ _ _ = B' ff
-SETEQ m (Sg' S S') n (Wi' _ _ _ _ _) _ _ _ = B' ff
-SETEQ m (Wi' I S P r i) n (Wi' J' T Q u j) p mp np =
-  times p
-    (SETEQ m I n J' p mp np)
-    (times p
-       (VALEQ m I i n J' j p mp np)
-        (upPi' mp I (\ i ->
-         upPi' np J' (\ j ->
-         fun p
-           (VALEQ m I i n J' j p mp np)
-           (times p
-              (SETEQ m (S i) n (T j) p mp np)
-              (upPi' mp (S i) (\ s -> upPi' np (T j) (\ t ->
-               fun p
-                 (VALEQ m (S i) s n (T j) t p mp np)
-                 (times p
-                    (SETEQ n (Q j t) m (P i s) p np mp)
-                    (upPi' np (Q j t) (\ q -> upPi' mp (P i s) (\ o ->
-                     fun p (VALEQ n (Q j t) q m (P i s) o p np mp)
-                           (VALEQ m I (r i s o) n J' (u j t q) p mp np)))))))))))))
-SETEQ m (Wi' _ _ _ _ _) n (U' _) _ _ _ = B' ff
-SETEQ m (Wi' _ _ _ _ _) n (Prf' _ _) _ _ _ = B' ff
-SETEQ m (Wi' _ _ _ _ _) n (B' b) _ _ _ = B' ff
-SETEQ m (Wi' _ _ _ _ _) n (Pi' _ _) _ _ _ = B' ff
-SETEQ m (Wi' _ _ _ _ _) n Two' _ _ _ = B' ff
-SETEQ m (Wi' _ _ _ _ _) n (Sg' _ _) _ _ _ = B' ff
+SETEQ m (Sg' S S') n (Two' _) _ _ _ = B' ff
+-- SETEQ m (Sg' S S') n (Wi' _ _ _ _ _) _ _ _ = B' ff
+-- SETEQ m (Wi' I S P r i) n (Wi' J' T Q u j) p mp np =
+--   times p
+--     (SETEQ m I n J' p mp np)
+--     (times p
+--        (VALEQ m I i n J' j p mp np)
+--         (upPi' mp I (\ i ->
+--          upPi' np J' (\ j ->
+--          fun p
+--            (VALEQ m I i n J' j p mp np)
+--            (times p
+--               (SETEQ m (S i) n (T j) p mp np)
+--               (upPi' mp (S i) (\ s -> upPi' np (T j) (\ t ->
+--                fun p
+--                  (VALEQ m (S i) s n (T j) t p mp np)
+--                  (times p
+--                     (SETEQ n (Q j t) m (P i s) p np mp)
+--                     (upPi' np (Q j t) (\ q -> upPi' mp (P i s) (\ o ->
+--                      fun p (VALEQ n (Q j t) q m (P i s) o p np mp)
+--                            (VALEQ m I (r i s o) n J' (u j t q) p mp np)))))))))))))
+-- SETEQ m (Wi' _ _ _ _ _) n (U' _ _) _ _ _ = B' ff
+-- SETEQ m (Wi' _ _ _ _ _) n (Prf' _ _) _ _ _ = B' ff
+-- SETEQ m (Wi' _ _ _ _ _) n (B' b) _ _ _ = B' ff
+-- SETEQ m (Wi' _ _ _ _ _) n (Pi' _ _) _ _ _ = B' ff
+-- SETEQ m (Wi' _ _ _ _ _) n (Two' _) _ _ _ = B' ff
+-- SETEQ m (Wi' _ _ _ _ _) n (Sg' _ _) _ _ _ = B' ff
 SETEQ ze (El' z) n T p mp np = kill z
 SETEQ (su m) (El' S) n T p mp np = SETEQ m S n T p (suEm mp) np
 SETEQ m S ze (El' z) p mp np = kill z
 SETEQ m S (su n) (El' T) p mp np = SETEQ m S n T p mp (suEm np)
 
-VALEQ m Two' tt n Two' ff p mp np = B' ff
-VALEQ m Two' ff n Two' tt p mp np = B' ff
+VALEQ m (Two' _) tt n (Two' _) ff p mp np = B' ff
+VALEQ m (Two' _) ff n (Two' _) tt p mp np = B' ff
 VALEQ m (Pi' S S') f n (Pi' T T') g p mp np =
   upPi' mp S (\ s -> upPi' np T (\ t ->
   fun p
@@ -293,20 +294,20 @@ VALEQ m (Sg' S S') s n (Sg' T T') t p mp np =
   times p
     (VALEQ m S (fst s) n T (fst t) p mp np)
     (VALEQ m (S' (fst s)) (snd s) n (T' (fst t)) (snd t) p mp np)
-VALEQ m (Wi' I S P r i) s n (Wi' J' T Q u j) t p mp np =
-  WEQ i s j t where
-  WEQ : (i : EL m I)(s : EL m (Wi' I S P r i))
-        (j : EL n J')(t : EL n (Wi' J' T Q u j)) -> raise prop p
-  WEQ i (wi s f) j (wi t g) =
-    times p
-      (VALEQ m (S i) s n (T j) t p mp np)
-      (upPi' mp (P i s) (\ p -> upPi' np (Q j t) (\ q -> 
-       WEQ (r i s p) (f p) (u j t q) (g q))))
-VALEQ ze (U' _) z n (U' _) t p mp np = kill z
-VALEQ (su y) (U' _) s ze (U' _) z p mp np = kill z
-VALEQ (su m) (U' set) S (su n) (U' set) T p mp np =
+-- VALEQ m (Wi' I S P r i) s n (Wi' J' T Q u j) t p mp np =
+--   WEQ i s j t where
+--   WEQ : (i : EL m I)(s : EL m (Wi' I S P r i))
+--         (j : EL n J')(t : EL n (Wi' J' T Q u j)) -> raise prop p
+--   WEQ i (wi s f) j (wi t g) =
+--     times p
+--       (VALEQ m (S i) s n (T j) t p mp np)
+--       (upPi' mp (P i s) (\ p -> upPi' np (Q j t) (\ q -> 
+--        WEQ (r i s p) (f p) (u j t q) (g q))))
+VALEQ ze (U' _ _) z n (U' _ _) t p mp np = kill z
+VALEQ (su y) (U' _ _) s ze (U' _ _) z p mp np = kill z
+VALEQ (su m) (U' _ set) S (su n) (U' _ set) T p mp np =
   SETEQ m S n T p (suEm mp) (suEm np)
-VALEQ (su m) (U' prop) P (su n) (U' prop) Q p mp np =
+VALEQ (su m) (U' _ prop) P (su n) (U' _ prop) Q p mp np =
   PROPEQ m P n Q p (suEm mp) (suEm np)
 VALEQ ze (El' z) s n T t p mp np = kill z
 VALEQ (su m) (El' S) s n T t p mp np =
@@ -328,52 +329,53 @@ coh : (m : Nat)(S : raise set m)(n : Nat)(T : raise set n) ->
       (Q : EL p (Prf' one (SETEQ m S n T p mp np)))(s : EL m S) ->
       EL p (Prf' one (VALEQ m S s n T (coe m S n T p mp np Q s) p mp np))
 
-coe m (U' set) n (U' set) p mp np Q s =
+coe m (U' _ set) n (U' _ set) p mp np Q s =
   nsubst p m n Q (\ i -> uni (Level i) set) s
-coe m (U' prop) n (U' prop) p mp np Q s =
+coe m (U' _ prop) n (U' _ prop) p mp np Q s =
   nsubst p m n Q (\ i -> uni (Level i) prop) s
-coe m (U' set) n (U' prop) _ _ _ z _ = kill z
-coe m (U' prop) n (U' set) _ _ _ z _ = kill z
-coe m (U' _) n (Prf' _ P) p mp np z s = kill z
-coe m (U' _) n (B' _) p mp np z s = kill z
-coe m (U' _) n Two' p mp np z s = kill z
-coe m (U' _) n (Pi' S T) p mp np z s = kill z
-coe m (U' _) n (Sg' S T) p mp np z s = kill z
-coe m (U' _) n (Wi' I S P r i) p mp np z s = kill z
-coe m (U' _) ze (El' z) p mp np Q s = kill z
-coe m (U' set) (su n) (El' T) p mp np Q s =
-  coe m (U' set) n T p mp (suEm np) Q s
-coe m (U' prop) (su n) (El' T) p mp np Q s =
-  coe m (U' prop) n T p mp (suEm np) Q s
-coe m (Prf' _ P) n (U' y) p mp np z s = kill z
+coe m (U' _ set) n (U' _ prop) _ _ _ z _ = kill z
+coe m (U' _ prop) n (U' _ set) _ _ _ z _ = kill z
+coe m (U' _ _) n (Prf' _ P) p mp np z s = kill z
+coe m (U' _ _) n (B' _) p mp np z s = kill z
+coe m (U' _ _) n (Two' _) p mp np z s = kill z
+coe m (U' _ _) n (Pi' S T) p mp np z s = kill z
+coe m (U' _ _) n (Sg' S T) p mp np z s = kill z
+-- coe m (U' _ _) n (Wi' I S P r i) p mp np z s = kill z
+coe m (U' _ _) ze (El' z) p mp np Q s = kill z
+coe m (U' _ set) (su n) (El' T) p mp np Q s =
+  coe m (U' one set) n T p mp (suEm np) Q s
+coe m (U' _ prop) (su n) (El' T) p mp np Q s =
+  -- TODO in Agda we can use `U' _'
+  coe m (U' one prop) n T p mp (suEm np) Q s
+coe m (Prf' _ P) n (U' _ y) p mp np z s = kill z
 coe m (Prf' _ P) ze (El' z) p mp np Q s = kill z
 coe m (Prf' _ P) (su n) (El' T) p mp np Q s =
-  coe m (Prf' _ P) n T p mp (suEm np) Q s
+  coe m (Prf' one P) n T p mp (suEm np) Q s
 coe m (Prf' _ P) n (Prf' _ P') p mp np Q s =
   COE (Nop np prop P') (fst Q (EOC (Nop mp prop P) s))
 coe m (Prf' _ P) n (B' y) p mp np z s = kill z
-coe m (Prf' _ P) n Two' p mp np z s = kill z
+coe m (Prf' _ P) n (Two' _) p mp np z s = kill z
 coe m (Prf' _ P) n (Pi' S T) p mp np z s = kill z
 coe m (Prf' _ P) n (Sg' S T) p mp np z s = kill z
-coe m (Prf' _ P) n (Wi' I S P' r i) p mp np z s = kill z
-coe m (B' b) n (U' y) p mp np z s = kill z
+-- coe m (Prf' _ P) n (Wi' I S P' r i) p mp np z s = kill z
+coe m (B' b) n (U' _ y) p mp np z s = kill z
 coe m (B' b) n (Prf' _ P) p mp np z s = kill z
-coe m (B' b) n Two' p mp np z s = kill z
+coe m (B' b) n (Two' _) p mp np z s = kill z
 coe m (B' b) n (Pi' S T) p mp np z s = kill z
 coe m (B' b) n (Sg' S T) p mp np z s = kill z
-coe m (B' b) n (Wi' I S P r i) p mp np z s = kill z
+-- coe m (B' b) n (Wi' I S P r i) p mp np z s = kill z
 coe m (B' b) n (B' c) p mp np Q s = bsubst b c Q s
 coe m (B' b) ze (El' z) p mp np Q s = kill z
 coe m (B' b) (su n) (El' T) p mp np Q s = coe m (B' b) n T p mp (suEm np) Q s
-coe m Two' n Two' p mp np Q s = s
-coe m Two' n (U' y) p mp np z s = kill z
-coe m Two' n (Prf' _ P) p mp np z s = kill z
-coe m Two' n (B' y) p mp np z s = kill z
-coe m Two' n (Pi' S T) p mp np z s = kill z
-coe m Two' n (Sg' S T) p mp np z s = kill z
-coe m Two' n (Wi' I S P r i) p mp np z s = kill z
-coe m Two' ze (El' z) p mp np Q s = kill z
-coe m Two' (su n) (El' T) p mp np Q s = coe m Two' n T p mp (suEm np) Q s
+coe m (Two' _) n (Two' _) p mp np Q s = s
+coe m (Two' _) n (U' _ y) p mp np z s = kill z
+coe m (Two' _) n (Prf' _ P) p mp np z s = kill z
+coe m (Two' _) n (B' y) p mp np z s = kill z
+coe m (Two' _) n (Pi' S T) p mp np z s = kill z
+coe m (Two' _) n (Sg' S T) p mp np z s = kill z
+-- coe m (Two' one) n (Wi' I S P r i) p mp np z s = kill z
+coe m (Two' _) ze (El' z) p mp np Q s = kill z
+coe m (Two' _) (su n) (El' T) p mp np Q s = coe m (Two' one) n T p mp (suEm np) Q s
 coe m (Pi' S S') n (Pi' T T') p mp np Q f = help where
   help : (t : UpEl T) -> UpEl (T' t)
   help t = t' where
@@ -401,12 +403,12 @@ coe m (Pi' S S') n (Pi' T T') p mp np Q f = help where
              (paf (UpEl (Em mp set S)) (Nop mp set S)
                   (UpEl (Em np set T)) (Nop np set T)
                   (snd Q)) s'
-coe m (Pi' S S') n (U' y) p mp np z s = kill z
+coe m (Pi' S S') n (U' _ y) p mp np z s = kill z
 coe m (Pi' S S') n (Prf' _ P) p mp np z s = kill z
 coe m (Pi' S S') n (B' y) p mp np z s = kill z
-coe m (Pi' S S') n Two' p mp np z s = kill z
+coe m (Pi' S S') n (Two' _) p mp np z s = kill z
 coe m (Pi' S S') n (Sg' S0 T) p mp np z s = kill z
-coe m (Pi' S S') n (Wi' I S0 P r i) p mp np z s = kill z
+-- coe m (Pi' S S') n (Wi' I S0 P r i) p mp np z s = kill z
 coe m (Pi' S S') ze (El' z) p mp np Q s = kill z
 coe m (Pi' S S') (su n) (El' T) p mp np Q s =
   coe m (Pi' S S') n T p mp (suEm np) Q s
@@ -439,185 +441,185 @@ coe m (Sg' S S') n (Sg' T T') p mp np Q x =  sg t t' where
          (paf (UpEl (Em mp set S)) (Nop mp set S)
               (UpEl (Em np set T)) (Nop np set T)
               (snd Q)) s'
-coe m (Sg' S S') n (U' y) p mp np z s = kill z
+coe m (Sg' S S') n (U' _ y) p mp np z s = kill z
 coe m (Sg' S S') n (Prf' _ P) p mp np z s = kill z
 coe m (Sg' S S') n (B' y) p mp np z s = kill z
-coe m (Sg' S S') n Two' p mp np z s = kill z
+coe m (Sg' S S') n (Two' _) p mp np z s = kill z
 coe m (Sg' S S') n (Pi' S0 T) p mp np z s = kill z
-coe m (Sg' S S') n (Wi' I S0 P r i) p mp np z s = kill z
+-- coe m (Sg' S S') n (Wi' I S0 P r i) p mp np z s = kill z
 coe m (Sg' S S') ze (El' z) p mp np Q s = kill z
 coe m (Sg' S S') (su n) (El' T) p mp np Q s =
   coe m (Sg' S S') n T p mp (suEm np) Q s
-coe m (Wi' I S P r i) n (Wi' J' T R u j) p mp np Q s
-  = shunt i s j (fst (snd Q)) where
-    shunt : (i : UpEl I)(x : UpEl (Wi' I S P r i))
-            (j : UpEl J')(ij : UpEl (VALEQ m I i n J' j p mp np)) ->
-            UpEl (Wi' J' T R u j)
-    shunt i (wi s f) j ij = wi t g where
-      Paf : (I0 : Set)(IQ : I0 == UpEl I) ->
-            (J0 : Set)(JQ : J0 == UpEl J') ->
-            Set
-      Paf I0 IQ J0 JQ =
-            ((i0 : I0) (j0 : J0) ->
-               -- TODO replace (COE IQ i0) with i1 and (COE JQ j0) with
-               -- j1 when we have let.
-                   (ij0 : UpEl (VALEQ m I (COE IQ i0) n J' (COE JQ j0) p mp np)) ->
-                   Sg (UpEl (SETEQ m (S (COE IQ i0)) n (T (COE JQ j0)) p mp np)) (\ ST ->
-                   (s : UpEl (Em mp set (S (COE IQ i0))))
-                   (t : UpEl (Em np set (T (COE JQ j0))))
-                   (st : UpEl (VALEQ m (S (COE IQ i0)) (COE (Nop mp set (S (COE IQ i0))) s)
-                                     n (T (COE JQ j0)) (COE (Nop np set (T (COE JQ j0))) t)
-                               p mp np)) ->
-                   Sg (UpEl (SETEQ n (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t))
-                                   m (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s))
-                                   p np mp)) (\ RP ->
-                   (l : UpEl (Em np set (R (COE JQ j0)
-                              (COE (Nop np set (T (COE JQ j0))) t))))
-                   (o : UpEl (Em mp set (P (COE IQ i0)
-                              (COE (Nop mp set (S (COE IQ i0))) s))))
-                   (lo : UpEl (VALEQ n (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t))
-                                      (COE (Nop np set
-                                            (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t)))
-                                           l)
-                                     m (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s))
-                                      (COE (Nop mp set
-                                            (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s)))
-                                           o)
-                                     p np mp)) ->
-                   UpEl (VALEQ m I (r (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s)
-                                     (COE (Nop mp set
-                                      (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s))) o))
-                               n J' (u (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t)
-                                     (COE (Nop np set
-                                      (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t))) l))
-                               p mp np)))) ->
-              ((i1 : UpEl I) (j1 : UpEl J') ->
-                   (ij0 : UpEl (VALEQ m I i1 n J' j1 p mp np)) ->
-                   Sg (UpEl (SETEQ m (S i1) n (T j1) p mp np)) (\ ST ->
-                   (s : UpEl (Em mp set (S i1)))
-                   (t : UpEl (Em np set (T j1)))
-                   (st : UpEl (VALEQ m (S i1) (COE (Nop mp set (S i1)) s)
-                                     n (T j1) (COE (Nop np set (T j1)) t)
-                               p mp np)) ->
-                   Sg (UpEl (SETEQ n (R j1 (COE (Nop np set (T j1)) t))
-                                   m (P i1 (COE (Nop mp set (S i1)) s))
-                                   p np mp)) (\ RP ->
-                   (l : UpEl (Em np set (R j1
-                              (COE (Nop np set (T j1)) t))))
-                   (o : UpEl (Em mp set (P i1
-                              (COE (Nop mp set (S i1)) s))))
-                   (lo : UpEl (VALEQ n (R j1 (COE (Nop np set (T j1)) t))
-                                      (COE (Nop np set
-                                            (R j1 (COE (Nop np set (T j1)) t)))
-                                           l)
-                                     m (P i1 (COE (Nop mp set (S i1)) s))
-                                      (COE (Nop mp set
-                                            (P i1 (COE (Nop mp set (S i1)) s)))
-                                           o)
-                                     p np mp)) ->
-                   UpEl (VALEQ m I (r i1 (COE (Nop mp set (S i1)) s)
-                                     (COE (Nop mp set
-                                      (P i1 (COE (Nop mp set (S i1)) s))) o))
-                               n J' (u j1 (COE (Nop np set (T j1)) t)
-                                     (COE (Nop np set
-                                      (R j1 (COE (Nop np set (T j1)) t))) l))
-                               p mp np))))
-      paf : (I0 : Set)(IQ : I0 == UpEl I) ->
-            (J0 : Set)(JQ : J0 == UpEl J') ->
-            Paf I0 IQ J0 JQ
-      paf I0 IQ J0 JQ =
-        K (\I0 IQ -> Paf I0 IQ J0 JQ)
-          (K (\J0 JQ -> Paf (UpEl I) refl J0 JQ) (\H -> H) JQ)
-          IQ
-      baf : _
-      baf = paf (UpEl (Em mp set I)) (Nop mp set I)
-                    (UpEl (Em np set J')) (Nop np set J')
-                    (snd (snd Q)) i j ij
-      t : UpEl (T j)
-      t = coe m (S i) n (T j) p mp np (fst baf) s
-      st : UpEl (VALEQ m (S i) s n (T j) t p mp np)
-      st = coh m (S i) n (T j) p mp np (fst baf) s
-      g : (l : UpEl (R j t)) -> UpEl (Wi' J' T R u (u j t l))
-      g l = shunt (r i s o) (f o) (u j t l) daf where
-        Qaf : (S0 : Set)(SQ : S0 == UpEl (S i)) ->
-              (T0 : Set)(TQ : T0 == UpEl (T j)) ->
-              Set
-        Qaf S0 SQ T0 TQ =
-              ((s : S0)(t : T0)
-               (st : UpEl (VALEQ m (S i) (COE SQ s) n (T j) (COE TQ t)
-                             p mp np)) ->
-               Sg (UpEl (SETEQ n (R j (COE TQ t)) m (P i (COE SQ s))
-                            p np mp)) (\ RP ->
-               (l : UpEl (Em np set (R j (COE TQ t))))
-               (o : UpEl (Em mp set (P i (COE SQ s))))
-               (lo : UpEl (VALEQ n (R j (COE TQ t))
-                                    (COE (Nop np set (R j (COE TQ t))) l)
-                                   m (P i (COE SQ s))
-                                    (COE (Nop mp set (P i (COE SQ s))) o)
-                                   p np mp)) ->
-               UpEl (VALEQ m I (r i (COE SQ s)
-                                   (COE (Nop mp set (P i (COE SQ s))) o))
-                           n J' (u j (COE TQ t)
-                                   (COE (Nop np set (R j (COE TQ t))) l))
-                           p mp np))) ->
-              ((s : UpEl (S i))(t : UpEl (T j))
-               (st : UpEl (VALEQ m (S i) s n (T j) t p mp np)) ->
-               Sg (UpEl (SETEQ n (R j t) m (P i s) p np mp)) (\ RP ->
-               (l : UpEl (Em np set (R j t)))
-               (o : UpEl (Em mp set (P i s)))
-               (lo : UpEl (VALEQ n (R j t) (COE (Nop np set (R j t)) l)
-                                 m (P i s) (COE (Nop mp set (P i s)) o)
-                                 p np mp)) ->
-               UpEl (VALEQ m I (r i s (COE (Nop mp set (P i s)) o))
-                           n J' (u j t (COE (Nop np set (R j t)) l))
-                           p mp np)))
-        qaf : (S0 : Set)(SQ : S0 == UpEl (S i)) ->
-              (T0 : Set)(TQ : T0 == UpEl (T j)) ->
-              Qaf S0 SQ T0 TQ
-        qaf S0 SQ T0 TQ =
-          K (\S0 SQ -> Qaf S0 SQ T0 TQ)
-            (K (\T0 TQ -> Qaf (UpEl (S i)) refl T0 TQ) (\H -> H) TQ)
-            SQ
-        caf : _
-        caf = qaf (UpEl (Em mp set (S i))) (Nop mp set (S i))
-                  (UpEl (Em np set (T j))) (Nop np set (T j))
-                  (snd baf) s t st
-        o : UpEl (P i s)
-        o = coe n (R j t) m (P i s) p np mp (fst caf) l
-        lo : UpEl (VALEQ n (R j t) l m (P i s) o p np mp)
-        lo = coh n (R j t) m (P i s) p np mp (fst caf) l
-        Raf : (P0 : Set)(PQ : P0 == UpEl (P i s)) ->
-              (R0 : Set)(RQ : R0 == UpEl (R j t)) ->
-              Set
-        Raf P0 PQ R0 RQ =
-              ((l : R0)(o : P0)
-               (lo : UpEl (VALEQ n (R j t) (COE RQ l) m (P i s) (COE PQ o)
-                                 p np mp)) ->
-               UpEl (VALEQ m I (r i s (COE PQ o)) n J' (u j t (COE RQ l))
-                           p mp np)) ->
-              ((l : UpEl (R j t))(o : UpEl (P i s))
-               (lo : UpEl (VALEQ n (R j t) l m (P i s) o p np mp)) ->
-               UpEl (VALEQ m I (r i s o) n J' (u j t l) p mp np))
-        raf : (P0 : Set)(PQ : P0 == UpEl (P i s)) ->
-              (R0 : Set)(RQ : R0 == UpEl (R j t)) ->
-              Raf P0 PQ R0 RQ
-        raf P0 PQ R0 RQ =
-          K (\P0 PQ -> Raf P0 PQ R0 RQ)
-            (K (\R0 RQ -> Raf (UpEl (P i s)) refl R0 RQ) (\H -> H) RQ)
-            PQ
-        daf : _
-        daf = raf (UpEl (Em mp set (P i s))) (Nop mp set (P i s))
-                  (UpEl (Em np set (R j t))) (Nop np set (R j t))
-                  (snd caf) l o lo
-coe m (Wi' I S P r i) n (U' y) p mp np z s = kill z
-coe m (Wi' I S P r i) n (Prf' _ P') p mp np z s = kill z
-coe m (Wi' I S P r i) n (B' y) p mp np z s = kill z
-coe m (Wi' I S P r i) n Two' p mp np z s = kill z
-coe m (Wi' I S P r i) n (Pi' S' T) p mp np z s = kill z
-coe m (Wi' I S P r i) n (Sg' S' T) p mp np z s = kill z
-coe m (Wi' I S P r i) ze (El' z) p mp np Q s = kill z
-coe m (Wi' I S P r i) (su n) (El' T) p mp np Q s =
-  coe m (Wi' I S P r i) n T p mp (suEm np) Q s
+-- coe m (Wi' I S P r i) n (Wi' J' T R u j) p mp np Q s
+--   = shunt i s j (fst (snd Q)) where
+--     shunt : (i : UpEl I)(x : UpEl (Wi' I S P r i))
+--             (j : UpEl J')(ij : UpEl (VALEQ m I i n J' j p mp np)) ->
+--             UpEl (Wi' J' T R u j)
+--     shunt i (wi s f) j ij = wi t g where
+--       Paf : (I0 : Set)(IQ : I0 == UpEl I) ->
+--             (J0 : Set)(JQ : J0 == UpEl J') ->
+--             Set
+--       Paf I0 IQ J0 JQ =
+--             ((i0 : I0) (j0 : J0) ->
+--                -- TODO replace (COE IQ i0) with i1 and (COE JQ j0) with
+--                -- j1 when we have let.
+--                    (ij0 : UpEl (VALEQ m I (COE IQ i0) n J' (COE JQ j0) p mp np)) ->
+--                    Sg (UpEl (SETEQ m (S (COE IQ i0)) n (T (COE JQ j0)) p mp np)) (\ ST ->
+--                    (s : UpEl (Em mp set (S (COE IQ i0))))
+--                    (t : UpEl (Em np set (T (COE JQ j0))))
+--                    (st : UpEl (VALEQ m (S (COE IQ i0)) (COE (Nop mp set (S (COE IQ i0))) s)
+--                                      n (T (COE JQ j0)) (COE (Nop np set (T (COE JQ j0))) t)
+--                                p mp np)) ->
+--                    Sg (UpEl (SETEQ n (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t))
+--                                    m (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s))
+--                                    p np mp)) (\ RP ->
+--                    (l : UpEl (Em np set (R (COE JQ j0)
+--                               (COE (Nop np set (T (COE JQ j0))) t))))
+--                    (o : UpEl (Em mp set (P (COE IQ i0)
+--                               (COE (Nop mp set (S (COE IQ i0))) s))))
+--                    (lo : UpEl (VALEQ n (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t))
+--                                       (COE (Nop np set
+--                                             (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t)))
+--                                            l)
+--                                      m (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s))
+--                                       (COE (Nop mp set
+--                                             (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s)))
+--                                            o)
+--                                      p np mp)) ->
+--                    UpEl (VALEQ m I (r (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s)
+--                                      (COE (Nop mp set
+--                                       (P (COE IQ i0) (COE (Nop mp set (S (COE IQ i0))) s))) o))
+--                                n J' (u (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t)
+--                                      (COE (Nop np set
+--                                       (R (COE JQ j0) (COE (Nop np set (T (COE JQ j0))) t))) l))
+--                                p mp np)))) ->
+--               ((i1 : UpEl I) (j1 : UpEl J') ->
+--                    (ij0 : UpEl (VALEQ m I i1 n J' j1 p mp np)) ->
+--                    Sg (UpEl (SETEQ m (S i1) n (T j1) p mp np)) (\ ST ->
+--                    (s : UpEl (Em mp set (S i1)))
+--                    (t : UpEl (Em np set (T j1)))
+--                    (st : UpEl (VALEQ m (S i1) (COE (Nop mp set (S i1)) s)
+--                                      n (T j1) (COE (Nop np set (T j1)) t)
+--                                p mp np)) ->
+--                    Sg (UpEl (SETEQ n (R j1 (COE (Nop np set (T j1)) t))
+--                                    m (P i1 (COE (Nop mp set (S i1)) s))
+--                                    p np mp)) (\ RP ->
+--                    (l : UpEl (Em np set (R j1
+--                               (COE (Nop np set (T j1)) t))))
+--                    (o : UpEl (Em mp set (P i1
+--                               (COE (Nop mp set (S i1)) s))))
+--                    (lo : UpEl (VALEQ n (R j1 (COE (Nop np set (T j1)) t))
+--                                       (COE (Nop np set
+--                                             (R j1 (COE (Nop np set (T j1)) t)))
+--                                            l)
+--                                      m (P i1 (COE (Nop mp set (S i1)) s))
+--                                       (COE (Nop mp set
+--                                             (P i1 (COE (Nop mp set (S i1)) s)))
+--                                            o)
+--                                      p np mp)) ->
+--                    UpEl (VALEQ m I (r i1 (COE (Nop mp set (S i1)) s)
+--                                      (COE (Nop mp set
+--                                       (P i1 (COE (Nop mp set (S i1)) s))) o))
+--                                n J' (u j1 (COE (Nop np set (T j1)) t)
+--                                      (COE (Nop np set
+--                                       (R j1 (COE (Nop np set (T j1)) t))) l))
+--                                p mp np))))
+--       paf : (I0 : Set)(IQ : I0 == UpEl I) ->
+--             (J0 : Set)(JQ : J0 == UpEl J') ->
+--             Paf I0 IQ J0 JQ
+--       paf I0 IQ J0 JQ =
+--         K (\I0 IQ -> Paf I0 IQ J0 JQ)
+--           (K (\J0 JQ -> Paf (UpEl I) refl J0 JQ) (\H -> H) JQ)
+--           IQ
+--       baf : _
+--       baf = paf (UpEl (Em mp set I)) (Nop mp set I)
+--                     (UpEl (Em np set J')) (Nop np set J')
+--                     (snd (snd Q)) i j ij
+--       t : UpEl (T j)
+--       t = coe m (S i) n (T j) p mp np (fst baf) s
+--       st : UpEl (VALEQ m (S i) s n (T j) t p mp np)
+--       st = coh m (S i) n (T j) p mp np (fst baf) s
+--       g : (l : UpEl (R j t)) -> UpEl (Wi' J' T R u (u j t l))
+--       g l = shunt (r i s o) (f o) (u j t l) daf where
+--         Qaf : (S0 : Set)(SQ : S0 == UpEl (S i)) ->
+--               (T0 : Set)(TQ : T0 == UpEl (T j)) ->
+--               Set
+--         Qaf S0 SQ T0 TQ =
+--               ((s : S0)(t : T0)
+--                (st : UpEl (VALEQ m (S i) (COE SQ s) n (T j) (COE TQ t)
+--                              p mp np)) ->
+--                Sg (UpEl (SETEQ n (R j (COE TQ t)) m (P i (COE SQ s))
+--                             p np mp)) (\ RP ->
+--                (l : UpEl (Em np set (R j (COE TQ t))))
+--                (o : UpEl (Em mp set (P i (COE SQ s))))
+--                (lo : UpEl (VALEQ n (R j (COE TQ t))
+--                                     (COE (Nop np set (R j (COE TQ t))) l)
+--                                    m (P i (COE SQ s))
+--                                     (COE (Nop mp set (P i (COE SQ s))) o)
+--                                    p np mp)) ->
+--                UpEl (VALEQ m I (r i (COE SQ s)
+--                                    (COE (Nop mp set (P i (COE SQ s))) o))
+--                            n J' (u j (COE TQ t)
+--                                    (COE (Nop np set (R j (COE TQ t))) l))
+--                            p mp np))) ->
+--               ((s : UpEl (S i))(t : UpEl (T j))
+--                (st : UpEl (VALEQ m (S i) s n (T j) t p mp np)) ->
+--                Sg (UpEl (SETEQ n (R j t) m (P i s) p np mp)) (\ RP ->
+--                (l : UpEl (Em np set (R j t)))
+--                (o : UpEl (Em mp set (P i s)))
+--                (lo : UpEl (VALEQ n (R j t) (COE (Nop np set (R j t)) l)
+--                                  m (P i s) (COE (Nop mp set (P i s)) o)
+--                                  p np mp)) ->
+--                UpEl (VALEQ m I (r i s (COE (Nop mp set (P i s)) o))
+--                            n J' (u j t (COE (Nop np set (R j t)) l))
+--                            p mp np)))
+--         qaf : (S0 : Set)(SQ : S0 == UpEl (S i)) ->
+--               (T0 : Set)(TQ : T0 == UpEl (T j)) ->
+--               Qaf S0 SQ T0 TQ
+--         qaf S0 SQ T0 TQ =
+--           K (\S0 SQ -> Qaf S0 SQ T0 TQ)
+--             (K (\T0 TQ -> Qaf (UpEl (S i)) refl T0 TQ) (\H -> H) TQ)
+--             SQ
+--         caf : _
+--         caf = qaf (UpEl (Em mp set (S i))) (Nop mp set (S i))
+--                   (UpEl (Em np set (T j))) (Nop np set (T j))
+--                   (snd baf) s t st
+--         o : UpEl (P i s)
+--         o = coe n (R j t) m (P i s) p np mp (fst caf) l
+--         lo : UpEl (VALEQ n (R j t) l m (P i s) o p np mp)
+--         lo = coh n (R j t) m (P i s) p np mp (fst caf) l
+--         Raf : (P0 : Set)(PQ : P0 == UpEl (P i s)) ->
+--               (R0 : Set)(RQ : R0 == UpEl (R j t)) ->
+--               Set
+--         Raf P0 PQ R0 RQ =
+--               ((l : R0)(o : P0)
+--                (lo : UpEl (VALEQ n (R j t) (COE RQ l) m (P i s) (COE PQ o)
+--                                  p np mp)) ->
+--                UpEl (VALEQ m I (r i s (COE PQ o)) n J' (u j t (COE RQ l))
+--                            p mp np)) ->
+--               ((l : UpEl (R j t))(o : UpEl (P i s))
+--                (lo : UpEl (VALEQ n (R j t) l m (P i s) o p np mp)) ->
+--                UpEl (VALEQ m I (r i s o) n J' (u j t l) p mp np))
+--         raf : (P0 : Set)(PQ : P0 == UpEl (P i s)) ->
+--               (R0 : Set)(RQ : R0 == UpEl (R j t)) ->
+--               Raf P0 PQ R0 RQ
+--         raf P0 PQ R0 RQ =
+--           K (\P0 PQ -> Raf P0 PQ R0 RQ)
+--             (K (\R0 RQ -> Raf (UpEl (P i s)) refl R0 RQ) (\H -> H) RQ)
+--             PQ
+--         daf : _
+--         daf = raf (UpEl (Em mp set (P i s))) (Nop mp set (P i s))
+--                   (UpEl (Em np set (R j t))) (Nop np set (R j t))
+--                   (snd caf) l o lo
+-- coe m (Wi' I S P r i) n (U' _ y) p mp np z s = kill z
+-- coe m (Wi' I S P r i) n (Prf' _ P') p mp np z s = kill z
+-- coe m (Wi' I S P r i) n (B' y) p mp np z s = kill z
+-- coe m (Wi' I S P r i) n (Two' _) p mp np z s = kill z
+-- coe m (Wi' I S P r i) n (Pi' S' T) p mp np z s = kill z
+-- coe m (Wi' I S P r i) n (Sg' S' T) p mp np z s = kill z
+-- coe m (Wi' I S P r i) ze (El' z) p mp np Q s = kill z
+-- coe m (Wi' I S P r i) (su n) (El' T) p mp np Q s =
+--   coe m (Wi' I S P r i) n T p mp (suEm np) Q s
 coe ze (El' z) n T p mp np Q s = kill z
 coe (su m) (El' S) n T p mp np Q s = coe m S n T p (suEm mp) np Q s
 
