@@ -148,17 +148,13 @@ checkHiding e = case e of
 
 checkScope :: C.Program -> Either PP.Doc Program
 checkScope (C.Prog _ ds) =
-  case flip runReaderT initScope (unCheck (checkDecls ds)) of
+  case flip runReaderT initScope (unCheck (checkDecls ds return)) of
     Left err -> Left $ PP.text $ show err
     Right x  -> Right x
 
 isSet :: C.Name -> Check ()
 isSet (C.Name ((l, c), "Set")) = return ()
 isSet e = scopeError e "The type of a datatype or record should be Set"
-
-isDefHead :: Head -> String -> Check Name
-isDefHead (Def x) _ = return x
-isDefHead h err     = scopeError h err
 
 resolveDef :: C.Name -> Check (Name, Hiding)
 resolveDef x = do
@@ -192,15 +188,16 @@ isParamDef C.NoParams      = Just []
 isParamDef C.ParamDecl{}   = Nothing
 isParamDef (C.ParamDef xs) = Just xs
 
-checkDecls :: [C.Decl] -> Check [Decl]
-checkDecls ds0 = case ds0 of
+checkDecls :: [C.Decl] -> CCheck [Decl]
+checkDecls ds0 ret = case ds0 of
   [] ->
-    return []
+    ret []
   C.Postulate ds1 : ds2 ->
-    checkDecls (ds1 ++ ds2)
+    checkDecls (ds1 ++ ds2) ret
   C.TypeSig x e : ds -> do
     (n, a) <- checkScheme e
-    bindName (mkDefInfo x n) $ \x -> (TypeSig (Sig x a) :) <$> checkDecls ds
+    bindName (mkDefInfo x n) $ \x -> checkDecls ds $ \ds' ->
+      ret (TypeSig (Sig x a) : ds')
   C.Data x pars (C.NoDataBody set) : ds | Just ps <- isParamDecl pars -> do
     dataOrRecDecl x ps set ds
   C.Record x pars (C.NoRecordBody set) : ds | Just ps <- isParamDecl pars -> do
@@ -212,8 +209,9 @@ checkDecls ds0 = case ds0 of
     xs <- checkHiddenNames n xs
     let is = map mkVarInfo xs
     xs <- mapC bindName is $ return
-    let t = App (Def x) (map (\x -> Apply (App (Var x) [])) xs)
-    mapC (checkConstructor t is) cs $ \cs -> (DataDef x xs cs :) <$> checkDecls ds
+    let t = App (Def (SimpleName x)) (map (\x -> Apply (App (Var x) [])) xs)
+    mapC (checkConstructor t is) cs $ \cs -> checkDecls ds $ \ds' ->
+      ret (DataDef x xs cs : ds')
   C.Record x pars (C.RecordBody con fs) : ds | Just xs <- isParamDef pars -> do
     (x, n) <- resolveDef x
     when (n > length xs) $ scopeError x $ "Too few parameters to " ++ show x ++
@@ -223,35 +221,41 @@ checkDecls ds0 = case ds0 of
     xs <- mapC bindName is $ return
     checkFields is (getFields fs) $ \fs ->
       bindName (mkConInfo con 0 (length fs)) $ \con ->
-        (RecDef x xs con fs :) <$> checkDecls ds
+        checkDecls ds $ \ds' ->
+          ret (RecDef x xs con fs : ds')
   (d@C.Data{} : _) ->
     scopeError d $ "Bad data declaration"
   (d@C.Record{} : _) ->
     scopeError d $ "Bad record declaration"
-  C.FunDef f _ _ : _ -> do
+  C.FunDef f _ _ _ : _ -> do
     let (clauses, ds) = takeFunDefs f ds0
     (f, n) <- resolveDef f
-    clauses <- forM clauses $ \(ps, b) -> do
-      ps     <- insertImplicitPatterns (srcLoc f) n ps
-      (ps, b) <- mapC checkPattern ps $ \ps -> (,) ps <$> checkExpr b
-      return $ Clause ps b
-    (FunDef f clauses :) <$> checkDecls ds
+    clauses <- forM clauses $ \(ps, b, wheres) -> do
+      let whereDs = case wheres of
+            C.Where wheres -> wheres
+            C.NoWhere      -> []
+      ps <- insertImplicitPatterns (srcLoc f) n ps
+      mapC checkPattern ps $ \ps -> checkDecls whereDs $ \whereDs' -> do
+        (ps, b) <- (,) ps <$> checkExpr b
+        return $ Clause ps b whereDs'
+    checkDecls ds $ \ds' -> ret (FunDef f clauses : ds')
   C.Open x : ds -> do
     resolveDef x
-    checkDecls ds
+    checkDecls ds ret
   C.Import{} : ds -> do
-    checkDecls ds
+    checkDecls ds ret
   where
     dataOrRecDecl x ps set ds = do
       isSet set
       (n, a) <- checkScheme (C.Pi (C.Tel ps) (C.App [C.Arg $ C.Id set]))
-      bindName (mkDefInfo x n) $ \x -> (TypeSig (Sig x a) :) <$> checkDecls ds
+      bindName (mkDefInfo x n) $ \x -> checkDecls ds $ \ds' ->
+        ret (TypeSig (Sig x a) : ds')
 
-    takeFunDefs :: C.Name -> [C.Decl] -> ([([C.Pattern], C.Expr)], [C.Decl])
+    takeFunDefs :: C.Name -> [C.Decl] -> ([([C.Pattern], C.Expr, C.Where)], [C.Decl])
     takeFunDefs f [] =
       ([], [])
-    takeFunDefs f (C.FunDef f' ps b : ds) | sameName f f' =
-      first ((ps, b) :) $ takeFunDefs f ds
+    takeFunDefs f (C.FunDef f' ps b wheres : ds) | sameName f f' =
+      first ((ps, b, wheres) :) $ takeFunDefs f ds
     takeFunDefs _ d =
       ([], d)
 
@@ -430,12 +434,12 @@ data AppHead = IsProj Name
 
 instance HasSrcLoc AppHead where
   srcLoc h = case h of
-    IsProj x   -> srcLoc x
-    IsCon c _  -> srcLoc c
-    IsRefl p   -> p
-    Other h    -> srcLoc h
-    HeadSet p  -> p
-    HeadMeta p -> p
+    IsProj x     -> srcLoc x
+    IsCon c _    -> srcLoc c
+    IsRefl p     -> p
+    Other h      -> srcLoc h
+    HeadSet p    -> p
+    HeadMeta p   -> p
 
 data AppView = CApp C.Name [C.Arg]
              | NotApp C.Expr
@@ -447,7 +451,7 @@ appView e = case e of
   C.App (C.Arg e : es) -> applyTo es =<< appView e
   C.App []             -> impossible "appView: empty application"
   C.Id x               -> return $ CApp x []
-  C.Lam{}              -> notApp
+  C.Lam n e            -> notApp
   C.Pi{}               -> notApp
   C.Fun{}              -> notApp
   C.Eq{}               -> notApp
@@ -457,7 +461,7 @@ appView e = case e of
     applyTo es2 (CApp x es1) = return $ CApp x $ es1 ++ es2
     applyTo es  (NotApp e)   = scopeError e $ C.printTree e ++ " cannot be applied to arguments"
 
-checkAppHead :: C.Name -> Check (AppHead, Hiding)
+checkAppHead :: Either C.Name (Name, Expr) -> Check (AppHead, Hiding)
 checkAppHead (C.Name ((l, c), "_"))    = return (HeadMeta $ SrcLoc l c, 0)
 checkAppHead (C.Name ((l, c), "Set"))  = return (HeadSet $ SrcLoc l c, 0)
 checkAppHead (C.Name ((l, c), "J"))    = return (Other (J (SrcLoc l c)), 3)
@@ -468,7 +472,7 @@ checkAppHead x = do
     ProjName x n  -> return (IsProj x, n)
     VarName x     -> return (Other $ Var x, 0)
     ConName x n a -> return (IsCon x a, n)
-    DefName x n   -> return (Other $ Def x, n)
+    DefName x n   -> return (Other $ Def (SimpleName x), n)
 
 checkTel :: [C.Binding] -> CCheck [(Name, Expr)]
 checkTel = concatMapC checkBinding
@@ -521,7 +525,7 @@ instance HasSrcLoc C.Decl where
     C.TypeSig x _      -> srcLoc x
     C.Data x _ _       -> srcLoc x
     C.Record x _ _     -> srcLoc x
-    C.FunDef x _ _     -> srcLoc x
+    C.FunDef x _ _ _   -> srcLoc x
     C.Open x           -> srcLoc x
     C.Import x         -> srcLoc x
 

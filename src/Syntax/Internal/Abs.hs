@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Internal.Abs where
 
@@ -17,6 +18,11 @@ instance Show SrcLoc where
 data Name = Name { nameLoc :: SrcLoc, nameString :: String }
     deriving (Typeable)
 
+data DefName
+    = SimpleName Name
+    | SyntheticName Name Int
+    deriving (Eq, Ord)
+
 name :: String -> Name
 name s = Name noSrcLoc s
 
@@ -32,6 +38,19 @@ instance Ord Name where
 instance Hashable Name where
   hashWithSalt s (Name _ x) = hashWithSalt s x
 
+instance HasSrcLoc DefName where
+  srcLoc dn = case dn of
+    SimpleName n      -> srcLoc n
+    SyntheticName n _ -> srcLoc n
+
+instance Show DefName where
+  show = render . pretty
+
+instance Hashable DefName where
+  hashWithSalt s dn = hashWithSalt s $ case dn of
+    SimpleName n      -> Left n
+    SyntheticName n i -> Right (n, i)
+
 type Program = [Decl]
 
 data Decl = TypeSig TypeSig
@@ -43,7 +62,7 @@ data TypeSig = Sig { typeSigName :: Name
                    , typeSigType :: Expr
                    }
 
-data Clause = Clause [Pattern] Expr
+data Clause = Clause [Pattern] Expr [Decl]
 
 data Expr = Lam Name Expr
           | Pi Name Expr Expr
@@ -56,7 +75,8 @@ data Expr = Lam Name Expr
           | Con Name [Expr]
 
 data Head = Var Name
-          | Def Name
+          | TermVar Int Name
+          | Def DefName
           | J SrcLoc
 
 data Elim = Apply Expr
@@ -66,6 +86,14 @@ data Elim = Apply Expr
 data Pattern = VarP Name
              | WildP SrcLoc
              | ConP Name [Pattern]
+
+patternsBindings :: [Pattern] -> Int
+patternsBindings = sum . map patternBindings
+
+patternBindings :: Pattern -> Int
+patternBindings (VarP _)      = 1
+patternBindings (WildP _)     = 1
+patternBindings (ConP _ pats) = patternsBindings pats
 
 class HasSrcLoc a where
   srcLoc :: a -> SrcLoc
@@ -100,9 +128,10 @@ instance HasSrcLoc Expr where
 
 instance HasSrcLoc Head where
   srcLoc h = case h of
-    Var x    -> srcLoc x
-    Def x    -> srcLoc x
-    J loc    -> loc
+    Var x       -> srcLoc x
+    TermVar _ x -> srcLoc x
+    Def x       -> srcLoc x
+    J loc       -> loc
 
 instance HasSrcLoc Pattern where
   srcLoc p = case p of
@@ -161,10 +190,12 @@ instance Pretty TypeSig where
 instance Pretty Decl where
   pretty d = case d of
     TypeSig sig -> pretty sig
-    FunDef f clauses -> vcat
-      [ sep [ pretty f <+> fsep (map (prettyPrec 10) ps)
-            , nest 2 $ text "=" <+> pretty e ]
-      | Clause ps e <- clauses
+    FunDef f clauses -> vcat $
+      [ vcat $ [ sep [ pretty f <+> fsep (map (prettyPrec 10) ps)
+                     , nest 2 $ text "=" <+> pretty e ]
+               ] ++
+               (if null wheres then [] else nest 2 (text "where") : map (nest 2 . pretty) wheres)
+      | Clause ps e wheres <- clauses
       ]
     DataDef d xs cs ->
       vcat [ text "data" <+> pretty d <+> fsep (map pretty xs) <+> text "where"
@@ -212,16 +243,22 @@ instance Pretty Expr where
 
         buildApp :: Head -> [Expr] -> [Elim] -> (Head, [Expr])
         buildApp h es0 (Apply e : es1) = buildApp h (es0 ++ [e]) es1
-        buildApp h es0 (Proj f  : es1) = buildApp (Def f) [App h $ map Apply es0] es1
+        buildApp h es0 (Proj f  : es1) = buildApp (Def (SimpleName f)) [App h $ map Apply es0] es1
         buildApp h es []               = (h, es)
     Refl{} -> text "refl"
     Con c args -> prettyApp p (pretty c) args
 
 instance Pretty Head where
   pretty h = case h of
-    Var x  -> pretty x
-    Def f  -> pretty f
-    J _    -> text "J"
+    Var x       -> pretty x
+    Def f       -> pretty f
+    TermVar i x -> pretty i <> "#" <> pretty x
+    J _         -> text "J"
+
+instance Pretty DefName where
+  pretty dn = case dn of
+    SimpleName n      -> pretty n
+    SyntheticName n i -> pretty n <> "_" <> pretty i
 
 instance Pretty Pattern where
   prettyPrec p e = case e of

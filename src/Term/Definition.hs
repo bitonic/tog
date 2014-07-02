@@ -24,7 +24,7 @@ import           Data.Typeable                    (Typeable)
 import           Data.Void                        (Void, absurd)
 import           Prelude.Extras                   (Eq1, (==#))
 
-import           Syntax.Internal                  (Name)
+import           Syntax.Internal                  (Name, DefName)
 import qualified Term.Telescope                   as Tel
 import           Term.Var
 import           Term.Synonyms
@@ -119,7 +119,7 @@ data Invertible t v
 -- | A 'TermHead' is an injective type- or data-former.
 --
 -- TODO Also include postulates when we have them to be explicit.
-data TermHead = PiHead | DefHead Name
+data TermHead = PiHead | DefHead DefName
     deriving (Eq, Show)
 
 ignoreInvertible :: Invertible t v -> [Clause t v]

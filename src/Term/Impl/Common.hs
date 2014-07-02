@@ -14,7 +14,7 @@ import           Data.Functor                     ((<$>))
 import qualified Data.HashSet                     as HS
 import           Data.Traversable                 (traverse)
 
-import           Syntax.Internal                  (Name)
+import           Syntax.Internal                  (Name, DefName)
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Text.PrettyPrint.Extended        as PP
@@ -41,10 +41,9 @@ substEliminate t elims = do
     (_, _) ->
         error $ "substEliminate: Bad elimination"
 
-genericSubst
-  :: (IsTerm t) => t a -> (a -> TermM (t b)) -> TermM (t b)
-genericSubst t f = do
-  tView <- view t
+genericSubstView
+  :: (IsTerm t) => TermView t a -> (a -> TermM (t b)) -> TermM (t b)
+genericSubstView tView f = do
   case tView of
     Lam body ->
       lam =<< genericSubst body (lift' f)
@@ -72,6 +71,12 @@ genericSubst t f = do
     lift' _ (B v) = var $ B v
     lift' g (F v) = substMap F =<< g v
 
+genericSubst
+  :: (IsTerm t) => t a -> (a -> TermM (t b)) -> TermM (t b)
+genericSubst t f = do
+  tView <- view t
+  genericSubstView tView f
+
 genericWhnf
   :: (IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
 genericWhnf sig t = do
@@ -98,7 +103,7 @@ genericWhnf sig t = do
 whnfFun
   :: (IsTerm t)
   => Sig.Signature t
-  -> Name -> [Elim t v] -> [Closed (Clause t)]
+  -> DefName -> [Elim t v] -> [Closed (Clause t)]
   -> TermM (Maybe (Blocked t v))
 whnfFun _ _ _ [] = do
   return Nothing
@@ -252,3 +257,44 @@ genericTypeOfJ =
       type' <- type_
       t' <- t
       pi type' =<< abstract x t'
+
+genericTermEq
+  :: (IsTerm t, Eq v)
+  => t v -> t v -> TermM Bool
+genericTermEq t1 t2 = do
+  join $ genericTermViewEq <$> view t1 <*> view t2
+
+genericTermViewEq
+  :: (IsTerm t, Eq v)
+  => TermView t v -> TermView t v -> TermM Bool
+genericTermViewEq tView1 tView2 = do
+  case (tView1, tView2) of
+    (Lam body1, Lam body2) ->
+      termEq body1 body2
+    (Pi domain1 codomain1, Pi domain2 codomain2) ->
+      (&&) <$> termEq domain1 domain2 <*> termEq codomain1 codomain2
+    (Equal type1 x1 y1, Equal type2 x2 y2) ->
+      (&&) <$> ((&&) <$> termEq type1 type2 <*> termEq x1 x2)
+           <*> termEq y1 y2
+    (App h1 els1, App h2 els2) ->
+      (h1 == h2 &&) <$> elimsEq els1 els2
+    (Set, Set) ->
+      return True
+    (Con dataCon1 args1, Con dataCon2 args2) | dataCon1 == dataCon2 ->
+      argsEq args1 args2
+    (Refl, Refl) ->
+      return True
+    (_, _) -> do
+      return False
+  where
+    elimsEq []           []           = return True
+    elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
+    elimsEq _            _            = return False
+
+    elimEq (Apply t1')  (Apply t2')  = termEq t1' t2'
+    elimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
+    elimEq _            _            = return False
+
+    argsEq []             []             = return True
+    argsEq (arg1 : args1) (arg2 : args2) = (&&) <$> termEq arg1 arg2 <*> argsEq args1 args2
+    argsEq _              _              = return False

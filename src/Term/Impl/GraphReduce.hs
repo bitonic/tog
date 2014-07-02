@@ -21,7 +21,7 @@ instance Subst GraphReduce where
 
 instance IsTerm GraphReduce where
   termEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
-  termEq t1 t2 = termEq' t1 t2
+  termEq t1 t2 = genericTermEq t1 t2
 
   strengthen = genericStrengthen
   getAbsName = genericGetAbsName

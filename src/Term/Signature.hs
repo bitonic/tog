@@ -1,9 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Term.Signature
     ( Signature
     , empty
       -- * Definitions
     , getDefinition
     , addDefinition
+    , addDefinition_
+    , addDefinitionSynthetic
     , definedNames
       -- * MetaVars
     , getMetaVarType
@@ -17,28 +20,29 @@ module Term.Signature
 import qualified Data.HashMap.Strict              as HMS
 import           Data.Void                        (Void)
 
-import           Syntax.Internal                  (Name)
+import qualified Syntax.Internal                  as A
 import           Term.Definition
-import           Text.PrettyPrint.Extended        (render)
 import           Term.MetaVar
+import           Text.PrettyPrint.Extended        (render)
 
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
 data Signature t = Signature
-    { sDefinitions :: HMS.HashMap Name (Closed (Definition t))
-    , sMetasTypes  :: HMS.HashMap MetaVar (Closed (Type t))
-    , sMetasBodies :: HMS.HashMap MetaVar (Closed (Term t))
+    { sDefinitions    :: HMS.HashMap A.DefName (Closed (Definition t))
+    , sMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
+    , sMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
     -- ^ INVARIANT: Every 'MetaVar' in 'sMetaBodies' is also in
     -- 'sMetasTypes'.
-    , sMetasCount  :: Int
+    , sMetasCount     :: Int
+    , sGeneratedCount :: Int
     }
 
 empty :: Signature t
-empty = Signature HMS.empty HMS.empty HMS.empty 0
+empty = Signature HMS.empty HMS.empty HMS.empty 0 0
 
 -- | Gets a definition for the given name.  Fails if no definition can
 -- be found.
-getDefinition :: Signature t -> Name -> Closed (Definition t)
+getDefinition :: Signature t -> A.DefName -> Closed (Definition t)
 getDefinition sig name =
     case HMS.lookup name (sDefinitions sig) of
       Nothing   -> error $ "impossible.getDefinition: not found " ++ show name
@@ -49,26 +53,34 @@ getDefinition sig name =
 -- In the case of a new 'Projection' or 'DataCon', the definition of the
 -- type constructor will be updated with the new information.  Fails if
 -- the definition for the type constructor is not present.
-addDefinition :: Signature t -> Name -> Closed (Definition t) -> Signature t
-addDefinition sig name def' = case def' of
-    Projection projIx tyCon _ -> addProjection tyCon projIx
-    DataCon tyCon _           -> addDataCon tyCon
-    _                         -> sig'
-  where
-    sig' = sig{sDefinitions = HMS.insert name def' (sDefinitions sig)}
+addDefinition_ :: Signature t -> A.Name -> Closed (Definition t) -> Signature t
+addDefinition_ sig name def' = addDefinition sig (A.SimpleName name) def'
 
-    addProjection tyCon projIx = case getDefinition sig' tyCon of
+addDefinition :: Signature t -> A.DefName -> Closed (Definition t) -> Signature t
+addDefinition sig defName def' = case (defName, def') of
+    (A.SimpleName name, Projection projIx tyCon _) -> addProjection name tyCon projIx
+    (A.SimpleName name, DataCon tyCon _)           -> addDataCon name tyCon
+    (_,                 Projection _ _ _)          -> unexpectedGenerated
+    (_,                 DataCon _ _)               -> unexpectedGenerated
+    _                                              -> sig'
+  where
+    unexpectedGenerated = error $
+      "Unexpected generated name " ++ show defName ++ " for definition"
+
+    sig' = sig{sDefinitions = HMS.insert defName def' (sDefinitions sig)}
+
+    addProjection name tyCon projIx = case getDefinition sig' (A.SimpleName tyCon) of
       Constant (Record dataCon projs) tyConType ->
         let projs' = projs ++ [(name, projIx)]
-            defs   = HMS.insert tyCon (Constant (Record dataCon projs') tyConType) (sDefinitions sig')
+            defs   = HMS.insert (A.SimpleName tyCon) (Constant (Record dataCon projs') tyConType) (sDefinitions sig')
         in sig'{sDefinitions = defs}
       _ ->
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a record"
 
-    addDataCon tyCon = case getDefinition sig' tyCon of
+    addDataCon name tyCon = case getDefinition sig' (A.SimpleName tyCon) of
       Constant (Data dataCons) tyConType ->
         let dataCons' = dataCons ++ [name]
-            defs      = HMS.insert tyCon (Constant (Data dataCons') tyConType) (sDefinitions sig')
+            defs      = HMS.insert (A.SimpleName tyCon) (Constant (Data dataCons') tyConType) (sDefinitions sig')
         in sig'{sDefinitions = defs}
       Constant (Record dataCon _) _ ->
         if name == dataCon
@@ -78,7 +90,14 @@ addDefinition sig name def' = case def' of
       _ ->
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a data type"
 
-definedNames :: Signature t -> [Name]
+addDefinitionSynthetic
+  :: Signature t -> A.Name -> Closed (Definition t) -> (A.DefName, Signature t)
+addDefinitionSynthetic sig n def =
+  let i  = sGeneratedCount sig
+      dn = A.SyntheticName n i
+  in (dn, addDefinition sig{sGeneratedCount = i + 1} dn def)
+
+definedNames :: Signature t -> [A.DefName]
 definedNames = HMS.keys . sDefinitions
 
 -- | Gets the type of a 'MetaVar'.  Fails if the 'MetaVar' if not

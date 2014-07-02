@@ -9,7 +9,7 @@ import           Syntax.Raw                       (parseProgram)
 import           Term                             (IsTerm)
 import           Text.PrettyPrint.Extended        ((<+>), ($$))
 import qualified Text.PrettyPrint.Extended        as PP
-import           TypeCheck                        (TypeCheckConf(TypeCheckConf), checkProgram, TCState')
+import           TypeCheck                        (TypeCheckConf, checkProgram, TCState')
 
 checkFile
   :: TypeCheckConf -> FilePath

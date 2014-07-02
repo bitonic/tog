@@ -16,7 +16,7 @@ import           Data.Maybe                       (fromMaybe)
 import           Control.Applicative              (Applicative, pure, (<*>))
 import           Control.Monad                    (liftM, (<=<), join)
 
-import           Syntax.Internal                  (Name)
+import           Syntax.Internal                  (DefName(SimpleName), Name)
 import           Term.MetaVar
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
@@ -33,10 +33,10 @@ import           Term.Synonyms
 -- further.
 data Head v
     = Var v
-    | Def Name
+    | Def DefName
     | J
     | Meta MetaVar
-    deriving (Show, Eq, Ord, Functor, Foldable, Traversable)
+    deriving (Show, Eq, Functor, Foldable, Traversable)
 
 instance Eq1 Head
 
@@ -181,7 +181,7 @@ data Blocked t v
     = NotBlocked (t v)
     | MetaVarHead MetaVar [Elim t v]
     -- ^ The term is 'MetaVar'-headed.
-    | BlockedOn (HS.HashSet MetaVar) Name [Elim t v]
+    | BlockedOn (HS.HashSet MetaVar) DefName [Elim t v]
     -- ^ Returned when some 'MetaVar's are preventing us from reducing a
     -- definition.  The 'Name' is the name of the definition, the
     -- 'Elim's the eliminators stuck on it.
@@ -203,7 +203,10 @@ instance Eq1 t => Eq1 (Blocked t) where
 ignoreBlocking :: (IsTerm t) => Blocked t v -> TermM (t v)
 ignoreBlocking (NotBlocked t)           = return t
 ignoreBlocking (MetaVarHead mv es)      = metaVar mv es
-ignoreBlocking (BlockedOn _ funName es) = def funName es
+ignoreBlocking (BlockedOn _ funName es) = app (Def funName) es
+
+mapBlockingM :: (t v -> TermM (t' v)) -> Blocked t v -> TermM (Blocked t' v)
+mapBlockingM = undefined
 
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
@@ -354,7 +357,7 @@ metaVar :: IsTerm t => MetaVar -> [Elim t v] -> TermM (t v)
 metaVar mv = unview . App (Meta mv)
 
 def :: IsTerm t => Name -> [Elim t v] -> TermM (t v)
-def f = unview . App (Def f)
+def f = unview . App (Def (SimpleName f))
 
 con :: IsTerm t => Name -> [t v] -> TermM (t v)
 con c args = unview (Con c args)
