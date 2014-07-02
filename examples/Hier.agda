@@ -91,7 +91,7 @@ UpEl = UpEl' _ _
 data UpU L k where
   U' : {q : isSet k} -> Ki -> UpU L k
   El' : (T : uni L k) -> UpU L k
-  Prf' : {q : isSet k}(P : UpU L prop) -> UpU L k
+  Prf' : (q : isSet k)(P : UpU L prop) -> UpU L k
   B' : Two -> UpU L k
   Two' : {q : isSet k} -> UpU L k
   Pi' : (S : UpU L set)(T : UpEl S -> UpU L k) -> UpU L k
@@ -104,7 +104,7 @@ data UpU L k where
 
 UpEl' L _ (U' k) = uni L k
 UpEl' L _ (El' T) = el L _ T
-UpEl' _ _ (Prf' P) = UpEl' _ _ P
+UpEl' _ _ (Prf' _ P) = UpEl' _ _ P
 UpEl' _ _ (B' b) = Tt b
 UpEl' _ _ Two' = Two
 UpEl' _ _ (Pi' S T) = Pi (UpEl' _ _ S) (\ s -> UpEl' _ _ (T s))
@@ -127,8 +127,12 @@ raise k n = UpU (Level n) k
 EL : (n : Nat) -> raise set n -> Set
 EL n T = UpEl' (Level n) _ T
 
+-- TODO Agda accepts this, we don't.
+-- PRF : (n : Nat) -> raise prop n -> raise set n
+-- PRF n P = Prf' _ P
+
 PRF : (n : Nat) -> raise prop n -> raise set n
-PRF n P = Prf' P
+PRF n P = Prf' one P
 
 natEq : (n : Nat) -> Nat -> Nat -> raise prop n
 natEq _ ze     ze     = (B' tt)
@@ -160,6 +164,7 @@ suEm em = embed (\ k T -> Em em k (El' T)) (\ k T -> Nop em k (El' T))
 -- COE : {S T : Set} -> S == T -> S -> T
 -- COE p s = subst _ p s
 
+
 COE : {S T : Set} -> S == T -> S -> T
 COE p s = subst (\ z -> z) p s
 
@@ -170,7 +175,7 @@ times : {k : Ki}(n : Nat) -> raise k n -> raise k n -> raise k n
 times _ P Q = Sg' P (\ _ -> Q)
 
 fun : (n : Nat) -> raise prop n -> raise prop n -> raise prop n
-fun _ P Q = Pi' (Prf' P) (\ _ -> Q)
+fun _ P Q = Pi' (Prf' one P) (\ _ -> Q)
 
 upPi' : {k : Ki}{n p : Nat}(E : Embedding n p) ->
         (S : raise set n) -> (EL n S -> raise k p) -> raise k p
@@ -192,7 +197,7 @@ VALEQ : (m : Nat)(S : raise set m)(s : EL m S)
         (p : Nat)(mp : Embedding m p)(np : Embedding n p) ->
         raise prop p
 
-SETEQ m (U' _) n (Prf' _) _ _ _ = (B' ff)
+SETEQ m (U' _) n (Prf' _ _) _ _ _ = (B' ff)
 SETEQ m (U' _) n (B' _) _ _ _ = (B' ff)
 SETEQ m (U' _) n Two' _ _ _ = (B' ff)
 SETEQ m (U' _) n (Pi' _ _) _ _ _ = (B' ff)
@@ -201,23 +206,23 @@ SETEQ m (U' _) n (Wi' _ _ _ _ _) _ _ _ = (B' ff)
 SETEQ m (U' set) n (U' set) p mp np = natEq p m n
 SETEQ m (U' prop) n (U' prop) p mp np = natEq p m n
 SETEQ m (U' _) n (U' _) _ _ _ = (B' ff)
-SETEQ m (Prf' P) n (Prf' Q) p mp np = PROPEQ m P n Q p mp np
-SETEQ m (Prf' P) n (U' _) _ _ _ = B' ff
-SETEQ m (Prf' P) n (B' _) _ _ _ = B' ff
-SETEQ m (Prf' P) n Two' _ _ _ = B' ff
-SETEQ m (Prf' P) n (Pi' _ _) _ _ _ = B' ff
-SETEQ m (Prf' P) n (Sg' _ _) _ _ _ = B' ff
-SETEQ m (Prf' P) n (Wi' _ _ _ _ _) _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (Prf' _ Q) p mp np = PROPEQ m P n Q p mp np
+SETEQ m (Prf' _ P) n (U' _) _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (B' _) _ _ _ = B' ff
+SETEQ m (Prf' _ P) n Two' _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (Pi' _ _) _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (Sg' _ _) _ _ _ = B' ff
+SETEQ m (Prf' _ P) n (Wi' _ _ _ _ _) _ _ _ = B' ff
 SETEQ m (B' b) n (B' c) p mp np = B' (twoEq b c)
 SETEQ m (B' b) n (U' _) _ _ _ = B' ff
-SETEQ m (B' b) n (Prf' _) _ _ _ = B' ff
+SETEQ m (B' b) n (Prf' _ _) _ _ _ = B' ff
 SETEQ m (B' b) n Two' _ _ _ = B' ff
 SETEQ m (B' b) n (Pi' _ _) _ _ _ = B' ff
 SETEQ m (B' b) n (Sg' _ _) _ _ _ = B' ff
 SETEQ m (B' b) n (Wi' _ _ _ _ _) _ _ _ = B' ff
 SETEQ m Two' n Two' p mp np = (B' tt)
 SETEQ m Two' n (U' _) _ _ _ = B' ff
-SETEQ m Two' n (Prf' _) _ _ _ = B' ff
+SETEQ m Two' n (Prf' _ _) _ _ _ = B' ff
 SETEQ m Two' n (B' b) _ _ _ = B' ff
 SETEQ m Two' n (Pi' _ _) _ _ _ = B' ff
 SETEQ m Two' n (Sg' _ _) _ _ _ = B' ff
@@ -229,7 +234,7 @@ SETEQ m (Pi' S S') n (Pi' T T') p mp np =
        upPi' mp S (\ s ->
          fun p (VALEQ n T t m S s p np mp) (SETEQ m (S' s) n (T' t) p mp np))))
 SETEQ m (Pi' S S') n (U' _) _ _ _ = B' ff
-SETEQ m (Pi' S S') n (Prf' _) _ _ _ = B' ff
+SETEQ m (Pi' S S') n (Prf' _ _) _ _ _ = B' ff
 SETEQ m (Pi' S S') n (B' b) _ _ _ = B' ff
 SETEQ m (Pi' S S') n (Sg' _ _) _ _ _ = B' ff
 SETEQ m (Pi' S S') n Two' _ _ _ = B' ff
@@ -242,7 +247,7 @@ SETEQ m (Sg' S S') n (Sg' T T') p mp np =
      fun p (VALEQ m S s n T t p mp np)
            (SETEQ m (S' s) n (T' t) p mp np))))
 SETEQ m (Sg' S S') n (U' _) _ _ _ = B' ff
-SETEQ m (Sg' S S') n (Prf' _) _ _ _ = B' ff
+SETEQ m (Sg' S S') n (Prf' _ _) _ _ _ = B' ff
 SETEQ m (Sg' S S') n (B' b) _ _ _ = B' ff
 SETEQ m (Sg' S S') n (Pi' _ _) _ _ _ = B' ff
 SETEQ m (Sg' S S') n Two' _ _ _ = B' ff
@@ -267,7 +272,7 @@ SETEQ m (Wi' I S P r i) n (Wi' J' T Q u j) p mp np =
                      fun p (VALEQ n (Q j t) q m (P i s) o p np mp)
                            (VALEQ m I (r i s o) n J' (u j t q) p mp np)))))))))))))
 SETEQ m (Wi' _ _ _ _ _) n (U' _) _ _ _ = B' ff
-SETEQ m (Wi' _ _ _ _ _) n (Prf' _) _ _ _ = B' ff
+SETEQ m (Wi' _ _ _ _ _) n (Prf' _ _) _ _ _ = B' ff
 SETEQ m (Wi' _ _ _ _ _) n (B' b) _ _ _ = B' ff
 SETEQ m (Wi' _ _ _ _ _) n (Pi' _ _) _ _ _ = B' ff
 SETEQ m (Wi' _ _ _ _ _) n Two' _ _ _ = B' ff
@@ -311,17 +316,17 @@ VALEQ m S s (su n) (El' T) t p mp np =
   VALEQ m S s n T t p mp (suEm np)
 VALEQ m _ s n _ t p mp np = B' tt
 
-postulate axiom : (p : Nat)(P : raise prop p) -> EL p (Prf' P)
+postulate axiom : (p : Nat)(P : raise prop p) -> EL p (Prf' one P)
+
 
 coe : (m : Nat)(S : raise set m)(n : Nat)(T : raise set n) ->
       (p : Nat)(mp : Embedding m p)(np : Embedding n p) ->
-      EL p (Prf' (SETEQ m S n T p mp np)) -> EL m S -> EL n T
+      EL p (Prf' one (SETEQ m S n T p mp np)) -> EL m S -> EL n T
 
 coh : (m : Nat)(S : raise set m)(n : Nat)(T : raise set n) ->
       (p : Nat)(mp : Embedding m p)(np : Embedding n p) ->
-      (Q : EL p (Prf' (SETEQ m S n T p mp np)))(s : EL m S) ->
-      EL p (Prf' (VALEQ m S s n T (coe m S n T p mp np Q s) p mp np))
-
+      (Q : EL p (Prf' one (SETEQ m S n T p mp np)))(s : EL m S) ->
+      EL p (Prf' one (VALEQ m S s n T (coe m S n T p mp np Q s) p mp np))
 
 coe m (U' set) n (U' set) p mp np Q s =
   nsubst p m n Q (\ i -> uni (Level i) set) s
@@ -329,7 +334,7 @@ coe m (U' prop) n (U' prop) p mp np Q s =
   nsubst p m n Q (\ i -> uni (Level i) prop) s
 coe m (U' set) n (U' prop) _ _ _ z _ = kill z
 coe m (U' prop) n (U' set) _ _ _ z _ = kill z
-coe m (U' _) n (Prf' P) p mp np z s = kill z
+coe m (U' _) n (Prf' _ P) p mp np z s = kill z
 coe m (U' _) n (B' _) p mp np z s = kill z
 coe m (U' _) n Two' p mp np z s = kill z
 coe m (U' _) n (Pi' S T) p mp np z s = kill z
@@ -340,19 +345,19 @@ coe m (U' set) (su n) (El' T) p mp np Q s =
   coe m (U' set) n T p mp (suEm np) Q s
 coe m (U' prop) (su n) (El' T) p mp np Q s =
   coe m (U' prop) n T p mp (suEm np) Q s
-coe m (Prf' P) n (U' y) p mp np z s = kill z
-coe m (Prf' P) ze (El' z) p mp np Q s = kill z
-coe m (Prf' P) (su n) (El' T) p mp np Q s =
-  coe m (Prf' P) n T p mp (suEm np) Q s
-coe m (Prf' P) n (Prf' P') p mp np Q s =
+coe m (Prf' _ P) n (U' y) p mp np z s = kill z
+coe m (Prf' _ P) ze (El' z) p mp np Q s = kill z
+coe m (Prf' _ P) (su n) (El' T) p mp np Q s =
+  coe m (Prf' _ P) n T p mp (suEm np) Q s
+coe m (Prf' _ P) n (Prf' _ P') p mp np Q s =
   COE (Nop np prop P') (fst Q (EOC (Nop mp prop P) s))
-coe m (Prf' P) n (B' y) p mp np z s = kill z
-coe m (Prf' P) n Two' p mp np z s = kill z
-coe m (Prf' P) n (Pi' S T) p mp np z s = kill z
-coe m (Prf' P) n (Sg' S T) p mp np z s = kill z
-coe m (Prf' P) n (Wi' I S P' r i) p mp np z s = kill z
+coe m (Prf' _ P) n (B' y) p mp np z s = kill z
+coe m (Prf' _ P) n Two' p mp np z s = kill z
+coe m (Prf' _ P) n (Pi' S T) p mp np z s = kill z
+coe m (Prf' _ P) n (Sg' S T) p mp np z s = kill z
+coe m (Prf' _ P) n (Wi' I S P' r i) p mp np z s = kill z
 coe m (B' b) n (U' y) p mp np z s = kill z
-coe m (B' b) n (Prf' P) p mp np z s = kill z
+coe m (B' b) n (Prf' _ P) p mp np z s = kill z
 coe m (B' b) n Two' p mp np z s = kill z
 coe m (B' b) n (Pi' S T) p mp np z s = kill z
 coe m (B' b) n (Sg' S T) p mp np z s = kill z
@@ -362,7 +367,7 @@ coe m (B' b) ze (El' z) p mp np Q s = kill z
 coe m (B' b) (su n) (El' T) p mp np Q s = coe m (B' b) n T p mp (suEm np) Q s
 coe m Two' n Two' p mp np Q s = s
 coe m Two' n (U' y) p mp np z s = kill z
-coe m Two' n (Prf' P) p mp np z s = kill z
+coe m Two' n (Prf' _ P) p mp np z s = kill z
 coe m Two' n (B' y) p mp np z s = kill z
 coe m Two' n (Pi' S T) p mp np z s = kill z
 coe m Two' n (Sg' S T) p mp np z s = kill z
@@ -374,7 +379,7 @@ coe m (Pi' S S') n (Pi' T T') p mp np Q f = help where
   help t = t' where
     s : EL m S
     s = coe n T m S p np mp (fst Q) t
-    ts : EL p (Prf' (VALEQ n T t m S s p np mp))
+    ts : EL p (Prf' one (VALEQ n T t m S s p np mp))
     ts = coh n T m S p np mp (fst Q) t
     s' : EL m (S' s)
     s' = f s
@@ -397,7 +402,7 @@ coe m (Pi' S S') n (Pi' T T') p mp np Q f = help where
                   (UpEl (Em np set T)) (Nop np set T)
                   (snd Q)) s'
 coe m (Pi' S S') n (U' y) p mp np z s = kill z
-coe m (Pi' S S') n (Prf' P) p mp np z s = kill z
+coe m (Pi' S S') n (Prf' _ P) p mp np z s = kill z
 coe m (Pi' S S') n (B' y) p mp np z s = kill z
 coe m (Pi' S S') n Two' p mp np z s = kill z
 coe m (Pi' S S') n (Sg' S0 T) p mp np z s = kill z
@@ -410,7 +415,7 @@ coe m (Sg' S S') n (Sg' T T') p mp np Q x =  sg t t' where
     s = fst x
     t : EL n T
     t = coe m S n T p mp np (fst Q) s
-    st : EL p (Prf' (VALEQ m S s n T t p mp np))
+    st : EL p (Prf' one (VALEQ m S s n T t p mp np))
     st = coh m S n T p mp np (fst Q) s
     s' : EL m (S' s)
     s' = snd x
@@ -435,7 +440,7 @@ coe m (Sg' S S') n (Sg' T T') p mp np Q x =  sg t t' where
               (UpEl (Em np set T)) (Nop np set T)
               (snd Q)) s'
 coe m (Sg' S S') n (U' y) p mp np z s = kill z
-coe m (Sg' S S') n (Prf' P) p mp np z s = kill z
+coe m (Sg' S S') n (Prf' _ P) p mp np z s = kill z
 coe m (Sg' S S') n (B' y) p mp np z s = kill z
 coe m (Sg' S S') n Two' p mp np z s = kill z
 coe m (Sg' S S') n (Pi' S0 T) p mp np z s = kill z
@@ -605,7 +610,7 @@ coe m (Wi' I S P r i) n (Wi' J' T R u j) p mp np Q s
                   (UpEl (Em np set (R j t))) (Nop np set (R j t))
                   (snd caf) l o lo
 coe m (Wi' I S P r i) n (U' y) p mp np z s = kill z
-coe m (Wi' I S P r i) n (Prf' P') p mp np z s = kill z
+coe m (Wi' I S P r i) n (Prf' _ P') p mp np z s = kill z
 coe m (Wi' I S P r i) n (B' y) p mp np z s = kill z
 coe m (Wi' I S P r i) n Two' p mp np z s = kill z
 coe m (Wi' I S P r i) n (Pi' S' T) p mp np z s = kill z

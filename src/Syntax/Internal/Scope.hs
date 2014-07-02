@@ -221,6 +221,8 @@ checkDecls ds0 ret = case ds0 of
     xs <- mapC bindName is $ return
     checkFields is (getFields fs) $ \fs ->
       bindName (mkConInfo con 0 (length fs)) $ \con ->
+        -- TODO this is wrong: we should only allow instantiation of
+        -- locally defined functions, not all.
         checkDecls ds $ \ds' ->
           ret (RecDef x xs con fs : ds')
   (d@C.Data{} : _) ->
