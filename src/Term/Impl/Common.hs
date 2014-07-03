@@ -23,7 +23,7 @@ import qualified Text.PrettyPrint.Extended        as PP
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
 substEliminate
-  :: (IsTerm t) => t v -> [Elim t v] -> TermM (t v)
+  :: (SubstVar v, IsTerm t) => t v -> [Elim t v] -> TermM (t v)
 substEliminate t elims = do
   tView <- view t
   case (tView, elims) of
@@ -42,7 +42,7 @@ substEliminate t elims = do
         error $ "substEliminate: Bad elimination"
 
 genericSubstView
-  :: (IsTerm t) => TermView t a -> (a -> TermM (t b)) -> TermM (t b)
+  :: (SubstVar a, SubstVar b, IsTerm t) => TermView t a -> (a -> TermM (t b)) -> TermM (t b)
 genericSubstView tView f = do
   case tView of
     Lam body ->
@@ -65,20 +65,20 @@ genericSubstView tView f = do
         Meta mv -> app (Meta mv) els'
         J       -> app J els'
   where
-    lift' :: (IsTerm t)
+    lift' :: (IsTerm t, SubstVar a, SubstVar b)
           => (a -> TermM (t b))
           -> (TermVar a -> TermM (Abs t b))
     lift' _ (B v) = var $ B v
-    lift' g (F v) = substMap F =<< g v
+    lift' g (F v) = weaken =<< g v
 
 genericSubst
-  :: (IsTerm t) => t a -> (a -> TermM (t b)) -> TermM (t b)
+  :: (SubstVar a, SubstVar b, IsTerm t) => t a -> (a -> TermM (t b)) -> TermM (t b)
 genericSubst t f = do
   tView <- view t
   genericSubstView tView f
 
 genericWhnf
-  :: (IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
+  :: (SubstVar v, IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
 genericWhnf sig t = do
   tView <- view t
   case tView of
@@ -101,7 +101,7 @@ genericWhnf sig t = do
       return $ NotBlocked t
 
 whnfFun
-  :: (IsTerm t)
+  :: (SubstVar v, IsTerm t)
   => Sig.Signature t
   -> DefName -> [Elim t v] -> [Closed (Clause t)]
   -> TermM (Maybe (Blocked t v))
@@ -119,7 +119,7 @@ whnfFun sig funName es (Clause patterns body : clauses) = runMaybeT $ do
       whnf sig =<< eliminate sig body' leftoverEs
 
 matchClause
-  :: (IsTerm t)
+  :: (SubstVar v, IsTerm t)
   => Sig.Signature t
   -> [Elim t v] -> [Pattern]
   -> TermM (TermTraverse () ([t v], [Elim t v]))
@@ -148,7 +148,7 @@ matchClause _ _ _ =
 
 genericGetAbsName
   :: forall t v0.
-     (IsTerm t)
+     (SubstVar v0, IsTerm t)
   => Abs t v0 -> TermM (Maybe Name)
 genericGetAbsName = go $ \v -> case v of
   B v' -> Just $ Bound.name v'
@@ -157,7 +157,7 @@ genericGetAbsName = go $ \v -> case v of
     lift' _ (B _) = Nothing
     lift' f (F v) = f v
 
-    go :: (v -> Maybe Name) -> t v -> TermM (Maybe Name)
+    go :: (SubstVar v) => (v -> Maybe Name) -> t v -> TermM (Maybe Name)
     go f t = do
       tView <- view t
       case tView of
@@ -175,14 +175,14 @@ genericGetAbsName = go $ \v -> case v of
             mapM (foldElim (go f) (\_ _ -> return Nothing)) els
 
 genericStrengthen
-  :: (IsTerm t) => Abs t v -> TermM (Maybe (t v))
+  :: (SubstVar v, IsTerm t) => Abs t v -> TermM (Maybe (t v))
 genericStrengthen = runMaybeT . go (unvar (const Nothing) Just)
   where
     lift' :: (v -> Maybe v0) -> (TermVar v -> Maybe (TermVar v0))
     lift' _ (B _) = Nothing
     lift' f (F v) = F <$> f v
 
-    go :: (IsTerm t)
+    go :: (SubstVar v, SubstVar v0, IsTerm t)
        => (v -> Maybe v0) -> t v -> MaybeT TermM (t v0)
     go f t = do
       tView <- lift $ view t
@@ -209,7 +209,7 @@ genericStrengthen = runMaybeT . go (unvar (const Nothing) Just)
           els' <- mapM (mapElimM (go f)) els
           lift $ app h' els'
 
-genericNf :: forall t v. (IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
+genericNf :: forall t v. (SubstVar v, IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
 genericNf sig t = do
   tView <- whnfView sig t
   case tView of
@@ -259,13 +259,13 @@ genericTypeOfJ =
       pi type' =<< abstract x t'
 
 genericTermEq
-  :: (IsTerm t, Eq v)
+  :: (IsTerm t, SubstVar v)
   => t v -> t v -> TermM Bool
 genericTermEq t1 t2 = do
   join $ genericTermViewEq <$> view t1 <*> view t2
 
 genericTermViewEq
-  :: (IsTerm t, Eq v)
+  :: (IsTerm t, SubstVar v)
   => TermView t v -> TermView t v -> TermM Bool
 genericTermViewEq tView1 tView2 = do
   case (tView1, tView2) of

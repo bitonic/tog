@@ -2,10 +2,12 @@ module Term.Var where
 
 import           Bound                            (Var(B, F))
 import qualified Bound.Name                       as Bound
-import           Data.Void                        (Void, absurd)
+import           Data.Hashable                    (Hashable)
 import           Data.Typeable                    (Typeable)
+import           Data.Void                        (Void, absurd)
 
 import           Syntax.Internal                  (Name)
+import           Term.Subst
 
 -- Var
 ------------------------------------------------------------------------
@@ -29,7 +31,7 @@ class VarName v where
 class VarIndex v where
     varIndex :: v -> Int
 
-class (Eq v, Ord v, Typeable v, VarName v, VarIndex v) => IsVar v
+class (SubstVar v, Typeable v, VarName v, VarIndex v) => IsVar v
 
 instance VarName Void where
     varName = absurd
@@ -72,4 +74,4 @@ boundTermVar n = B $ named n ()
 
 -- | The field of a projection.
 newtype Field = Field {unField :: Int}
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Hashable)

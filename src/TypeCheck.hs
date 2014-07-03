@@ -43,8 +43,6 @@ import           Text.PrettyPrint.Extended        (($$), (<>), (<+>), render)
 import qualified Text.PrettyPrint.Extended        as PP
 import           TypeCheck.Monad
 
-import Debug.Trace
-
 -- Configuration
 ------------------------------------------------------------------------
 
@@ -90,6 +88,7 @@ checkProgram conf decls ret =
     "S"  -> checkProgram' (Proxy :: Proxy Simple)      conf decls ret
     "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
     "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  conf decls ret
+    "H"  -> checkProgram' (Proxy :: Proxy Hashed)      conf decls ret
     type_ -> return $ Left $ "Invalid term type" <+> PP.text type_
 
 checkProgram'
@@ -943,7 +942,7 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims =
     createMetaLam :: MetaVar -> [Named Bool] -> TC' t (Closed (Type t))
     createMetaLam newMv = go' []
       where
-        go' :: [v] -> [Named Bool] -> TC' t (Type t v)
+        go' :: (IsVar v) => [v] -> [Named Bool] -> TC' t (Type t v)
         go' vs [] =
           metaVarTC newMv . map Apply =<< mapM varTC (reverse vs)
         go' vs (kill : kills) =
@@ -1038,12 +1037,13 @@ invertMeta elims0 = case mapM isApply elims0 of
     go args vs n =
       go args (boundTermVar "_" : map F vs) (n - 1)
 
-    checkArgs :: [(Term t v0, Term t v)] -> TC' t (TermTraverse () [(v0, Term t v)])
+    checkArgs :: (IsVar v) => [(Term t v0, Term t v)] -> TC' t (TermTraverse () [(v0, Term t v)])
     checkArgs xs = do
       res <- mapM (uncurry checkArg) xs
       return $ concat <$> sequenceA res
 
-    checkArg :: Term t v0 -> Term t v -> TC' t (TermTraverse () [(v0, Term t v)])
+    checkArg
+      :: (IsVar v) => Term t v0 -> Term t v -> TC' t (TermTraverse () [(v0, Term t v)])
     checkArg arg v = do
       blockedArg <- whnfTC arg
       case blockedArg of
@@ -1098,7 +1098,7 @@ applyInvertMeta (InvertMeta sub vs) t = do
       return $ TTMetaVars mvs
     TTOK t0 -> do
       t1 <- lambdaAbstract vs t0
-      t2 <- liftTermM $ substMap kill t1
+      t2 <- liftTermM $ ({-# SCC "applyInvertMeta/substMap" #-} substMap kill t1)
       return $ TTOK t2
   where
     kill = error "applyInvertMeta.impossible"
@@ -1116,7 +1116,7 @@ applyInvertMetaSubst
 applyInvertMetaSubst sub t0 =
   flip go t0 $ \v -> return $ maybe (Left v) Right (lookup v sub)
   where
-    lift' :: forall v v1.
+    lift' :: forall v v1. (IsVar v, IsVar v1) =>
              (v -> TC' t (Either v0 (Term t v1)))
           -> (TermVar v -> TC' t (Either v0 (Term t (TermVar v1))))
     lift' _ (B v) = Right <$> varTC (B v)
@@ -1715,7 +1715,7 @@ checkInvertibility = go []
 -- Telescope & context utils
 ----------------------------
 
-telStrengthen :: (IsTerm f) => Tel.IdTel f (TermVar v) -> TermM (Maybe (Tel.IdTel f v))
+telStrengthen :: (IsVar v, IsTerm f) => Tel.IdTel f (TermVar v) -> TermM (Maybe (Tel.IdTel f v))
 telStrengthen (Tel.Empty (Tel.Id t)) =
   fmap (Tel.Empty . Tel.Id) <$> strengthen t
 telStrengthen (Tel.Cons (n, t) tel0) = runMaybeT $ do
@@ -1751,13 +1751,13 @@ ctxAppTC t ctx0 = do
   t' <- liftTermM t
   eliminateTC t' . map Apply =<< mapM varTC (ctxVars ctx0)
 
-eliminateTC :: IsTerm t => t v -> [Elim t v] -> TC' t (t v)
+eliminateTC :: (IsVar v, IsTerm t) => t v -> [Elim t v] -> TC' t (t v)
 eliminateTC h els = withSignatureTermM $ \sig -> eliminate sig h els
 
 freeVarsTC :: (IsTerm t, IsVar v) => t v -> TC' t (FreeVars v)
 freeVarsTC t = withSignatureTermM $ \sig -> freeVars sig t
 
-metaVarsTC :: IsTerm t => t v -> TC' t (HS.HashSet MetaVar)
+metaVarsTC :: (IsVar v, IsTerm t) => t v -> TC' t (HS.HashSet MetaVar)
 metaVarsTC t = withSignatureTermM $ \sig -> metaVars sig t
 
 prettyTermTC :: (IsVar v, IsTerm t) => t v -> TC' t PP.Doc
@@ -1772,46 +1772,46 @@ prettyElimsTC es = withSignatureTermM $ \sig -> prettyElims sig es
 prettyDefinitionTC :: (IsTerm t) => Closed (Definition t) -> TC' t PP.Doc
 prettyDefinitionTC def' = withSignatureTermM $ \sig -> prettyDefinition sig def'
 
-unviewTC :: IsTerm t => TermView t v -> TC' t (t v)
+unviewTC :: (IsVar v, IsTerm t) => TermView t v -> TC' t (t v)
 unviewTC = liftTermM . unview
 
-lamTC :: IsTerm t => Abs t v -> TC' t (t v)
+lamTC :: (IsVar v, IsTerm t) => Abs t v -> TC' t (t v)
 lamTC body = liftTermM $ unview $ Lam body
 
-piTC :: IsTerm t => t v -> Abs t v -> TC' t  (t v)
+piTC :: (IsVar v, IsTerm t) => t v -> Abs t v -> TC' t  (t v)
 piTC domain codomain = liftTermM $ unview $ Pi domain codomain
 
-equalTC :: IsTerm t => t v -> t v -> t v -> TC' t (t v)
+equalTC :: (IsVar v, IsTerm t) => t v -> t v -> t v -> TC' t (t v)
 equalTC type_ x y = liftTermM $ unview $ Equal type_ x y
 
-appTC :: IsTerm t => Head v -> [Elim t v] -> TC' t  (t v)
+appTC :: (IsVar v, IsTerm t) => Head v -> [Elim t v] -> TC' t  (t v)
 appTC h elims = liftTermM $ unview $ App h elims
 
-metaVarTC :: IsTerm t => MetaVar -> [Elim t v] -> TC' t (t v)
+metaVarTC :: (IsVar v, IsTerm t) => MetaVar -> [Elim t v] -> TC' t (t v)
 metaVarTC mv = liftTermM . unview . App (Meta mv)
 
-defTC :: IsTerm t => Name -> [Elim t v] -> TC' t (t v)
+defTC :: (IsVar v, IsTerm t) => Name -> [Elim t v] -> TC' t (t v)
 defTC f = liftTermM . unview . App (Def (SimpleName f))
 
-conTC :: IsTerm t => Name -> [t v] -> TC' t (t v)
+conTC :: (IsVar v, IsTerm t) => Name -> [t v] -> TC' t (t v)
 conTC c args = liftTermM $ unview (Con c args)
 
-varTC :: IsTerm t => v -> TC' t (t v)
+varTC :: (IsVar v, IsTerm t) => v -> TC' t (t v)
 varTC = liftTermM . var
 
-ctxLamTC :: IsTerm t => Ctx.Ctx v0 (Type t) v -> Term t v -> TC' t (Term t v0)
+ctxLamTC :: (IsVar v, IsTerm t) => Ctx.Ctx v0 (Type t) v -> Term t v -> TC' t (Term t v0)
 ctxLamTC ctx = liftTermM . ctxLam ctx
 
-ctxPiTC :: IsTerm t => Ctx.Ctx v0 (Type t) v -> Type t v -> TC' t (Type t v0)
+ctxPiTC :: (IsVar v, IsTerm t) => Ctx.Ctx v0 (Type t) v -> Type t v -> TC' t (Type t v0)
 ctxPiTC ctx = liftTermM . ctxPi ctx
 
 telPiTC :: (IsVar v, IsTerm t) => Tel.IdTel (Type t) v -> TC' t (Type t v)
 telPiTC tel = Tel.unTel tel $ \ctx endType -> ctxPiTC ctx (Tel.unId endType)
 
-ignoreBlockingTC :: (IsTerm t) => Blocked t v -> TC' t (t v)
+ignoreBlockingTC :: (IsVar v, IsTerm t) => Blocked t v -> TC' t (t v)
 ignoreBlockingTC = liftTermM . ignoreBlocking
 
-abstractTC :: (IsTerm t, Eq v, VarName v) => v -> t v -> TC' t (Abs t v)
+abstractTC :: (IsTerm t, Eq v, VarName v, SubstVar v) => v -> t v -> TC' t (Abs t v)
 abstractTC v = liftTermM . abstract v
 
 -- Miscellanea

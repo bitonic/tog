@@ -52,7 +52,7 @@ type ClosedTel t f = Tel t f Void
 -- | Instantiates an 'IdTel' repeatedly until we get to the bottom of
 -- it.  Fails If the length of the 'Tel' and the provided list don't
 -- match.
-substs :: (Subst f) => IdTel f v0 -> [f v0] -> TermM (f v0)
+substs :: (SubstVar v0, Subst f) => IdTel f v0 -> [f v0] -> TermM (f v0)
 substs (Empty t)     []           = return $ unId t
 substs (Empty _)     (_ : _)      = error "Types.Telescope.instantiate: too many arguments"
 substs (Cons _ _)    []           = error "Types.Telescope.instantiate: too few arguments"
@@ -62,7 +62,7 @@ substs (Cons _ tel') (arg : args) = (`substs` args) =<< subst' tel' instArg
     instArg (F v) = var v
 
 -- | Instantiates a bound variable.
-instantiate :: (Subst f, Subst' t) => Tel t f (TermVar v) -> f v -> TermM (Tel t f v)
+instantiate :: (SubstVar v, Subst f, Subst' t) => Tel t f (TermVar v) -> f v -> TermM (Tel t f v)
 instantiate tel' t = subst' tel' inst
   where
     inst (B _) = return t

@@ -463,7 +463,7 @@ appView e = case e of
     applyTo es2 (CApp x es1) = return $ CApp x $ es1 ++ es2
     applyTo es  (NotApp e)   = scopeError e $ C.printTree e ++ " cannot be applied to arguments"
 
-checkAppHead :: Either C.Name (Name, Expr) -> Check (AppHead, Hiding)
+checkAppHead :: C.Name -> Check (AppHead, Hiding)
 checkAppHead (C.Name ((l, c), "_"))    = return (HeadMeta $ SrcLoc l c, 0)
 checkAppHead (C.Name ((l, c), "Set"))  = return (HeadSet $ SrcLoc l c, 0)
 checkAppHead (C.Name ((l, c), "J"))    = return (Other (J (SrcLoc l c)), 3)

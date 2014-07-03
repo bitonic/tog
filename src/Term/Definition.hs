@@ -40,7 +40,7 @@ import           Term.TermM
 type ClauseBody t v = t (Var (Named Int) v)
 
 instantiateClauseBody
-  :: Subst t => ClauseBody t Void -> [t v] -> TermM (t v)
+  :: (SubstVar v, Subst t) => ClauseBody t Void -> [t v] -> TermM (t v)
 instantiateClauseBody body args0 = subst body $ \v -> case v of
   B (Bound.Name _ i) -> return $ ixArg i
   F v'               -> absurd v'

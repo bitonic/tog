@@ -8,14 +8,15 @@ import           Prelude                          hiding (pi)
 import           Control.Applicative              ((<$>), (<*>))
 import           Control.Monad                    ((<=<))
 
+import           Term.Class
 import           Term.Definition
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import           Term.Class
 import           Term.TermM
+import           Term.Subst
 
 class Nf t where
-  nf' :: (IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)
+  nf' :: (SubstVar v, IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)
 
 instance Nf Elim where
   nf' _   (Proj ix field) = return $ Proj ix field

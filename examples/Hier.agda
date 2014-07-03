@@ -345,7 +345,6 @@ coe m (U' _ _) ze (El' z) p mp np Q s = kill z
 coe m (U' _ set) (su n) (El' T) p mp np Q s =
   coe m (U' one set) n T p mp (suEm np) Q s
 coe m (U' _ prop) (su n) (El' T) p mp np Q s =
-  -- TODO in Agda we can use `U' _'
   coe m (U' one prop) n T p mp (suEm np) Q s
 coe m (Prf' _ P) n (U' _ y) p mp np z s = kill z
 coe m (Prf' _ P) ze (El' z) p mp np Q s = kill z
