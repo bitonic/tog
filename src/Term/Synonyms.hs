@@ -1,11 +1,11 @@
 module Term.Synonyms where
 
-import           Data.Void                        (Void)
+import           Term.Nat
 
 -- Useful type synonyms
 ------------------------------------------------------------------------
 
-type Type (t :: * -> *) = t
-type Term (t :: * -> *) = t
+type Type (t :: Nat -> *) = t
+type Term (t :: Nat -> *) = t
 
-type Closed t = t Void
+type Closed (t :: Nat -> *) = t Zero

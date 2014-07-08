@@ -2,8 +2,8 @@
 module Term.Definition
     ( -- * 'Clause'
       Clause(..)
-    , ClauseBody
-    , instantiateClauseBody
+    , ClauseBody(..)
+    , clauseBodyTerm
     , Pattern(..)
     , patternBindings
     , patternsBindings
@@ -16,9 +16,6 @@ module Term.Definition
     , mapInvertible
     ) where
 
-import           Bound                            (Bound, (>>>=), Var(B, F))
-import qualified Bound.Name                       as Bound
-import           Bound.Scope.Simple               (Scope(Scope), fromScope)
 import           Control.Arrow                    (second)
 import           Data.Typeable                    (Typeable)
 import           Data.Void                        (Void, absurd)
@@ -26,10 +23,12 @@ import           Prelude.Extras                   (Eq1, (==#))
 
 import           Syntax.Internal                  (Name, DefName)
 import qualified Term.Telescope                   as Tel
+import qualified Term.Context                     as Ctx
 import           Term.Var
 import           Term.Synonyms
 import           Term.Subst
 import           Term.TermM
+import           Term.Nat
 
 -- Clauses
 ------------------------------------------------------------------------
@@ -37,30 +36,28 @@ import           Term.TermM
 -- | A 'ClauseBody' scopes a term over a number of variables.  The
 -- lowest number refers to the rightmost variable in the patterns, the
 -- highest to the leftmost.
-type ClauseBody t v = t (Var (Named Int) v)
+data ClauseBody t v
+  = CBNil (t v)
+  | CBArg (ClauseBody t (Suc v))
 
-instantiateClauseBody
-  :: (SubstVar v, Subst t) => ClauseBody t Void -> [t v] -> TermM (t v)
-instantiateClauseBody body args0 = subst body $ \v -> case v of
-  B (Bound.Name _ i) -> return $ ixArg i
-  F v'               -> absurd v'
-  where
-    args = reverse args0
+clauseBodyTerm :: ClauseBody t v -> (forall v'. t v' -> a) -> a
+clauseBodyTerm (CBNil t)    f = f t
+clauseBodyTerm (CBArg body) f = clauseBodyTerm body f
 
-    ixArg n = if n >= length args
-              then error "Definition.instantiateClauseBody: too many arguments"
-              else args !! n
+-- subst body $ \v -> case v of
+--   B (Bound.Name _ i) -> return $ ixArg i
+--   F v'               -> absurd v'
+--   where
+--     args = reverse args0
+
+--     ixArg n = if n >= length args
+--               then error "Definition.instantiateClauseBody: too many arguments"
+--               else args !! n
 
 
 -- | One clause of a function definition.
 data Clause t v = Clause [Pattern] (ClauseBody t v)
     deriving (Typeable)
-
-instance (Eq1 t) => Eq1 (Clause t) where
-  Clause pats1 body1 ==# Clause pats2 body2 = pats1 == pats2 && body1 ==# body2
-
-instance Bound Clause where
-  Clause pats body >>>= f = Clause pats $ fromScope (Scope body >>>= f)
 
 data Pattern
     = VarP
@@ -77,7 +74,7 @@ patternsBindings = sum . map patternBindings
 -- Definition
 ------------------------------------------------------------------------
 
-data Definition t v
+data Definition (t :: Nat -> *) (v :: Nat)
     = Constant ConstantKind (Type t v)
     | DataCon Name (Tel.IdTel (Type t) v)
     -- ^ Data type name, telescope ranging over the parameters of the
@@ -89,12 +86,6 @@ data Definition t v
     | Function (Type t v) (Invertible t v)
     -- ^ Function type, clauses.
     deriving (Typeable)
-
-instance Bound Definition where
-  Constant kind t              >>>= f = Constant kind (t >>= f)
-  DataCon tyCon type_          >>>= f = DataCon tyCon (type_ >>>= f)
-  Projection field tyCon type_ >>>= f = Projection field tyCon (type_ >>>= f)
-  Function type_ clauses       >>>= f = Function (type_ >>= f) (mapInvertible (>>>= f) clauses)
 
 data ConstantKind
   = Postulate

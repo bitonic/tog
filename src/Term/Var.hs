@@ -1,73 +1,68 @@
 module Term.Var where
 
-import           Bound                            (Var(B, F))
-import qualified Bound.Name                       as Bound
-import           Data.Hashable                    (Hashable)
+import           Data.Foldable                    (Foldable)
+import           Data.Hashable                    (Hashable, hashWithSalt)
+import           Data.Traversable                 (Traversable)
 import           Data.Typeable                    (Typeable)
-import           Data.Void                        (Void, absurd)
+import           Unsafe.Coerce                    (unsafeCoerce)
 
 import           Syntax.Internal                  (Name)
-import           Term.Subst
+import           Term.Nat
 
 -- Var
 ------------------------------------------------------------------------
 
--- | We use this type for bound variables of which we want to remember
--- the original name.
-type Named = Bound.Name Name
+data Var (n :: Nat) where
+  B :: Named () -> Var (Suc n)
+  F :: Var n -> Var (Suc n)
+
+deriving instance Eq (Var n)
+deriving instance Ord (Var n)
+deriving instance Typeable Var
+
+varIndex :: Var n -> Int
+varIndex (B _) = 0
+varIndex (F n) = 1 + varIndex n
+
+varName :: Var n -> Name
+varName (B n) = namedName n
+varName (F v) = varName v
+
+instance Show (Var n) where
+  show v = show (varIndex v) ++ "#" ++ show (varName v)
+
+elimZeroVar :: Var Zero -> a
+elimZeroVar = error "elimZeroVar"
+
+instance Hashable (Var n) where
+  hashWithSalt s = hashWithSalt s . varIndex
+
+boundVar :: Name -> Var (Suc n)
+boundVar n = B (named n ())
+
+unvar :: (Named () -> a) -> (Var n -> a) -> Var (Suc n) -> a
+unvar f _ (B n) = f n
+unvar _ f (F v) = f v
+
+-- Named
+------------------------------------------------------------------------
 
 named :: Name -> a -> Named a
-named = Bound.Name
+named = Named
 
-unNamed :: Named a -> a
-unNamed (Bound.Name _ x) = x
+data Named a = Named
+  { namedName :: Name
+  , unNamed   :: a
+  } deriving (Functor, Foldable, Traversable)
 
--- 'IsVar' variables
-------------------------------------------------------------------------
+instance Eq a => Eq (Named a) where
+  Named _ v1 == Named _ v2 = v1 == v2
 
-class VarName v where
-    varName :: v -> Name
+instance Ord a => Ord (Named a) where
+  Named _ v1 `compare` Named _ v2 = v1 `compare` v2
 
-class VarIndex v where
-    varIndex :: v -> Int
-
-class (SubstVar v, Typeable v, VarName v, VarIndex v) => IsVar v
-
-instance VarName Void where
-    varName = absurd
-
-instance VarIndex Void where
-    varIndex = absurd
-
-instance IsVar Void
-
-instance (VarName v) => VarName (Var (Named a) v) where
-    varName (B v) = Bound.name v
-    varName (F v) = varName v
-
-instance (VarIndex v) => VarIndex (Var (Named ()) v) where
-    varIndex (B _) = 0
-    varIndex (F v) = 1 + varIndex v
-
-instance VarIndex (Var (Named Int) Void) where
-    varIndex (B v) = unNamed v
-    varIndex (F v) = absurd v
-
-instance (IsVar v) => IsVar (Var (Named ()) v) where
-
-instance IsVar (Var (Named Int) Void) where
-
-instance VarName Name where
-    varName = id
-
--- TermVar
-------------------------------------------------------------------------
-
--- | A 'Var' with one 'Named' free variable.
-type TermVar = Var (Named ())
-
-boundTermVar :: Name -> TermVar v
-boundTermVar n = B $ named n ()
+instance Hashable a => Hashable (Named a) where
+  hashWithSalt s (Named _ v) = hashWithSalt s v
 
 -- Record 'Field's
 ------------------------------------------------------------------------

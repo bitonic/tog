@@ -21,10 +21,10 @@ import           Term.Var
 import           Text.PrettyPrint.Extended        ((<+>), (<>), ($$))
 import qualified Text.PrettyPrint.Extended        as PP
 
-prettyTerm :: (IsVar v, IsTerm t) => Sig.Signature t -> t v -> TermM PP.Doc
+prettyTerm :: (IsTerm t) => Sig.Signature t -> t v -> TermM PP.Doc
 prettyTerm sig = prettyPrecTerm sig 0
 
-prettyPrecTerm :: (IsVar v, IsTerm t) => Sig.Signature t -> Int -> t v -> TermM PP.Doc
+prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t v -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
   t <- view =<< instantiateMetaVars sig t0
   case t of
@@ -63,14 +63,14 @@ prettyApp f   p h xs = do
   xsDoc <- mapM (f 4) xs
   return $ PP.condParens (p > 3) $ h <+> PP.fsep xsDoc
 
-prettyElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Elim t v -> TermM PP.Doc
+prettyElim :: (IsTerm t) => Sig.Signature t -> Elim t v -> TermM PP.Doc
 prettyElim sig = prettyPrecElim sig 0
 
-prettyPrecElim :: (IsVar v, IsTerm t) => Sig.Signature t -> Int -> Elim t v -> TermM PP.Doc
+prettyPrecElim :: (IsTerm t) => Sig.Signature t -> Int -> Elim t v -> TermM PP.Doc
 prettyPrecElim p sig (Apply e)  = prettyPrecTerm p sig e
 prettyPrecElim _ _   (Proj n _) = return $ PP.text $ show n
 
-prettyElims :: (IsVar v, IsTerm t) => Sig.Signature t -> [Elim t v] -> TermM PP.Doc
+prettyElims :: (IsTerm t) => Sig.Signature t -> [Elim t v] -> TermM PP.Doc
 prettyElims sig elims = PP.pretty <$> mapM (prettyElim sig) elims
 
 prettyDefinition :: (IsTerm t) => Sig.Signature t -> Closed (Definition t) -> TermM PP.Doc
@@ -98,12 +98,15 @@ prettyDefinition sig (Function type_ clauses) = do
 
 prettyClause :: (IsTerm t) => Sig.Signature t -> Closed (Clause t) -> TermM PP.Doc
 prettyClause sig (Clause pats body) = do
-  bodyDoc <- prettyTerm sig body
+  bodyDoc <- prettyClauseBody sig body
   return $ PP.pretty pats <+> "=" $$ PP.nest 2 bodyDoc
 
+prettyClauseBody :: (IsTerm t) => Sig.Signature t -> ClauseBody t v -> TermM PP.Doc
+prettyClauseBody sig (CBNil t) = prettyTerm sig t
+prettyClauseBody sig (CBArg t) = prettyClauseBody sig t
+
 prettyTele
-  :: forall v t.
-     (IsVar v, IsTerm t)
+  :: forall v t. (IsTerm t)
   => Sig.Signature t -> Tel.IdTel t v -> TermM PP.Doc
 prettyTele sig (Tel.Empty (Tel.Id t)) = do
    prettyTerm sig t
@@ -112,7 +115,7 @@ prettyTele sig (Tel.Cons (n0, type0) tel0) = do
   tel0Doc <- go tel0
   return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc PP.<> tel0Doc
   where
-    go :: forall v'. (IsVar v') => Tel.IdTel t v' -> TermM PP.Doc
+    go :: forall v'. Tel.IdTel t v' -> TermM PP.Doc
     go (Tel.Empty (Tel.Id t)) =
       ("]" <+>) <$> prettyTerm sig t
     go (Tel.Cons (n, type_) tel) = do
@@ -123,7 +126,7 @@ prettyTele sig (Tel.Cons (n0, type0) tel0) = do
 -- Instances
 ------------------------------------------------------------------------
 
-instance (IsVar v) => PP.Pretty (Head v) where
+instance PP.Pretty (Head v) where
     pretty (Var v)   = PP.pretty (varIndex v) <> "#" <> PP.pretty (varName v)
     pretty (Def f)   = PP.pretty f
     pretty J         = PP.text "J"

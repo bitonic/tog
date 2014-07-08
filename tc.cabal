@@ -43,7 +43,8 @@ executable tc
 
   build-tools:         alex, happy
 
-  default-extensions:  DefaultSignatures
+  default-extensions:  DataKinds
+                     , DefaultSignatures
                      , DeriveDataTypeable
                      , DeriveFoldable
                      , DeriveFunctor
@@ -62,4 +63,5 @@ executable tc
                      , StandaloneDeriving
                      , TupleSections
                      , TypeFamilies
+                     , TypeOperators
                      , UnicodeSyntax

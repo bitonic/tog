@@ -50,12 +50,12 @@ module TypeCheck.Monad
   ) where
 
 import           Control.Applicative              (Applicative(pure, (<*>)))
+import           Control.Monad                    (ap, void, msum, when, forM)
+import           Data.Functor                     ((<$>), (<$))
 import qualified Data.HashMap.Strict              as HMS
 import qualified Data.HashSet                     as HS
 import           Data.Typeable                    (Typeable)
-import           Data.Dynamic                     (Dynamic, toDyn, fromDynamic)
-import           Control.Monad                    (ap, void, msum, when, forM)
-import           Data.Functor                     ((<$>), (<$))
+import           Unsafe.Coerce                    (unsafeCoerce)
 
 import qualified Text.PrettyPrint.Extended        as PP
 import           Text.PrettyPrint.Extended        ((<+>), ($$))
@@ -293,7 +293,7 @@ newtype ProblemId a = ProblemId ProblemIdInt
 -- Both the type of the bound variable and the result type are
 -- 'Typeable' since we store the solutions and problems dynamically so
 -- that they can all be in the same 'HMS.HashMap'.
-data Problem p = forall a b. (Typeable a, Typeable b) => Problem
+data Problem p = forall a b. Problem
   { pProblem :: !(Maybe (p a b))
     -- ^ If 'Nothing', it means that we're just waiting on another
     -- problem to complete and we'll then return its result.
@@ -302,7 +302,7 @@ data Problem p = forall a b. (Typeable a, Typeable b) => Problem
   }
 
 type InterpretProblem t p =
-  forall a b. (Typeable a, Typeable b) => p a b -> a -> StuckTC t p b
+  forall a b. p a b -> a -> StuckTC t p b
 
 data ProblemState
     = BoundToMetaVars  !(HS.HashSet MetaVar)
@@ -315,10 +315,10 @@ instance PP.Pretty ProblemState where
 
 -- | As remarked, we store the problems solutions dynamically to have
 -- them in a single 'HMS.HashMap'.
-newtype ProblemSolution = ProblemSolution Dynamic
+data ProblemSolution = forall a. ProblemSolution a
 
-problemSolution :: Typeable a => a -> ProblemSolution
-problemSolution = ProblemSolution . toDyn
+problemSolution :: a -> ProblemSolution
+problemSolution = ProblemSolution
 
 -- | Datatype useful to represent computations that might return a
 -- result directly or the 'ProblemId' of a problem containing the
@@ -340,8 +340,7 @@ addFreshProblem prob = do
 -- | Store a new problem dependend on a set of 'MetaVar's.  When one of
 -- them will be instantiated, the computation can be executed again.
 newProblem
-    :: (Typeable b)
-    => HS.HashSet MetaVar
+    :: HS.HashSet MetaVar
     -> p () b
     -> StuckTC t p b
 newProblem mvs m = do
@@ -350,8 +349,7 @@ newProblem mvs m = do
     StuckOn <$> addFreshProblem prob
 
 newProblem_
-    :: (Typeable b)
-    => MetaVar
+    :: MetaVar
     -> p () b
     -> StuckTC t p b
 newProblem_ mv = newProblem (HS.singleton mv)
@@ -359,8 +357,7 @@ newProblem_ mv = newProblem (HS.singleton mv)
 -- | @bindProblem pid desc (\x -> m)@ binds computation @m@ to problem
 -- @pid@. When @pid@ is solved with result @t@, @m t@ will be executed.
 bindProblem
-    :: (Typeable a, Typeable b)
-    => ProblemId a
+    :: ProblemId a
     -> (p a b)
     -> StuckTC t p b
 bindProblem (ProblemId pid) f = do
@@ -397,8 +394,7 @@ solveProblems = do
   where
     solveProblem
       :: forall a b.
-         (Typeable a, Typeable b)
-      => ProblemIdInt
+         ProblemIdInt
       -- ^ pid of the problem we're solving.
       -> Maybe (p a b)
       -- ^ ...and the suspended computation, if present.
@@ -415,10 +411,12 @@ solveProblems = do
       -- up.
       stuck <- case mbP of
         Nothing -> do
-          let Just x' = fromDynamic x
+          -- TODO replace with something safe, for example using :~:.
+          -- Same below.
+          let Just x' = Just $ unsafeCoerce x
           return $ NotStuck x'
         Just p  -> do
-          let Just x' = fromDynamic x
+          let Just x' = Just $ unsafeCoerce x
           comp <- teInterpretProblem <$> ask
           atSrcLoc loc $ comp p x'
       case stuck of
@@ -447,8 +445,7 @@ returnStuckTC = return . NotStuck
 infixl 2 `bindStuckTC`
 
 bindStuckTC
-  :: (Typeable a, Typeable b)
-  => StuckTC t p a -> p a b -> StuckTC t p b
+  :: StuckTC t p a -> p a b -> StuckTC t p b
 bindStuckTC m p = do
   stuck <- m
   case stuck of

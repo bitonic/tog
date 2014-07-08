@@ -4,7 +4,6 @@ module Term.FreeVars
   , freeVars
   ) where
 
-import           Bound
 import           Control.Applicative              ((<*>))
 import           Data.Functor                     ((<$>))
 import           Data.Monoid                      (Monoid, mappend, mempty, (<>), mconcat)
@@ -14,34 +13,35 @@ import qualified Term.Signature                   as Sig
 import           Term.Class
 import           Term.Var
 import           Term.TermM
+import           Term.Nat
 
 -- Free variables
 ------------------------------------------------------------------------
 
 data FreeVars v = FreeVars
-  { fvRigid    :: Set.Set v
-  , fvFlexible :: Set.Set v
+  { fvRigid    :: Set.Set (Var v)
+  , fvFlexible :: Set.Set (Var v)
   }
 
-fvAll :: Ord v => FreeVars v -> Set.Set v
+fvAll :: FreeVars v -> Set.Set (Var v)
 fvAll fvs = fvRigid fvs <> fvFlexible fvs
 
-instance Ord v => Monoid (FreeVars v) where
+instance Monoid (FreeVars v) where
   mempty = FreeVars Set.empty Set.empty
 
   FreeVars rigid1 flex1 `mappend` FreeVars rigid2 flex2 =
     FreeVars (rigid1 `mappend` flex1) (rigid2 `mappend` flex2)
 
 freeVars
-  :: forall t v0. (IsVar v0, IsTerm t)
+  :: forall t v0. (IsTerm t)
   => Sig.Signature t -> t v0 -> TermM (FreeVars v0)
 freeVars sig = go Just
   where
-    lift :: (v -> Maybe v0) -> (TermVar v -> Maybe v0)
+    lift :: (Var v -> Maybe (Var v0)) -> (Var (Suc v) -> Maybe (Var v0))
     lift _ (B _) = Nothing
     lift f (F v) = f v
 
-    go :: (IsVar v) => (v -> Maybe v0) -> t v -> TermM (FreeVars v0)
+    go :: (Var v -> Maybe (Var v0)) -> t v -> TermM (FreeVars v0)
     go strengthen' t0 = do
       tView <- whnfView sig t0
       case tView of

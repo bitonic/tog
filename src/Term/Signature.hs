@@ -23,11 +23,13 @@ import           Data.Void                        (Void)
 import qualified Syntax.Internal                  as A
 import           Term.Definition
 import           Term.MetaVar
+import           Term.Nat
+import           Term.Synonyms
 import           Text.PrettyPrint.Extended        (render)
 
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
-data Signature t = Signature
+data Signature (t :: Nat -> *) = Signature
     { sDefinitions    :: HMS.HashMap A.DefName (Closed (Definition t))
     , sMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
     , sMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
@@ -136,10 +138,3 @@ metaVarsTypes = sMetasTypes
 -- | Gets the bodies for the instantiated 'MetaVar's.
 metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (Closed (Term t))
 metaVarsBodies = sMetasBodies
-
--- Quickly redefining useful type synonyms...
----------------------------------------------
-
-type Closed t = t Void
-type Type (t :: * -> *) = t
-type Term (t :: * -> *) = t

@@ -1,32 +1,32 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Term.Class where
 
 import           Prelude                          hiding (pi, foldr)
 
-import           Bound                            (Var(B, F), Bound, (>>>=))
 import           Control.Applicative              (Applicative, pure, (<*>))
 import           Control.Monad                    (liftM, (<=<), join)
 import           Data.Foldable                    (Foldable)
 import           Data.Functor                     ((<$>))
 import qualified Data.HashSet                     as HS
-import           Data.Hashable                    (hashWithSalt)
-import           Data.Hashable.Extras             (Hashable1, hashWithSalt1, hashWith1)
+import           Data.Hashable                    (Hashable, hashWithSalt)
+import           Data.Hashable.Extras             (hashWith1)
 import           Data.Maybe                       (fromMaybe)
 import           Data.Monoid                      (mempty, (<>), mconcat)
 import           Data.Traversable                 (Traversable)
 import           Data.Typeable                    (Typeable)
-import           Data.Void                        (Void)
-import           Prelude.Extras                   (Eq1((==#)))
+import           Unsafe.Coerce                    (unsafeCoerce)
 
 import           Syntax.Internal                  (DefName(SimpleName), Name)
+import           Term.Definition
 import           Term.MetaVar
+import           Term.Nat
 import qualified Term.Signature                   as Sig
-import qualified Term.Telescope                   as Tel
 import           Term.Subst
+import           Term.Synonyms
+import qualified Term.Telescope                   as Tel
 import           Term.TermM
 import           Term.Var
-import           Term.Definition
-import           Term.Synonyms
 
 -- Terms
 ------------------------------------------------------------------------
@@ -34,16 +34,14 @@ import           Term.Synonyms
 -- | A 'Head' heads a neutral term -- something which can't reduce
 -- further.
 data Head v
-    = Var v
+    = Var (Var v)
     | Def DefName
     | J
     | Meta MetaVar
-    deriving (Show, Eq, Functor, Foldable, Traversable)
+    deriving (Show, Eq)
 
-instance Eq1 Head
-
-instance Hashable1 Head where
-  hashWithSalt1 s h = case h of
+instance Hashable (Head v) where
+  hashWithSalt s h = case h of
     Var v   -> s `hashWithSalt` (0 :: Int) `hashWithSalt` v
     Def f   -> s `hashWithSalt` (1 :: Int) `hashWithSalt` f
     J       -> s `hashWithSalt` (2 :: Int)
@@ -51,14 +49,14 @@ instance Hashable1 Head where
 
 -- | 'Elim's are applied to 'Head's.  They're either arguments applied
 -- to functions, or projections applied to records.
-data Elim term v
+data Elim (term :: Nat -> *) (v :: Nat)
     = Apply (term v)
     | Proj Name Field
-    deriving (Show, Eq, Functor, Foldable, Traversable)
+    deriving (Show)
 
-instance (Hashable1 t) => Hashable1 (Elim t) where
-  hashWithSalt1 s (Apply t)  = s `hashWithSalt` (0 :: Int) `hashWithSalt1` t
-  hashWithSalt1 s (Proj n f) = s `hashWithSalt` (1 :: Int) `hashWithSalt` n `hashWithSalt` f
+instance (Hashable (t v)) => Hashable (Elim t v) where
+  hashWithSalt s (Apply t)  = s `hashWithSalt` (0 :: Int) `hashWithSalt` t
+  hashWithSalt s (Proj n f) = s `hashWithSalt` (1 :: Int) `hashWithSalt` n `hashWithSalt` f
 
 mapElimM :: Monad m => (t v -> m (t v')) -> Elim t v -> m (Elim t v')
 mapElimM f (Apply t)  = Apply `liftM` f t
@@ -68,18 +66,11 @@ foldElim :: (t v -> a) -> (Name -> Field -> a) -> Elim t v -> a
 foldElim f _ (Apply t)  = f t
 foldElim _ g (Proj n f) = g n f
 
-instance (Eq1 term) => Eq1 (Elim term) where
-    Apply t1   ==# Apply t2   = t1 ==# t2
-    Proj n1 f1 ==# Proj n2 f2 = n1 == n2 && f1 == f2
-    _          ==# _          = False
+deriving instance (Eq (t v)) => Eq (Elim t v)
 
 instance Subst' Elim where
     subst' (Apply t)      f = Apply <$> subst t f
     subst' (Proj n field) _ = return $ Proj n field
-
-instance Bound Elim where
-    Apply t      >>>= f = Apply (t >>= f)
-    Proj n field >>>= _ = Proj n field
 
 -- | The 'TermView' lets us pattern match on terms.  The actual
 -- implementation of terms might be different, but we must be able to
@@ -92,47 +83,28 @@ data TermView term v
     | Con Name [term v]
     | Set
     | App (Head v) [Elim term v]
-    deriving (Functor, Foldable, Traversable)
 
-instance (Eq v, Eq1 t) => Eq (TermView t v) where
-    t1 == t2 = t1 ==# t2
+-- deriving instance (Eq (t v)) => Eq (TermView t v)
 
-instance (Eq1 term) => Eq1 (TermView term) where
-    Lam body1 ==# Lam body2 =
-        body1 ==# body2
-    Pi domain1 codomain1 ==# Pi domain2 codomain2 =
-        domain1 ==# domain2 && codomain1 ==# codomain2
-    Equal type1 x1 y1 ==# Equal type2 x2 y2 =
-        type1 ==# type2 && x1 ==# x2 && y1 ==# y2
--- TODO we should compare heads first.
-    App h1 [] ==# App h2 [] =
-        h1 == h2
-    App h1 (el1 : els1) ==# App h2 (el2 : els2) =
-       el1 ==# el2 && App h1 els1 ==# App h2 els2
-    Set ==# Set =
-        True
-    _ ==# _ =
-        False
-
-instance (Hashable1 t) => Hashable1 (TermView t) where
-  hashWithSalt1 s t0 = case t0 of
+instance (Hashable (t v), Hashable (Abs t v)) => Hashable (TermView t v) where
+  hashWithSalt s t0 = case t0 of
     Lam body ->
-      s `hashWithSalt` (0 :: Int) `hashWithSalt1` body
+      s `hashWithSalt` (0 :: Int) `hashWithSalt` body
     Pi dom cod ->
-      s `hashWithSalt` (1 :: Int) `hashWithSalt1` dom `hashWithSalt1` cod
+      s `hashWithSalt` (1 :: Int) `hashWithSalt` dom `hashWithSalt` cod
     Equal type_ x y ->
       s `hashWithSalt` (2 :: Int)
-      `hashWithSalt1` type_ `hashWithSalt1` x `hashWithSalt1` y
+      `hashWithSalt` type_ `hashWithSalt` x `hashWithSalt` y
     Refl ->
       s `hashWithSalt` (3 :: Int)
     Con dataCon args ->
-      hashWith1 hashWithSalt1 (s `hashWithSalt` (4 :: Int) `hashWithSalt` dataCon) args
+      hashWith1 hashWithSalt (s `hashWithSalt` (4 :: Int) `hashWithSalt` dataCon) args
     Set ->
       s `hashWithSalt` (5 :: Int)
     App h es ->
-      hashWith1 hashWithSalt1 (s `hashWithSalt` (6 :: Int) `hashWithSalt1` h) es
+      hashWith1 hashWithSalt (s `hashWithSalt` (6 :: Int) `hashWithSalt` h) es
 
-type ClosedTermView term = TermView term Void
+type ClosedTermView term = TermView term Zero
 
 -- Term typeclass
 ------------------------------------------------------------------------
@@ -140,7 +112,7 @@ type ClosedTermView term = TermView term Void
 -- MetaVars
 -----------
 
-metaVars :: (IsVar v, IsTerm t) => Sig.Signature t -> t v -> TermM (HS.HashSet MetaVar)
+metaVars :: (IsTerm t) => Sig.Signature t -> t v -> TermM (HS.HashSet MetaVar)
 metaVars sig t = do
   tView <- whnfView sig t
   case tView of
@@ -161,51 +133,51 @@ metaVars sig t = do
 -- HasAbs
 ---------
 
-type Abs t v = t (TermVar v)
+type Abs (t :: Nat -> *) (v :: Nat) = t (Suc v)
 
 class (Subst t, Typeable t) => IsTerm t where
-    termEq :: (SubstVar v) => t v -> t v -> TermM Bool
-    default termEq :: (Eq1 t, Eq v) => t v -> t v -> TermM Bool
-    termEq t1 t2 = return $ t1 ==# t2
+    termEq :: t v -> t v -> TermM Bool
+    default termEq :: (Eq (t v)) => t v -> t v -> TermM Bool
+    termEq t1 t2 = return $ t1 == t2
 
     -- Abstraction related
     --------------------------------------------------------------------
-    weaken :: (SubstVar v) => t v -> TermM (Abs t v)
+    weaken :: t v -> TermM (Abs t v)
     weaken = substMap F
 
-    strengthen :: (SubstVar v) => Abs t v -> TermM (Maybe (t v))
+    strengthen :: Abs t v -> TermM (Maybe (t v))
 
-    instantiate :: (SubstVar v) =>Abs t v -> t v -> TermM (t v)
+    instantiate :: Abs t v -> t v -> TermM (t v)
     instantiate abs' t = subst abs' $ \v -> case v of
         B _  -> return $ t
         F v' -> var v'
 
-    abstract :: (SubstVar v, VarName v) => v -> t v -> TermM (Abs t v)
+    abstract :: Var v -> t v -> TermM (Abs t v)
     abstract v t = substMap f t
       where
-        f v' = if v == v' then boundTermVar (varName v) else F v'
+        f v' = if v == v' then boundVar (varName v) else F v'
 
-    getAbsName :: (SubstVar v) => Abs t v -> TermM (Maybe Name)
+    getAbsName :: Abs t v -> TermM (Maybe Name)
 
     -- Evaluation
     --------------------------------------------------------------------
-    whnf :: (SubstVar v) => Sig.Signature t -> t v -> TermM (Blocked t v)
-    nf   :: (SubstVar v) => Sig.Signature t -> t v -> TermM (t v)
+    whnf :: Sig.Signature t -> t v -> TermM (Blocked t v)
+    nf   :: Sig.Signature t -> t v -> TermM (t v)
 
     -- View / Unview
     --------------------------------------------------------------------
-    view   :: (SubstVar v) => t v -> TermM (TermView t v)
+    view   :: t v -> TermM (TermView t v)
 
-    whnfView :: (SubstVar v) => Sig.Signature t -> t v -> TermM (TermView t v)
+    whnfView :: Sig.Signature t -> t v -> TermM (TermView t v)
     whnfView sig t = (view <=< ignoreBlocking <=< whnf sig) t
 
-    unview :: (SubstVar v) => TermView t v -> TermM (t v)
+    unview :: TermView t v -> TermM (t v)
 
-    set     :: (SubstVar v) => t v
-    refl    :: (SubstVar v) => t v
+    set     :: t v
+    refl    :: t v
     typeOfJ :: Closed t
 
-getAbsName_ :: (SubstVar v, IsTerm t) => Abs t v -> TermM Name
+getAbsName_ :: (IsTerm t) => Abs t v -> TermM Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
 
 data Blocked t v
@@ -219,19 +191,10 @@ data Blocked t v
     --
     -- Note that if anything else prevents reduction we're going to get
     -- 'NotBlocked'.
-    deriving (Eq)
 
-instance Eq1 t => Eq1 (Blocked t) where
-    NotBlocked t1 ==# NotBlocked t2 =
-      t1 ==# t2
-    MetaVarHead mv1 es1 ==# MetaVarHead mv2 es2 =
-      mv1 == mv2 && and (zipWith (==#) es1 es2)
-    BlockedOn mv1 n1 es1 ==# BlockedOn mv2 n2 es2 =
-      mv1 == mv2 && n1 == n2 && and (zipWith (==#) es1 es2)
-    _ ==# _ =
-      False
+deriving instance (Eq (t v)) => Eq (Blocked t v)
 
-ignoreBlocking :: (SubstVar v, IsTerm t) => Blocked t v -> TermM (t v)
+ignoreBlocking :: (IsTerm t) => Blocked t v -> TermM (t v)
 ignoreBlocking (NotBlocked t)           = return t
 ignoreBlocking (MetaVarHead mv es)      = metaVar mv es
 ignoreBlocking (BlockedOn _ funName es) = app (Def funName) es
@@ -241,7 +204,7 @@ mapBlockingM = undefined
 
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
-eliminate :: (SubstVar v, IsTerm t) => Sig.Signature t -> t v -> [Elim t v] -> TermM (t v)
+eliminate :: (IsTerm t) => Sig.Signature t -> t v -> [Elim t v] -> TermM (t v)
 eliminate sig t elims = do
   tView <- whnfView sig t
   case (tView, elims) of
@@ -259,7 +222,7 @@ eliminate sig t elims = do
     (_, _) ->
         error $ "eliminate: Bad elimination"
 termEq'
-  :: (IsTerm t1, IsTerm t2, SubstVar v)
+  :: (IsTerm t1, IsTerm t2)
   => t1 v -> t2 v -> TermM Bool
 termEq' t1 t2 = do
   tView1 <- view t1
@@ -296,7 +259,7 @@ termEq' t1 t2 = do
     argsEq _              _              = return False
 
 definitionEq'
-  :: (IsTerm t1, IsTerm t2, SubstVar v)
+  :: (IsTerm t1, IsTerm t2)
   => Definition t1 v -> Definition t2 v -> TermM Bool
 definitionEq' def1 def2 = case (def1, def2) of
   (Constant ck1 type1, Constant ck2 type2) ->
@@ -311,7 +274,7 @@ definitionEq' def1 def2 = case (def1, def2) of
     return False
 
 telEq'
-  :: (IsTerm t1, IsTerm t2, SubstVar v)
+  :: (IsTerm t1, IsTerm t2)
   => Tel.IdTel t1 v -> Tel.IdTel t2 v -> TermM Bool
 telEq' (Tel.Empty (Tel.Id t1)) (Tel.Empty (Tel.Id t2)) =
   termEq' t1 t2
@@ -321,7 +284,7 @@ telEq' _ _ =
   return False
 
 invertibleEq'
-  :: (IsTerm t1, IsTerm t2, SubstVar v)
+  :: forall t1 t2 v. (IsTerm t1, IsTerm t2)
   => Invertible t1 v -> Invertible t2 v -> TermM Bool
 invertibleEq' clauses01 clauses02 =
   case (clauses01, clauses02) of
@@ -332,16 +295,23 @@ invertibleEq' clauses01 clauses02 =
     (_, _) ->
       return False
   where
+    clausesEq' :: Eq a => [(a, Clause t1 v)] -> [(a, Clause t2 v)] -> TermM Bool
     clausesEq' [] [] =
       return True
     clausesEq' ((x1, Clause pats1 body1) : clauses1) ((x2, Clause pats2 body2) : clauses2)
       | pats1 == pats2 && x1 == x2 =
-        (&&) <$> termEq' body1 body2 <*> clausesEq' clauses1 clauses2
+        (&&) <$> clauseBodyEq' body1 body2 <*> clausesEq' clauses1 clauses2
     clausesEq' _ _ =
       return False
 
+    clauseBodyEq' :: ClauseBody t1 v' -> ClauseBody t2 v' -> TermM Bool
+    clauseBodyEq' (CBNil t1) (CBNil t2) =
+      termEq' t1 t2
+    clauseBodyEq' (CBArg body1) (CBArg body2) = clauseBodyEq' body1 body2
+    clauseBodyEq' _ _ = return False
+
 instantiateMetaVars
-  :: forall t v. (IsVar v, IsTerm t)
+  :: forall t v. (IsTerm t)
   => Sig.Signature t -> t v -> TermM (t v)
 instantiateMetaVars sig t = do
   tView <- view t
@@ -363,7 +333,7 @@ instantiateMetaVars sig t = do
     App h els ->
       app h =<< mapM goElim els
   where
-    go :: forall v'. (IsVar v') => t v' -> TermM (t v')
+    go :: t v' -> TermM (t v')
     go t' = instantiateMetaVars sig t'
 
     goElim (Proj n field) = return $ Proj n field
@@ -372,25 +342,25 @@ instantiateMetaVars sig t = do
 -- Term utils
 -------------
 
-lam :: (SubstVar v, IsTerm t) => Abs t v -> TermM (t v)
+lam :: (IsTerm t) => Abs t v -> TermM (t v)
 lam body = unview $ Lam body
 
-pi :: (SubstVar v, IsTerm t) => t v -> Abs t v -> TermM (t v)
+pi :: (IsTerm t) => t v -> Abs t v -> TermM (t v)
 pi domain codomain = unview $ Pi domain codomain
 
-equal :: (SubstVar v, IsTerm t) => t v -> t v -> t v -> TermM (t v)
+equal :: (IsTerm t) => t v -> t v -> t v -> TermM (t v)
 equal type_ x y = unview $ Equal type_ x y
 
-app :: (SubstVar v, IsTerm t) => Head v -> [Elim t v] -> TermM (t v)
+app :: (IsTerm t) => Head v -> [Elim t v] -> TermM (t v)
 app h elims = unview $ App h elims
 
-metaVar :: (SubstVar v, IsTerm t) => MetaVar -> [Elim t v] -> TermM (t v)
+metaVar :: (IsTerm t) => MetaVar -> [Elim t v] -> TermM (t v)
 metaVar mv = unview . App (Meta mv)
 
-def :: (SubstVar v, IsTerm t) => Name -> [Elim t v] -> TermM (t v)
+def :: (IsTerm t) => Name -> [Elim t v] -> TermM (t v)
 def f = unview . App (Def (SimpleName f))
 
-con :: (SubstVar v, IsTerm t) => Name -> [t v] -> TermM (t v)
+con :: (IsTerm t) => Name -> [t v] -> TermM (t v)
 con c args = unview (Con c args)
 
 -- TermTraverse
@@ -415,3 +385,24 @@ instance Applicative (TermTraverse err) where
     TTMetaVars mvs1 <*> TTMetaVars mvs2  = TTMetaVars (mvs1 <> mvs2)
     TTMetaVars _    <*> TTFail v         = TTFail v
     TTFail v        <*> _                = TTFail v
+
+-- Subst'
+------------------------------------------------------------------------
+
+class Subst' t where
+  subst' :: (IsTerm f) => t f a -> (Var a -> TermM (f b)) -> TermM (t f b)
+
+subst'Map
+  :: forall t f (a :: Nat) (b :: Nat).
+     (IsTerm f, Subst' t)
+  => (Var a -> Var b) -> t f a -> TermM (t f b)
+subst'Map f t = subst' t (var . f)
+
+-- TODO these are obviously very unsafe, I should have something better,
+-- but I don't want them to live them in IO...
+
+substVacuous :: (Subst t) => t Zero -> t a
+substVacuous = unsafeCoerce
+
+subst'Vacuous :: (Subst' t, Subst f) => t f Zero -> t f a
+subst'Vacuous = unsafeCoerce

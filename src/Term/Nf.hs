@@ -13,10 +13,10 @@ import           Term.Definition
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import           Term.TermM
-import           Term.Subst
+import           Term.Nat
 
-class Nf t where
-  nf' :: (SubstVar v, IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)
+class Nf (t :: (Nat -> *) -> Nat -> *) where
+  nf' :: (IsTerm f) => Sig.Signature f -> t f v -> TermM (t f v)
 
 instance Nf Elim where
   nf' _   (Proj ix field) = return $ Proj ix field
@@ -34,7 +34,11 @@ instance Nf Tel.Proxy where
 
 instance Nf Clause where
   nf' sig (Clause pats body) =
-    Clause pats <$> nf sig body
+    Clause pats <$> nf' sig body
+
+instance Nf ClauseBody where
+  nf' sig (CBNil t)    = CBNil <$> nf sig t
+  nf' sig (CBArg body) = CBArg <$> nf' sig body
 
 instance Nf Definition where
   nf' sig (Constant kind t)              = Constant kind <$> nf sig t

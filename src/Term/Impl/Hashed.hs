@@ -4,8 +4,7 @@ import           Control.Monad                    (unless)
 import           Data.Dynamic                     (Dynamic, fromDynamic, toDyn)
 import           Data.Functor                     ((<$>))
 import qualified Data.HashTable.IO                as HT
-import           Data.Hashable                    (Hashable, hashWithSalt)
-import           Data.Hashable.Extras             (Hashable1, hashWithSalt1, hash1)
+import           Data.Hashable                    (Hashable, hashWithSalt, hash)
 import           Data.Maybe                       (fromMaybe)
 import           Data.Typeable                    (Typeable, cast)
 import           Prelude.Extras                   (Eq1((==#)))
@@ -18,11 +17,14 @@ import           Term.Impl.Common
 data Hashed v = H Int (TermView Hashed v)
   deriving (Typeable)
 
-instance Eq1 Hashed where
-  H i1 t1 ==# H i2 t2 = i1 == i2 && t1 ==# t2
+instance Eq (Hashed v) where
+  H i1 t1 == H i2 t2 = i1 == i2 && go t1 t2
+    where
+      go (Lam body1) (Lam body2) =
+        body1 == body2
 
-instance Hashable1 Hashed where
-  hashWithSalt1 s (H i _) = s `hashWithSalt` i
+instance Hashable (Hashed v) where
+  hashWithSalt s (H i _) = s `hashWithSalt` i
 
 instance Subst Hashed where
   var v = unview (App (Var v) [])
@@ -41,7 +43,7 @@ instance IsTerm Hashed where
     blockedT <- genericWhnf sig t'
     -- TODO don't do a full traversal for this check
     t'' <- ignoreBlocking blockedT
-    unless (t ==# t'') $ do
+    unless (t == t'') $ do
       -- TODO do not add both if we didn't get anything the with
       -- `lookupWhnfTerm'.
       insertWhnfTerm t t''
@@ -50,10 +52,10 @@ instance IsTerm Hashed where
   nf = genericNf
 
   view (H _ t) = return t
-  unview tv = return $ H (hash1 tv) tv
+  unview tv = return $ H (hash tv) tv
 
-  set = H (hash1 (Set :: Closed (TermView Hashed))) Set
-  refl = H (hash1 (Refl :: Closed (TermView Hashed))) Refl
+  set = H (hash (Set :: Closed (TermView Hashed))) Set
+  refl = H (hash (Refl :: Closed (TermView Hashed))) Refl
 
   typeOfJ = typeOfJH
 
@@ -63,21 +65,21 @@ typeOfJH = unsafePerformIO genericTypeOfJ
 
 -- Table
 
-data TableKey = forall v. (SubstVar v) => TableKey (Hashed v)
+data TableKey = forall v. TableKey (Hashed v)
 
 instance Hashable TableKey where
-  hashWithSalt s (TableKey t) = s `hashWithSalt1` t
+  hashWithSalt s (TableKey t) = s `hashWithSalt` t
 
 instance Eq TableKey where
   TableKey t1 == TableKey t2 = case (cast t2) of
-    Just t2' -> t1 ==# t2'
+    Just t2' -> t1 == t2'
     _        -> False
 
 {-# NOINLINE hashedTable #-}
 hashedTable :: HT.CuckooHashTable TableKey Dynamic
 hashedTable = unsafePerformIO HT.new
 
-lookupWhnfTerm :: (SubstVar v) => Hashed v -> IO (Maybe (Hashed v))
+lookupWhnfTerm :: Hashed v -> IO (Maybe (Hashed v))
 lookupWhnfTerm t0 = do
   mbT <- HT.lookup hashedTable (TableKey t0)
   case mbT of
@@ -86,6 +88,6 @@ lookupWhnfTerm t0 = do
       Just t2 -> return t2
       Nothing -> error "impossible.lookupWhnfTerm"
 
-insertWhnfTerm :: (SubstVar v) => Hashed v -> Hashed v -> IO ()
+insertWhnfTerm :: Hashed v -> Hashed v -> IO ()
 insertWhnfTerm t1 t2 = HT.insert hashedTable (TableKey t1) (toDyn t2)
 

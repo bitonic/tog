@@ -3,9 +3,7 @@ module Term.Impl.Common where
 
 import           Prelude                          hiding (pi, foldr)
 
-import           Bound                            (Var(B, F))
 import qualified Bound.Name                       as Bound
-import           Bound.Var                        (unvar)
 import           Control.Applicative              (pure, (<*>), (<|>))
 import           Control.Monad                    (msum, join)
 import           Control.Monad.Trans              (lift)
@@ -23,7 +21,7 @@ import qualified Text.PrettyPrint.Extended        as PP
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
 substEliminate
-  :: (SubstVar v, IsTerm t) => t v -> [Elim t v] -> TermM (t v)
+  :: (IsTerm t) => t v -> [Elim t v] -> TermM (t v)
 substEliminate t elims = do
   tView <- view t
   case (tView, elims) of
@@ -42,7 +40,7 @@ substEliminate t elims = do
         error $ "substEliminate: Bad elimination"
 
 genericSubstView
-  :: (SubstVar a, SubstVar b, IsTerm t) => TermView t a -> (a -> TermM (t b)) -> TermM (t b)
+  :: (IsTerm t) => TermView t a -> (Var a -> TermM (t b)) -> TermM (t b)
 genericSubstView tView f = do
   case tView of
     Lam body ->
@@ -65,20 +63,18 @@ genericSubstView tView f = do
         Meta mv -> app (Meta mv) els'
         J       -> app J els'
   where
-    lift' :: (IsTerm t, SubstVar a, SubstVar b)
-          => (a -> TermM (t b))
-          -> (TermVar a -> TermM (Abs t b))
+    lift' :: (IsTerm t) => (Var a -> TermM (t b)) -> (Var (Suc a) -> TermM (Abs t b))
     lift' _ (B v) = var $ B v
     lift' g (F v) = weaken =<< g v
 
 genericSubst
-  :: (SubstVar a, SubstVar b, IsTerm t) => t a -> (a -> TermM (t b)) -> TermM (t b)
+  :: (IsTerm t) => t a -> (Var a -> TermM (t b)) -> TermM (t b)
 genericSubst t f = do
   tView <- view t
   genericSubstView tView f
 
 genericWhnf
-  :: (SubstVar v, IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
+  :: (IsTerm t) => Sig.Signature t -> t v -> TermM (Blocked t v)
 genericWhnf sig t = do
   tView <- view t
   case tView of
@@ -101,7 +97,7 @@ genericWhnf sig t = do
       return $ NotBlocked t
 
 whnfFun
-  :: (SubstVar v, IsTerm t)
+  :: (IsTerm t)
   => Sig.Signature t
   -> DefName -> [Elim t v] -> [Closed (Clause t)]
   -> TermM (Maybe (Blocked t v))
@@ -115,11 +111,11 @@ whnfFun sig funName es (Clause patterns body : clauses) = runMaybeT $ do
     TTFail () ->
       MaybeT $ whnfFun sig funName es clauses
     TTOK (args, leftoverEs) -> lift $ do
-      body' <- instantiateClauseBody body args
+      body' <- instantiateClauseBody (subst'Vacuous body) args
       whnf sig =<< eliminate sig body' leftoverEs
 
 matchClause
-  :: (SubstVar v, IsTerm t)
+  :: (IsTerm t)
   => Sig.Signature t
   -> [Elim t v] -> [Pattern]
   -> TermM (TermTraverse () ([t v], [Elim t v]))
@@ -148,16 +144,17 @@ matchClause _ _ _ =
 
 genericGetAbsName
   :: forall t v0.
-     (SubstVar v0, IsTerm t)
+     (IsTerm t)
   => Abs t v0 -> TermM (Maybe Name)
 genericGetAbsName = go $ \v -> case v of
-  B v' -> Just $ Bound.name v'
+  B v' -> Just $ namedName v'
   F _  -> Nothing
   where
+    lift' :: (Var v -> Maybe Name) -> Var (Suc v) -> Maybe Name
     lift' _ (B _) = Nothing
     lift' f (F v) = f v
 
-    go :: (SubstVar v) => (v -> Maybe Name) -> t v -> TermM (Maybe Name)
+    go :: (Var v -> Maybe Name) -> t v -> TermM (Maybe Name)
     go f t = do
       tView <- view t
       case tView of
@@ -175,15 +172,15 @@ genericGetAbsName = go $ \v -> case v of
             mapM (foldElim (go f) (\_ _ -> return Nothing)) els
 
 genericStrengthen
-  :: (SubstVar v, IsTerm t) => Abs t v -> TermM (Maybe (t v))
+  :: (IsTerm t) => Abs t v -> TermM (Maybe (t v))
 genericStrengthen = runMaybeT . go (unvar (const Nothing) Just)
   where
-    lift' :: (v -> Maybe v0) -> (TermVar v -> Maybe (TermVar v0))
+    lift' :: (Var v -> Maybe (Var v0)) -> (Var (Suc v) -> Maybe (Var (Suc v0)))
     lift' _ (B _) = Nothing
     lift' f (F v) = F <$> f v
 
-    go :: (SubstVar v, SubstVar v0, IsTerm t)
-       => (v -> Maybe v0) -> t v -> MaybeT TermM (t v0)
+    go :: (IsTerm t)
+       => (Var v -> Maybe (Var v0)) -> t v -> MaybeT TermM (t v0)
     go f t = do
       tView <- lift $ view t
       case tView of
@@ -205,11 +202,13 @@ genericStrengthen = runMaybeT . go (unvar (const Nothing) Just)
         Set -> do
           return set
         App h els -> do
-          h' <- MaybeT $ return $ traverse f h
+          h' <- MaybeT $ return $ case h of
+            Var v -> Var <$> f v
+            _     -> Nothing
           els' <- mapM (mapElimM (go f)) els
           lift $ app h' els'
 
-genericNf :: forall t v. (SubstVar v, IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
+genericNf :: forall t v. (IsTerm t) => Sig.Signature t -> t v -> TermM (t v)
 genericNf sig t = do
   tView <- whnfView sig t
   case tView of
@@ -236,36 +235,36 @@ genericNf sig t = do
 -- (eq : _==_ A x y) ->
 -- P x y eq
 genericTypeOfJ :: forall t. (IsTerm t) => TermM (Closed (Type t))
-genericTypeOfJ =
-  substMap close =<<
-    ("A", return set) -->
-    ("x", var "A") -->
-    ("y", var "A") -->
-    ("P", ("x", var "A") --> ("y", var "A") -->
-          ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
-          return set
-    ) -->
-    ("p", ("x", var "A") --> (app (Var "P") . map Apply =<< sequence [var "x", var "x", return refl])) -->
-    ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
-    (app (Var "P") . map Apply =<< sequence [var "x", var "y", return refl])
-  where
-    close v = error $ "genericTypeOfJ: Free variable " ++ PP.render v
+genericTypeOfJ = error "TODO genericTypeOfJ"
+  -- substMap close =<<
+  --   ("A", return set) -->
+  --   ("x", var "A") -->
+  --   ("y", var "A") -->
+  --   ("P", ("x", var "A") --> ("y", var "A") -->
+  --         ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
+  --         return set
+  --   ) -->
+  --   ("p", ("x", var "A") --> (app (Var "P") . map Apply =<< sequence [var "x", var "x", return refl])) -->
+  --   ("eq", join (equal <$> var "A" <*> var "x" <*> var "y")) -->
+  --   (app (Var "P") . map Apply =<< sequence [var "x", var "y", return refl])
+  -- where
+  --   close v = error $ "genericTypeOfJ: Free variable " ++ PP.render v
 
-    infixr 9 -->
-    (-->) :: (Name, TermM (t Name)) -> TermM (t Name) -> TermM (t Name)
-    (x, type_) --> t = do
-      type' <- type_
-      t' <- t
-      pi type' =<< abstract x t'
+  --   infixr 9 -->
+  --   (-->) :: (Name, TermM (t Name)) -> TermM (t Name) -> TermM (t Name)
+  --   (x, type_) --> t = do
+  --     type' <- type_
+  --     t' <- t
+  --     pi type' =<< abstract x t'
 
 genericTermEq
-  :: (IsTerm t, SubstVar v)
+  :: (IsTerm t)
   => t v -> t v -> TermM Bool
 genericTermEq t1 t2 = do
   join $ genericTermViewEq <$> view t1 <*> view t2
 
 genericTermViewEq
-  :: (IsTerm t, SubstVar v)
+  :: (IsTerm t)
   => TermView t v -> TermView t v -> TermM Bool
 genericTermViewEq tView1 tView2 = do
   case (tView1, tView2) of
