@@ -9,17 +9,11 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 -- Base terms
 ------------------------------------------------------------------------
 
-newtype Simple v = S {unS :: TermView Simple v}
-    deriving (Typeable)
-
-
-instance Subst Simple where
-  var v = unview (App (Var v) [])
-
-  subst = genericSubst
+newtype Simple = S {unS :: TermView Simple}
+    deriving (Eq, Show, Typeable)
 
 instance IsTerm Simple where
-  termEq = genericTermEq
+  -- termEq = genericTermEq
   strengthen = genericStrengthen
   getAbsName = genericGetAbsName
 
@@ -32,6 +26,9 @@ instance IsTerm Simple where
   set = S Set
   refl = S Refl
   typeOfJ = typeOfJS
+
+  substs = genericSubsts
+  weaken = genericWeaken
 
 {-# NOINLINE typeOfJS #-}
 typeOfJS :: Closed Simple

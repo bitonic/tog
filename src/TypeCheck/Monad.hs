@@ -12,6 +12,7 @@ module TypeCheck.Monad
     -- * Operations
     -- ** Errors
   , typeError
+  , assert
     -- ** Source location
   , atSrcLoc
     -- ** 'TermM'
@@ -33,6 +34,12 @@ module TypeCheck.Monad
   , instantiateMetaVar
   , getMetaVarType
   , getMetaVarBody
+    -- * Debugging
+  , enableDebug
+  , disableDebug
+  , debugBracket
+  , debugBracket_
+  , debug
     -- * Problem handling
   , ProblemId
   , ProblemIdInt
@@ -49,20 +56,17 @@ module TypeCheck.Monad
   , bindStuckTC
   ) where
 
-import           Control.Applicative              (Applicative(pure, (<*>)))
-import           Control.Monad                    (ap, void, msum, when, forM)
-import           Data.Functor                     ((<$>), (<$))
 import qualified Data.HashMap.Strict              as HMS
 import qualified Data.HashSet                     as HS
-import           Data.Typeable                    (Typeable)
 import           Unsafe.Coerce                    (unsafeCoerce)
 
-import qualified Text.PrettyPrint.Extended        as PP
-import           Text.PrettyPrint.Extended        ((<+>), ($$))
+import           Prelude.Extended
 import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, DefName(SimpleName))
+import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import           Term
+import           Text.PrettyPrint.Extended        ((<+>), ($$))
+import qualified Text.PrettyPrint.Extended        as PP
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -111,11 +115,17 @@ runTC int ts (TC m) = do
 data TCEnv t p = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
     , teInterpretProblem :: !(InterpretProblem t p)
+    , teDebug            :: !Bool
+    , teDebugDepth       :: !Int
     }
 
 initEnv :: InterpretProblem t p -> TCEnv t p
 initEnv int =
-  TCEnv{teCurrentSrcLoc = noSrcLoc, teInterpretProblem = int}
+  TCEnv{ teCurrentSrcLoc    = noSrcLoc
+       , teInterpretProblem = int
+       , teDebug            = False
+       , teDebugDepth       = 0
+       }
 
 data TCState t p = TCState
     { tsSignature        :: !(Sig.Signature t)
@@ -125,7 +135,8 @@ data TCState t p = TCState
     }
 
 -- | An empty state.
-initTCState :: TCState t p
+initTCState
+  :: TCState t p
 initTCState = TCState
   { tsSignature        = Sig.empty
   , tsUnsolvedProblems = HMS.empty
@@ -169,6 +180,13 @@ tcReport ts = TCReport
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t v b
 typeError err = TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
+
+assert :: (PP.Doc -> String) -> TC t v a -> TC t v a
+assert msg (TC m) = TC $ \(te, ts) -> do
+  res <- m (te, ts)
+  case res of
+    Error (DocErr _ err) -> error $ msg err
+    OK ts' x             -> return $ OK ts' x
 
 -- SrcLoc
 ------------------------------------------------------------------------
@@ -232,13 +250,13 @@ addConstant x k a = addDefinition x (Constant k a)
 
 addDataCon
     :: (IsTerm t)
-    => Name -> Name -> Tel.ClosedIdTel (Type t) -> TC t p ()
-addDataCon c d tel = addDefinition c (DataCon d tel)
+    => Name -> Name -> Tel.Tel (Type t) -> Type t -> TC t p ()
+addDataCon c d tel t = addDefinition c (DataCon d tel t)
 
 addProjection
     :: (IsTerm t)
-    => Name -> Field -> Name -> Tel.ClosedIdTel (Type t) -> TC t p ()
-addProjection f n r tel = addDefinition f (Projection n r tel)
+    => Name -> Field -> Name -> Tel.Tel (Type t) -> Type t -> TC t p ()
+addProjection f n r tel t = addDefinition f (Projection n r tel t)
 
 addClauses
     :: (IsTerm t) => DefName -> Closed (Invertible t) -> TC t p ()
@@ -274,6 +292,33 @@ getMetaVarBody
 getMetaVarBody mv = do
   sig <- tsSignature <$> get
   return $ Sig.getMetaVarBody sig mv
+
+-- Debugging
+------------------------------------------------------------------------
+
+enableDebug :: TC t p a -> TC t p a
+enableDebug (TC m) = TC $ \(te, ts) -> m (te{teDebug = True}, ts)
+
+disableDebug :: TC t p a -> TC t p a
+disableDebug (TC m) = TC $ \(te, ts) -> m (te{teDebug = False}, ts)
+
+debugBracket :: TC t p PP.Doc -> TC t p a -> TC t p a
+debugBracket (TC doc) m = TC $ \(te, ts) -> do
+  mbDoc <- doc (te, ts)
+  case mbDoc of
+    OK ts' doc' -> do
+      unTC (debug doc' >> local te{teDebugDepth = teDebugDepth te + 1} m) (te, ts')
+    Error (DocErr _ err) -> do
+      error $ PP.render $ "debugBracket: the doc action got an error:" $$ err
+
+debugBracket_ :: PP.Doc -> TC t p a -> TC t p a
+debugBracket_ doc = debugBracket (return doc)
+
+debug :: PP.Doc -> TC t p ()
+debug doc = TC $ \(te, ts) -> do
+  when (teDebug te) $
+    putStrLn $ PP.renderStyle PP.style{PP.lineLength = 500} $ PP.nest (teDebugDepth te * 2) doc
+  return $ OK ts ()
 
 -- Problem handling
 ------------------------------------------------------------------------
@@ -469,3 +514,6 @@ get = modify $ \ts -> (ts, ts)
 
 ask :: TC t p (TCEnv t p)
 ask = TC $ \(te, ts) -> return $ OK ts te
+
+local :: TCEnv t p -> TC t p a -> TC t p a
+local te (TC m) = TC $ \(_, ts) -> m (te, ts)

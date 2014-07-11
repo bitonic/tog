@@ -18,18 +18,16 @@ module Term.Signature
     ) where
 
 import qualified Data.HashMap.Strict              as HMS
-import           Data.Void                        (Void)
 
 import qualified Syntax.Internal                  as A
-import           Term.Definition
 import           Term.MetaVar
-import           Term.Nat
 import           Term.Synonyms
+import           Term.Class
 import           Text.PrettyPrint.Extended        (render)
 
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
-data Signature (t :: Nat -> *) = Signature
+data Signature t = Signature
     { sDefinitions    :: HMS.HashMap A.DefName (Closed (Definition t))
     , sMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
     , sMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
@@ -60,11 +58,11 @@ addDefinition_ sig name def' = addDefinition sig (A.SimpleName name) def'
 
 addDefinition :: Signature t -> A.DefName -> Closed (Definition t) -> Signature t
 addDefinition sig defName def' = case (defName, def') of
-    (A.SimpleName name, Projection projIx tyCon _) -> addProjection name tyCon projIx
-    (A.SimpleName name, DataCon tyCon _)           -> addDataCon name tyCon
-    (_,                 Projection _ _ _)          -> unexpectedGenerated
-    (_,                 DataCon _ _)               -> unexpectedGenerated
-    _                                              -> sig'
+    (A.SimpleName name, Projection projIx tyCon _ _) -> addProjection name tyCon projIx
+    (A.SimpleName name, DataCon tyCon _ _)           -> addDataCon name tyCon
+    (_,                 Projection{})                -> unexpectedGenerated
+    (_,                 DataCon{})                   -> unexpectedGenerated
+    _                                                -> sig'
   where
     unexpectedGenerated = error $
       "Unexpected generated name " ++ show defName ++ " for definition"
@@ -94,10 +92,10 @@ addDefinition sig defName def' = case (defName, def') of
 
 addDefinitionSynthetic
   :: Signature t -> A.Name -> Closed (Definition t) -> (A.DefName, Signature t)
-addDefinitionSynthetic sig n def =
+addDefinitionSynthetic sig n def' =
   let i  = sGeneratedCount sig
       dn = A.SyntheticName n i
-  in (dn, addDefinition sig{sGeneratedCount = i + 1} dn def)
+  in (dn, addDefinition sig{sGeneratedCount = i + 1} dn def')
 
 definedNames :: Signature t -> [A.DefName]
 definedNames = HMS.keys . sDefinitions

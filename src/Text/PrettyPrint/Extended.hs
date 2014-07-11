@@ -9,8 +9,6 @@ module Text.PrettyPrint.Extended
 
 import           Text.PrettyPrint                      hiding (render)
 import qualified Text.PrettyPrint                      as PP
-import           Data.Void                             (Void, absurd)
-import           Bound
 
 class Pretty a where
   {-# MINIMAL pretty | prettyPrec #-}
@@ -22,12 +20,6 @@ class Pretty a where
   prettyPrec _ = pretty
 
 instance Pretty Int where
-  pretty = PP.text . show
-
-instance Pretty Void where
-  pretty = absurd
-
-instance (Show a, Show b) => Pretty (Var a b) where
   pretty = PP.text . show
 
 defaultShow :: Pretty a => Int -> a -> ShowS

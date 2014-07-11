@@ -37,6 +37,8 @@ parseTypeCheckConf = TypeCheckConf
       ( long "problemsReport" <>
         help "Print a detailed report of the unsolved problems."
       )
+  <*> switch
+      (long "debug" <> short 'd' <> help "Print debug output")
 
 parseMain :: Parser (IO ())
 parseMain =

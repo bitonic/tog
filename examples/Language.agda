@@ -114,6 +114,10 @@ Ty G = Env G -> U
 Env empty      = Unit
 Env (snoc G s) = Sigma (Env G) (\ g -> El (s g))
 
+test : (G : Ctxt) -> (s : Ty G) -> Unit ->
+       (Sigma (Env G) (\ g -> El (s g)) -> U) == (Env (snoc G s) -> U)
+test _ _ _ = refl
+
 -- Variables (de Bruijn indices).
 
 Var : (G : Ctxt) -> Ty G -> Set
@@ -221,28 +225,28 @@ app : {G : _} {t : _} {u : (g : Env G) -> El (t g) -> U} ->
       Term G (\ g -> u g (eval t2 g))
 app t1 t2 = app'' t1 t2 refl
 
--- Example.
+-- -- Example.
 
-raw-category : Type empty (\ _ -> raw-categoryU)
-raw-category =
-     -- Objects.
-   sigma' set'
-     -- Morphisms.
-  (sigma' (pi' (el' (var zero)) (pi' (el' (var (suc zero))) set'))
-     -- Identity.
-  (sigma' (pi' (el' (var (suc zero)))
-               (el' (app (app (var (suc zero)) (var zero)) (var zero))))
-     -- Composition.
-     (pi' (el' (var (suc (suc zero))))                                 -- X.
-     (pi' (el' (var (suc (suc (suc zero)))))                           -- Y.
-     (pi' (el' (var (suc (suc (suc (suc zero))))))                     -- Z.
-     (pi' (el' (app (app (var (suc (suc (suc (suc zero)))))
-                         (var (suc (suc zero))))
-                    (var (suc zero))))                                 -- Hom X Y.
-     (pi' (el' (app (app (var (suc (suc (suc (suc (suc zero))))))
-                         (var (suc (suc zero))))
-                    (var (suc zero))))                                 -- Hom Y Z.
-          (el' (app (app (var (suc (suc (suc (suc (suc (suc zero)))))))
-                         (var (suc (suc (suc (suc zero))))))
-                    (var (suc (suc zero))))))                          -- Hom X Z.
-  ))))))
+-- raw-category : Type empty (\ _ -> raw-categoryU)
+-- raw-category =
+--      -- Objects.
+--    sigma' set'
+--      -- Morphisms.
+--   (sigma' (pi' (el' (var zero)) (pi' (el' (var (suc zero))) set'))
+--      -- Identity.
+--   (sigma' (pi' (el' (var (suc zero)))
+--                (el' (app (app (var (suc zero)) (var zero)) (var zero))))
+--      -- Composition.
+--      (pi' (el' (var (suc (suc zero))))                                 -- X.
+--      (pi' (el' (var (suc (suc (suc zero)))))                           -- Y.
+--      (pi' (el' (var (suc (suc (suc (suc zero))))))                     -- Z.
+--      (pi' (el' (app (app (var (suc (suc (suc (suc zero)))))
+--                          (var (suc (suc zero))))
+--                     (var (suc zero))))                                 -- Hom X Y.
+--      (pi' (el' (app (app (var (suc (suc (suc (suc (suc zero))))))
+--                          (var (suc (suc zero))))
+--                     (var (suc zero))))                                 -- Hom Y Z.
+--           (el' (app (app (var (suc (suc (suc (suc (suc (suc zero)))))))
+--                          (var (suc (suc (suc (suc zero))))))
+--                     (var (suc (suc zero))))))                          -- Hom X Z.
+--   ))))))

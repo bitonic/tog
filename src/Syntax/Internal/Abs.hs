@@ -75,9 +75,10 @@ data Expr = Lam Name Expr
           | Con Name [Expr]
 
 data Head = Var Name
-          | TermVar Int Name
           | Def DefName
           | J SrcLoc
+          | TermVar Int Name
+          | TermMeta Int
 
 data Elim = Apply Expr
           | Proj Name
@@ -132,6 +133,7 @@ instance HasSrcLoc Head where
     TermVar _ x -> srcLoc x
     Def x       -> srcLoc x
     J loc       -> loc
+    TermMeta _  -> noSrcLoc
 
 instance HasSrcLoc Pattern where
   srcLoc p = case p of
@@ -254,6 +256,7 @@ instance Pretty Head where
     Def f       -> pretty f
     TermVar i x -> pretty i <> "#" <> pretty x
     J _         -> text "J"
+    TermMeta mv -> "_" <> pretty mv
 
 instance Pretty DefName where
   pretty dn = case dn of

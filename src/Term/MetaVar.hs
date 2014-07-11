@@ -1,6 +1,6 @@
 module Term.MetaVar where
 
-import           Data.Hashable                    (Hashable)
+import           Prelude.Extended
 import qualified Text.PrettyPrint.Extended        as PP
 
 -- 'MetaVar'iables

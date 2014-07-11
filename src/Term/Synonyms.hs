@@ -1,11 +1,10 @@
 module Term.Synonyms where
 
-import           Term.Nat
-
 -- Useful type synonyms
 ------------------------------------------------------------------------
 
-type Type (t :: Nat -> *) = t
-type Term (t :: Nat -> *) = t
+type Type t = t
+type Term t = t
+type Abs  t = t
 
-type Closed (t :: Nat -> *) = t Zero
+type Closed t = t

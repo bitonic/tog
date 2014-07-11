@@ -1,34 +1,29 @@
 module Term.Telescope
     ( -- * 'Tel'
       Tel(..)
-    , ClosedTel
     , tel
     , unTel
-    , idTel
-    , proxyTel
     , (++)
-      -- ** 'Tel' types
-    , Proxy(..)
-    , Id(..)
-    , Prod2(..)
-    , ProxyTel
-    , ClosedProxyTel
-    , IdTel
-    , ClosedIdTel
+    , subst
+    , substs
+    , instantiate
+    , weaken
+    , weaken_
+    , strengthen
+    , strengthen_
     ) where
 
+import qualified Prelude
 import           Prelude                          hiding (pi, length, lookup, (++))
 
-import           Control.Applicative              ((<*>))
-import           Data.Functor                     ((<$>))
-import           Data.Typeable                    (Typeable)
+import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 
+import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import qualified Term.Context                     as Ctx
-import           Term.Subst
-import           Term.Var
 import           Term.TermM
-import           Term.Nat
+import qualified Term.Class                       as Term
+import           Term.Synonyms
 
 -- Tel
 ------------------------------------------------------------------------
@@ -36,31 +31,14 @@ import           Term.Nat
 -- | A 'Tel' is a list of types, each one ranging over the rest of the
 -- list, and with something of at the end -- the inverse of a 'Ctx.Ctx',
 -- plus the end element.
-data Tel t f v
-    = Empty (t f v)
-    | Cons (Name, f v) (Tel t f (Suc v))
+data Tel t
+    = Empty
+    | Cons (Name, t) (Tel (Abs t))
+    deriving (Eq, Ord, Typeable)
 
-deriving instance Typeable Tel
-
-type ClosedTel t f = Tel t f Zero
-
--- Useful types
----------------
-
--- | A type with no data, useful to create 'Tel's with only types in
--- them.
-data Proxy (f :: Nat -> *) (v :: Nat) = Proxy
-
--- | An identity type, useful to have terms at the end of a 'Tel'.
-newtype Id (f :: Nat -> *) v = Id {unId :: f v}
-
-data Prod2 (f :: Nat -> *) v = Prod2 (f v) (f v)
-
-type IdTel    = Tel Id
-type ProxyTel = Tel Proxy
-
-type ClosedIdTel t    = IdTel t Zero
-type ClosedProxyTel t = ProxyTel t Zero
+length :: Tel t -> Int
+length Empty         = 0
+length (Cons _ tel') = 1 + length tel'
 
 -- Instances
 ----------------------
@@ -68,29 +46,72 @@ type ClosedProxyTel t = ProxyTel t Zero
 -- To/from Ctx
 --------------
 
-tel :: Ctx.Ctx v0 f v -> t f v -> Tel t f v0
-tel ctx0 t = go ctx0 (Empty t)
+tel :: Ctx.Ctx t -> Tel t
+tel ctx0 = go ctx0 Empty
   where
-    go :: Ctx.Ctx v0 f v -> Tel t f v -> Tel t f v0
     go Ctx.Empty            tel' = tel'
     go (Ctx.Snoc ctx type_) tel' = go ctx (Cons type_ tel')
 
-idTel :: Ctx.Ctx v0 f v -> f v -> IdTel f v0
-idTel ctx t = tel ctx (Id t)
-
-proxyTel :: Ctx.Ctx v0 f v -> ProxyTel f v0
-proxyTel ctx = tel ctx Proxy
-
-unTel :: forall t f v0 a.
-         Tel t f v0
-      -> (forall v. Ctx.Ctx v0 f v -> t f v -> a)
-      -> a
-unTel tel0 f = go tel0 Ctx.Empty
+unTel :: Tel t -> Ctx.Ctx t
+unTel tel0 = go tel0 Ctx.Empty
   where
-    go :: Tel t f v -> Ctx.Ctx v0 f v -> a
-    go (Empty t)         ctx = f ctx t
+    go Empty             ctx = ctx
     go (Cons type_ tel') ctx = go tel' (Ctx.Snoc ctx type_)
 
-(++) :: Ctx.Ctx v0 f v -> Tel t f v -> Tel t f v0
+(++) :: Ctx.Ctx t -> Tel t -> Tel t
 Ctx.Empty            ++ tel' = tel'
 (Ctx.Snoc ctx type_) ++ tel' = ctx ++ (Cons type_ tel')
+
+-- Methods
+
+subst :: (Term.IsTerm t) => Int -> t -> Tel t -> TermM (Tel t)
+subst _ _ Empty =
+  return Empty
+subst ix t (Cons (n, type_) tel') = do
+  type' <- Term.subst ix t type_
+  t' <- Term.weaken_ 1 t
+  tel'' <- subst (ix + 1) t' tel'
+  return $ Cons (n, type') tel''
+
+-- | Instantiates an 'Tel' repeatedly until we get to the bottom of
+-- it.  Fails If the length of the 'Tel' and the provided list don't
+-- match.
+substs :: (Term.IsTerm t) => Tel t -> t -> [t] -> TermM t
+substs tel' t args =
+  if length tel' == Prelude.length args
+  then Term.substs (zip [0..] $ reverse args) t
+  else error "Term.Telescope.substs"
+
+-- | Instantiates a bound variable.
+instantiate :: (Term.IsTerm t) => Tel t -> t -> TermM (Tel t)
+instantiate tel0 arg = go 0 tel0
+  where
+    go _ Empty =
+      return Empty
+    go ix (Cons (n, type_) tel') = do
+      arg' <- Term.weaken_ (ix + 1) arg
+      type' <- Term.subst ix arg' type_
+      Just type'' <- Term.strengthen ix 1 type'
+      Cons (n, type'') <$> go (ix + 1) tel'
+
+weaken :: (Term.IsTerm t) => Int -> Int -> Tel t -> TermM (Tel t)
+weaken _ _ Empty =
+  return Empty
+weaken from by (Cons (n, type_) tel') = do
+  type' <- Term.weaken from by type_
+  tel'' <- weaken (1 + from) by tel'
+  return $ Cons (n, type') tel''
+
+weaken_ :: (Term.IsTerm t) => Int -> Tel t -> TermM (Tel t)
+weaken_ = weaken 0
+
+strengthen :: (Term.IsTerm t) => Int -> Int -> Tel t -> TermM (Maybe (Tel t))
+strengthen _ _ Empty = runMaybeT $ do
+  return Empty
+strengthen from by (Cons (n, type_) tel') = runMaybeT $ do
+  type' <- MaybeT $ Term.strengthen from by type_
+  tel'' <- MaybeT $ strengthen (from + 1) by tel'
+  return (Cons (n, type') tel'')
+
+strengthen_ :: (Term.IsTerm t) => Int -> Tel t -> TermM (Maybe (Tel t))
+strengthen_ = strengthen 0

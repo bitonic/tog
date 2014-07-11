@@ -11,37 +11,37 @@ import qualified Data.Set                         as Set
 
 import qualified Term.Signature                   as Sig
 import           Term.Class
-import           Term.Var
 import           Term.TermM
-import           Term.Nat
 
 -- Free variables
 ------------------------------------------------------------------------
 
-data FreeVars v = FreeVars
-  { fvRigid    :: Set.Set (Var v)
-  , fvFlexible :: Set.Set (Var v)
+data FreeVars = FreeVars
+  { fvRigid    :: Set.Set Var
+  , fvFlexible :: Set.Set Var
   }
 
-fvAll :: FreeVars v -> Set.Set (Var v)
+fvAll :: FreeVars -> Set.Set Var
 fvAll fvs = fvRigid fvs <> fvFlexible fvs
 
-instance Monoid (FreeVars v) where
+instance Monoid FreeVars where
   mempty = FreeVars Set.empty Set.empty
 
   FreeVars rigid1 flex1 `mappend` FreeVars rigid2 flex2 =
     FreeVars (rigid1 `mappend` flex1) (rigid2 `mappend` flex2)
 
 freeVars
-  :: forall t v0. (IsTerm t)
-  => Sig.Signature t -> t v0 -> TermM (FreeVars v0)
+  :: forall t. (IsTerm t)
+  => Sig.Signature t -> t -> TermM FreeVars
 freeVars sig = go Just
   where
-    lift :: (Var v -> Maybe (Var v0)) -> (Var (Suc v) -> Maybe (Var v0))
-    lift _ (B _) = Nothing
-    lift f (F v) = f v
+    lift :: (Var -> Maybe Var) -> (Var -> Maybe Var)
+    lift f (V (Named n ix)) =
+      if ix > 0
+      then f $ V (Named n (ix - 1))
+      else Nothing
 
-    go :: (Var v -> Maybe (Var v0)) -> t v -> TermM (FreeVars v0)
+    go :: (Var -> Maybe Var) -> t -> TermM FreeVars
     go strengthen' t0 = do
       tView <- whnfView sig t0
       case tView of
