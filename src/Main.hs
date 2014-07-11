@@ -39,6 +39,10 @@ parseTypeCheckConf = TypeCheckConf
       )
   <*> switch
       (long "debug" <> short 'd' <> help "Print debug output")
+  <*> switch
+      ( long "checkMetaVarConsistency" <>
+        help "Check consistency of instantiated term of a metavar and its type."
+      )
 
 parseMain :: Parser (IO ())
 parseMain =

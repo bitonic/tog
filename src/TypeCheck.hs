@@ -34,26 +34,31 @@ import           TypeCheck.Monad
 ------------------------------------------------------------------------
 
 data TypeCheckConf = TypeCheckConf
-  { tccTermType             :: String
-  , tccQuiet                :: Bool
-  , tccNoMetaVarsSummary    :: Bool
-  , tccMetaVarsReport       :: Bool
-  , tccMetaVarsOnlyUnsolved :: Bool
-  , tccNoProblemsSummary    :: Bool
-  , tccProblemsReport       :: Bool
-  , tccDebug                :: Bool
+  { tccTermType                :: String
+  , tccQuiet                   :: Bool
+  , tccNoMetaVarsSummary       :: Bool
+  , tccMetaVarsReport          :: Bool
+  , tccMetaVarsOnlyUnsolved    :: Bool
+  , tccNoProblemsSummary       :: Bool
+  , tccProblemsReport          :: Bool
+  , tccDebug                   :: Bool
+  , tccCheckMetaVarConsistency :: Bool
   }
 
 defaultTypeCheckConf :: TypeCheckConf
-defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False False
+defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False False False
+
+data TypeCheckState = TypeCheckState
+  { tcsCheckMetaVarConsistency :: Bool
+  }
 
 -- Useful types
 ------------------------------------------------------------------------
 
-type TC'      t a = TC      t (TypeCheckProblem t) a
-type StuckTC' t a = StuckTC t (TypeCheckProblem t) a
+type TC'      t a = TC      t (TypeCheckProblem t) TypeCheckState a
+type StuckTC' t a = StuckTC t (TypeCheckProblem t) TypeCheckState a
 
-type TCState'  t = TCState t (TypeCheckProblem t)
+type TCState'  t = TCState t (TypeCheckProblem t) TypeCheckState
 type TCReport' t = TCReport t (TypeCheckProblem t)
 
 -- Type checking
@@ -72,7 +77,7 @@ checkProgram
 checkProgram conf decls ret =
   case tccTermType conf of
     "S"  -> checkProgram' (Proxy :: Proxy Simple)      conf decls ret
-    -- "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
+    "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
     -- "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  conf decls ret
     -- "H"  -> checkProgram' (Proxy :: Proxy Hashed)      conf decls ret
     type_ -> return $ Left $ "Invalid term type" <+> PP.text type_
@@ -87,7 +92,8 @@ checkProgram' _ conf decls0 ret = do
       drawLine
       putStrLn "-- Checking declarations"
       drawLine
-    errOrTs <- runEitherT (goDecls initTCState decls0)
+    let s = TypeCheckState $ tccCheckMetaVarConsistency conf
+    errOrTs <- runEitherT (goDecls (initTCState s) decls0)
     case errOrTs of
       Left err -> return $ Left err
       Right t  -> Right <$> ret t
@@ -144,12 +150,13 @@ checkProgram' _ conf decls0 ret = do
       putStrLn "------------------------------------------------------------------------"
 
 checkDecl :: (IsTerm t) => A.Decl -> TC' t ()
-checkDecl decl = atSrcLoc decl $ do
-  case decl of
-    A.TypeSig sig      -> checkTypeSig sig
-    A.DataDef d xs cs  -> checkData d xs cs
-    A.RecDef d xs c fs -> checkRec d xs c fs
-    A.FunDef f clauses -> checkFunDef (A.SimpleName f) clauses
+checkDecl decl = do
+  debugBracket_ ("*** checkDecl" $$ PP.pretty decl) $ atSrcLoc decl $ do
+    case decl of
+      A.TypeSig sig      -> checkTypeSig sig
+      A.DataDef d xs cs  -> checkData d xs cs
+      A.RecDef d xs c fs -> checkRec d xs c fs
+      A.FunDef f clauses -> checkFunDef (A.SimpleName f) clauses
 
 checkTypeSig :: (IsTerm t) => A.TypeSig -> TC' t ()
 checkTypeSig (A.Sig name absType) = do
@@ -435,28 +442,6 @@ check ctx synT type_ = atSrcLoc synT $ do
      _ -> do
        metaVarIfStuck ctx type_ $
          infer ctx synT `bindStuckTC` CheckEqualInfer ctx type_
-       -- -- TODO Use combinators below, remove duplication with
-       -- -- `metaVarIfStuck'.
-       -- case stuck of
-       --   NotStuck (t, type') -> do
-       --     stuck' <- equalType type_ type'
-       --     case stuck' of
-       --       NotStuck () -> do
-       --         return t
-       --       StuckOn pid -> do
-       --         mv <- addMetaVarInCtx type_
-       --         void $ bindProblemCheckEqual pid type' mv t
-       --         return mv
-       --   StuckOn pid -> do
-       --     mv <- addMetaVarInCtx type_
-       --     void $ bindProblem pid (WaitForInfer synT type_) $ \(t, type') -> do
-       --       stuck' <- equalType type_ type'
-       --       case stuck' of
-       --         NotStuck () ->
-       --           checkEqual type_ mv t
-       --         StuckOn pid' ->
-       --           StuckOn <$> bindProblemCheckEqual pid' type_ mv t
-       --     return mv
 
 checkSpine
   :: (IsTerm t)
@@ -779,13 +764,14 @@ metaAssign
   => Ctx t -> Type t -> MetaVar -> [Elim (Term t)] -> Term t
   -> StuckTC' t ()
 metaAssign ctx0 type0 mv elims0 t0 = do
+  -- Try to eta-expand the metavariable first.
+  mvType <- getMetaVarType mv
   let msg = do
-        mvTDoc <- prettyTermTC =<< metaVarTC mv elims0
+        mvTypeDoc <- prettyTermTC mvType
+        elimsDoc <- prettyElimsTC elims0
         tDoc <- prettyTermTC t0
-        return $ "*** metaAssign" $$ mvTDoc $$ tDoc
+        return $ "*** metaAssign" <+> PP.pretty mv $$ mvTypeDoc $$ elimsDoc $$ tDoc
   debugBracket msg $ do
-    -- Try to eta-expand the metavariable first.
-    mvType <- getMetaVarType mv
     -- If you can, eta-expand and restart the equality.  Otherwise, try to
     -- assign.
     (_, mvEndType) <- unrollPi mvType
@@ -795,8 +781,11 @@ metaAssign ctx0 type0 mv elims0 t0 = do
       return dataCon
     case mbRecordDataCon of
       Just dataCon -> do
-        mvT <- instantiateDataCon mv dataCon
-        mvT' <- eliminateTC mvT elims0
+        let msg' = "*** Eta-expanding metavar " <+> PP.pretty mv <+>
+                   "with datacon" <+> PP.pretty dataCon
+        mvT' <- debugBracket_ msg' $ do
+          mvT <- instantiateDataCon mv dataCon
+          eliminateTC mvT elims0
         checkEqual ctx0 type0 mvT' t0
       Nothing -> do
         (ctx, elims, sub) <- etaExpandVars ctx0 elims0
@@ -996,15 +985,12 @@ shouldKill vs t = runMaybeT $ do
 -- | A substitution from variables of the term on the left of the
 -- equation to terms inside the metavar.
 --
--- We also keep an ordered list of variables to abstract the body of the
--- metavariable.
+-- We also store how many variables the metavar abstracts.
 data InvertMeta t =
   InvertMeta [(Var, t)]
              -- This 'Var' refers to a variable in the term equated to
              -- the metavariable
-             [Var]
-             -- This 'Var' refers to a variable in the metavariable
-             -- body.
+             Int
 
 invertMetaVars :: InvertMeta t -> [Var]
 invertMetaVars (InvertMeta sub _) = map fst sub
@@ -1049,7 +1035,7 @@ invertMeta elims0 = case mapM isApply elims0 of
         TTMetaVars mvs -> TTMetaVars mvs
         -- If we're good, we also check that each variable gets
         -- substituted with only one thing.
-        TTOK sub       -> InvertMeta <$> checkLinearity sub <*> pure vs
+        TTOK sub       -> InvertMeta <$> checkLinearity sub <*> pure (length vs)
 
     -- The terms on the left are those outside the metavar body (its
     -- arguments), on the right the bound variables corrisponding to
@@ -1113,7 +1099,7 @@ applyInvertMeta
      (IsTerm t)
   => InvertMeta t -> Term t
   -> TC' t (TermTraverse Var (Closed (Term t)))
-applyInvertMeta (InvertMeta sub vs) t = do
+applyInvertMeta (InvertMeta sub vsNum) t = do
   tt <- applyInvertMetaSubst sub t
   case tt of
     TTFail v ->
@@ -1121,13 +1107,12 @@ applyInvertMeta (InvertMeta sub vs) t = do
     TTMetaVars mvs ->
       return $ TTMetaVars mvs
     TTOK t' -> do
-      return . TTOK =<< lambdaAbstract vs t'
+      return . TTOK =<< lambdaAbstract vsNum t'
 
--- | Creates a term in the same context as the original term but lambda
--- abstracted over the given variables.
-lambdaAbstract :: (IsTerm t) => [Var] -> Term t -> TC' t (Term t)
-lambdaAbstract []       t = return t
-lambdaAbstract (_ : vs) t = (lamTC <=< lambdaAbstract vs) t
+-- | Wraps the given term 'n' times.
+lambdaAbstract :: (IsTerm t) => Int -> Term t -> TC' t (Term t)
+lambdaAbstract n t | n <= 0 = return t
+lambdaAbstract n t = (lamTC <=< lambdaAbstract (n - 1)) t
 
 applyInvertMetaSubst
   :: forall t. (IsTerm t)
@@ -1209,16 +1194,30 @@ etaExpandVars
   -- ^ Returns the new context, the new eliminators, and a substituting
   -- action to update terms to the new context.
 etaExpandVars ctx0 elims0 = do
-  elims <- mapM (etaContractElim <=< nf'TC) elims0
-  mbVar <- collectProjectedVar elims
-  case mbVar of
-    Nothing ->
-      return (ctx0, elims, \t -> return t)
-    Just (v, tyCon) -> do
-      let (ctx1, type_, tel) = splitContext ctx0 v
-      (tel', sub) <- etaExpandVar tyCon type_ tel
-      (ctx2, elims', sub') <- etaExpandVars (ctx1 Ctx.++ Tel.unTel tel') elims
-      return (ctx2, elims', (sub >=> sub'))
+  elims1 <- mapM (etaContractElim <=< nf'TC) elims0
+  let msg = do
+        ctxDoc <- withSignatureTermM $ \sig -> prettyContext sig ctx0
+        elimsDoc <- prettyElimsTC elims1
+        return $ "*** Eta-expand vars" $$ ctxDoc $$ elimsDoc
+  debugBracket msg $ do
+    mbVar <- collectProjectedVar elims1
+    case mbVar of
+      Nothing ->
+        return (ctx0, elims1, \t -> return t)
+      Just (v, tyCon) -> do
+        debug $ "** Found var" <+> PP.pretty v <+> "with tyCon" <+> PP.pretty tyCon
+        let (ctx1, type_, tel) = splitContext ctx0 v
+        -- ctxDoc <- withSignatureTermM $ \sig -> prettyContext sig ctx1
+        -- typeDoc <- prettyTermTC type_
+        -- telDoc <- withSignatureTermM $ \sig -> prettyTel sig tel
+        -- let rend = PP.renderStyle PP.style{PP.lineLength = 500}
+        -- traceM $ rend ctxDoc
+        -- traceM $ rend typeDoc
+        -- traceM $ rend telDoc
+        (tel', sub) <- etaExpandVar tyCon type_ tel
+        elims2 <- mapM (liftTermM . mapElimM sub) elims1
+        (ctx2, elims3, sub') <- etaExpandVars (ctx1 Ctx.++ Tel.unTel tel') elims2
+        return (ctx2, elims3, (sub >=> sub'))
 
 -- | Expands a record-typed variable ranging over the given 'Tel.Tel',
 -- returning a new telescope ranging over all the fields of the record
@@ -1242,7 +1241,9 @@ etaExpandVar tyCon type_ tel = do
   (dataConPars, _) <- unrollPiWithNames appliedDataConType (map fst projs)
   dataConT <- conTC dataCon =<< mapM varTC (ctxVars dataConPars)
   tel' <- liftTermM $ Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
-  let sub t = subst 0 dataConT =<< weaken 1 1 t
+  let telLen = Tel.length tel'
+  dataConT' <- liftTermM $ weaken_ telLen dataConT
+  let sub t = subst telLen dataConT' =<< weaken (telLen + 1) 1 t
   return (dataConPars Tel.++ tel', sub)
 
 -- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
@@ -1256,6 +1257,10 @@ collectProjectedVar elims = runMaybeT $ do
     projName : _ <- forM vElims $ \vElim -> do
       Proj projName _ <- return vElim
       return projName
+    -- traceM "========"
+    -- traceM $ show v
+    -- vElimsDoc <- lift $ prettyElimsTC vElims
+    -- traceM (PP.render vElimsDoc)
     return (v, projName)
   tyConDef <- lift $ getDefinition projName
   let Projection _ tyCon _ _ = tyConDef
@@ -1863,12 +1868,17 @@ isRecordConstr dataCon = join $ withSignature $ \sig ->
 instantiateMetaVar'
   :: (IsTerm t) => MetaVar -> Closed (Term t) -> TC' t ()
 instantiateMetaVar' mv t = do
-  mvType <- getMetaVarType mv
-  let msg = do
-        mvTypeDoc <- prettyTermTC mvType
-        tDoc <- prettyTermTC t
-        return $ "*** Check metaVar" <+> PP.pretty mv $$ mvTypeDoc $$ tDoc
-  debugBracket msg $ do
-    absT <- liftTermM $ internalToTerm t
-    _ <- assert (const "impossible: inconsistent metavar body") $ check Ctx.Empty absT mvType
-    instantiateMetaVar mv t
+  checkConsistency <- tcsCheckMetaVarConsistency <$> getState
+  if checkConsistency
+    then do
+      mvType <- getMetaVarType mv
+      let msg = do
+            mvTypeDoc <- prettyTermTC mvType
+            tDoc <- prettyTermTC t
+            return $ "*** Check metaVar" <+> PP.pretty mv $$ mvTypeDoc $$ tDoc
+      debugBracket msg $ do
+        absT <- liftTermM $ internalToTerm t
+        _ <- assert (const "impossible: inconsistent metavar body") $ check Ctx.Empty absT mvType
+        instantiateMetaVar mv t
+    else do
+      instantiateMetaVar mv t

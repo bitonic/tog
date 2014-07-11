@@ -11,13 +11,8 @@ import           Term.Impl.Common
 -- Base terms
 ------------------------------------------------------------------------
 
-newtype GraphReduce v = GR {unGR :: IORef (TermView GraphReduce v)}
+newtype GraphReduce = GR {unGR :: IORef (TermView GraphReduce)}
   deriving (Typeable)
-
-instance Subst GraphReduce where
-  var v = unview (App (Var v) [])
-
-  subst = genericSubst
 
 instance IsTerm GraphReduce where
   termEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
@@ -46,15 +41,17 @@ instance IsTerm GraphReduce where
   refl = reflGR
   typeOfJ = typeOfJGR
 
+  substs = genericSubsts
+  weaken = genericWeaken
 
 {-# NOINLINE setGR #-}
-setGR :: GraphReduce v
+setGR :: GraphReduce
 setGR = unsafePerformIO $ GR <$> newIORef Set
 
 {-# NOINLINE reflGR #-}
-reflGR :: GraphReduce v
+reflGR :: GraphReduce
 reflGR = unsafePerformIO $ GR <$> newIORef Refl
 
 {-# NOINLINE typeOfJGR #-}
-typeOfJGR :: Closed GraphReduce
+typeOfJGR :: GraphReduce
 typeOfJGR = unsafePerformIO genericTypeOfJ

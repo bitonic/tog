@@ -6,16 +6,19 @@ module Term.Pretty
   , prettyElims
   , prettyDefinition
   , prettyClause
-  , prettyTele
+  , prettyTelWithTerm
+  , prettyTel
+  , prettyContext
   ) where
 
 import           Prelude.Extended
 import           Term.Class
+import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
 import           Term.Synonyms
+import qualified Term.Telescope                   as Tel
 import           Term.TermM
 import           Term.Utils
-import qualified Term.Telescope                   as Tel
 import           Text.PrettyPrint.Extended        ((<+>), ($$))
 import qualified Text.PrettyPrint.Extended        as PP
 
@@ -84,10 +87,10 @@ prettyDefinition sig (Constant (Record dataCon fields) type_) = do
            PP.nest 2 ("constructor" <+> PP.pretty dataCon) $$
            PP.nest 2 ("field" $$ PP.nest 2 (PP.vcat (map (PP.pretty . fst) fields)))
 prettyDefinition sig (DataCon tyCon pars type_) = do
-  typeDoc <- prettyTele sig pars type_
+  typeDoc <- prettyTelWithTerm sig pars type_
   return $ "constructor" <+> PP.pretty tyCon $$ PP.nest 2 typeDoc
 prettyDefinition sig (Projection _ tyCon pars type_) = do
-  typeDoc <- prettyTele sig pars type_
+  typeDoc <- prettyTelWithTerm sig pars type_
   return $ "projection" <+> PP.pretty tyCon $$ PP.nest 2 typeDoc
 prettyDefinition sig (Function type_ clauses) = do
   typeDoc <- prettyTerm sig type_
@@ -99,22 +102,35 @@ prettyClause sig (Clause pats body) = do
   bodyDoc <- prettyTerm sig body
   return $ PP.pretty pats <+> "=" $$ PP.nest 2 bodyDoc
 
-prettyTele
-  :: forall t. (IsTerm t)
-  => Sig.Signature t -> Tel.Tel t -> t -> TermM PP.Doc
-prettyTele sig Tel.Empty t = do
-   prettyTerm sig t
-prettyTele sig (Tel.Cons (n0, type0) tel0) t = do
+prettyTel
+  :: (IsTerm t)
+  => Sig.Signature t -> Tel.Tel t -> TermM PP.Doc
+prettyTel _ Tel.Empty = do
+  return "[]"
+prettyTel sig (Tel.Cons (n0, type0) tel0) = do
   type0Doc <- prettyTerm sig type0
   tel0Doc <- go tel0
   return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc PP.<> tel0Doc
   where
     go Tel.Empty =
-      ("]" <+>) <$> prettyTerm sig t
+      return "]"
     go (Tel.Cons (n, type_) tel) = do
       typeDoc <- prettyTerm sig type_
       telDoc <- go tel
       return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <+> telDoc
+
+prettyTelWithTerm
+  :: (IsTerm t)
+  => Sig.Signature t -> Tel.Tel t -> t -> TermM PP.Doc
+prettyTelWithTerm sig Tel.Empty t =
+  prettyTerm sig t
+prettyTelWithTerm sig tel t =
+  (<+>) <$> prettyTel sig tel <*> prettyTerm sig t
+
+prettyContext
+  :: (IsTerm t)
+  => Sig.Signature t -> Ctx.Ctx t -> TermM PP.Doc
+prettyContext sig = prettyTel sig . Tel.tel
 
 -- Instances
 ------------------------------------------------------------------------

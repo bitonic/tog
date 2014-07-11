@@ -3,6 +3,7 @@ module Term.Telescope
       Tel(..)
     , tel
     , unTel
+    , length
     , (++)
     , subst
     , substs
