@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Term.Class where
 
@@ -6,7 +7,7 @@ import qualified Data.HashSet                     as HS
 import           Prelude.Extended
 import           Syntax.Internal                  (Name, DefName(SimpleName))
 import qualified Syntax.Internal                  as A
-import qualified Text.PrettyPrint.Extended        as PP
+import qualified PrettyPrint                      as PP
 import {-# SOURCE #-} qualified Term.Signature    as Sig
 import {-# SOURCE #-} qualified Term.Telescope    as Tel
 import           Term.MetaVar
@@ -110,6 +111,10 @@ data Elim t
 
 instance (Hashable t) => Hashable (Elim t)
 
+mapElim :: (t -> t) -> Elim t -> Elim t
+mapElim f (Apply t)  = Apply $ f t
+mapElim _ (Proj n f) = Proj n f
+
 mapElimM :: Monad m => (t -> m t) -> Elim t -> m (Elim t)
 mapElimM f (Apply t)  = Apply `liftM` f t
 mapElimM _ (Proj n f) = return $ Proj n f
@@ -184,6 +189,13 @@ class (Typeable t) => IsTerm t where
 
     substs :: [(Int, t)] -> t -> TermM t
 
+    instantiate :: (IsTerm t) => Abs t -> t -> TermM t
+    instantiate t arg = do
+      arg' <- weaken_ 1 arg
+      t' <- subst 0 arg' t
+      Just t'' <- strengthen_ 1 t'
+      return t''
+
     -- abstract :: Var -> t -> TermM (Abs t)
     -- abstract v t = do
     --   t' <- weaken_ 1 t
@@ -218,13 +230,6 @@ strengthen_ = strengthen 0
 
 subst :: (IsTerm t) => Int -> t -> t -> TermM t
 subst ix arg = substs [(ix, arg)]
-
-instantiate :: (IsTerm t) => Abs t -> t -> TermM t
-instantiate t arg = do
-  arg' <- weaken_ 1 arg
-  t' <- subst 0 arg' t
-  Just t'' <- strengthen_ 1 t'
-  return t''
 
 getAbsName_ :: (IsTerm t) => Abs t -> TermM Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
@@ -497,6 +502,9 @@ data Invertible t
 data TermHead = PiHead | DefHead DefName
     deriving (Eq, Show)
 
+instance PP.Pretty TermHead where
+  pretty = PP.text . show
+
 ignoreInvertible :: Invertible t -> [Clause t]
 ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
@@ -506,7 +514,7 @@ ignoreInvertible (Invertible injClauses) = map snd injClauses
 -- mapInvertible f (NotInvertible clauses) = NotInvertible $ map f clauses
 -- mapInvertible f (Invertible injClauses) = Invertible $ map (second f) injClauses
 
--- From A.Expr
+-- To A.Expr
 ------------------------------------------------------------------------
 
 internalToTerm
@@ -514,12 +522,25 @@ internalToTerm
 internalToTerm t0 = do
   tView <- view t0
   case tView of
-    Lam body -> A.Lam "_" <$> internalToTerm body
-    Pi dom cod -> A.Pi "_" <$> internalToTerm dom <*> internalToTerm cod
-    Equal type_ x y -> A.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
-    Refl -> return $ A.Refl A.noSrcLoc
-    Con dataCon args -> A.Con dataCon <$> mapM internalToTerm args
-    Set -> return $ A.Set A.noSrcLoc
+    Lam body -> do
+      n <- getAbsName_ body
+      A.Lam n <$> internalToTerm body
+    Pi dom cod -> do
+      mbCod <- strengthen_ 1 cod
+      case mbCod of
+        Nothing -> do
+          n <- getAbsName_ cod
+          A.Pi n <$> internalToTerm dom <*> internalToTerm cod
+        Just cod' -> do
+          A.Fun <$> internalToTerm dom <*> internalToTerm cod'
+    Equal type_ x y ->
+      A.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
+    Refl ->
+      return $ A.Refl A.noSrcLoc
+    Con dataCon args ->
+      A.Con dataCon <$> mapM internalToTerm args
+    Set ->
+      return $ A.Set A.noSrcLoc
     App h args -> do
       let h' = case h of
             Var v -> A.TermVar (varIndex v) (varName v)

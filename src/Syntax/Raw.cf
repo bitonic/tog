@@ -59,7 +59,7 @@ App.  Expr2 ::= [Arg];
 _.    Expr3 ::= "(" Expr ")";
 Id.   Expr3 ::= Name;
 
-HArg. Arg ::= "{" Expr3 "}";
+HArg. Arg ::= "{" Expr "}";
 Arg.  Arg ::= Expr3;
 separator nonempty Arg "";
 

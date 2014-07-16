@@ -1,5 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Term.Impl.Common where
+module Term.Impl.Common
+  ( genericSubsts
+  , genericWhnf
+  , genericGetAbsName
+  , genericStrengthen
+  , genericWeaken
+  , genericTypeOfJ
+  , genericNf
+  , genericTermEq
+  , matchClause
+  ) where
 
 import           Prelude                          hiding (pi, foldr)
 
@@ -35,6 +45,8 @@ substEliminate t elims = do
 
 genericSubstsView
   :: forall t. (IsTerm t) => [(Int, t)] -> TermView t -> TermM t
+genericSubstsView [] tView = do
+  unview tView
 genericSubstsView args tView = do
   case tView of
     Lam body ->
@@ -67,6 +79,8 @@ genericSubstsView args tView = do
 
 genericSubsts
   :: (IsTerm t) => [(Int, t)] -> t -> TermM t
+genericSubsts [] t = do
+  return t
 genericSubsts args t = do
   tView <- view t
   genericSubstsView args tView

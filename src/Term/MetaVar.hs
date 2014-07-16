@@ -1,7 +1,7 @@
 module Term.MetaVar where
 
 import           Prelude.Extended
-import qualified Text.PrettyPrint.Extended        as PP
+import qualified PrettyPrint                      as PP
 
 -- 'MetaVar'iables
 ------------------------------------------------------------------------

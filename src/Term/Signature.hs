@@ -23,7 +23,7 @@ import qualified Syntax.Internal                  as A
 import           Term.MetaVar
 import           Term.Synonyms
 import           Term.Class
-import           Text.PrettyPrint.Extended        (render)
+import           PrettyPrint                      (render)
 
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.

@@ -16,7 +16,7 @@ import           Syntax.Raw.Layout                (sToken, layoutOpen, layoutClo
 import           Syntax.Raw.Lex
 import           Syntax.Raw.Par                   (myLexer, pProgram)
 import           Syntax.Raw.Print
-import qualified Text.PrettyPrint.Extended        as PP
+import qualified PrettyPrint                      as PP
 
 parseProgram :: String -> Either PP.Doc Program
 parseProgram s =

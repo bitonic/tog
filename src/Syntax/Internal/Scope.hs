@@ -14,7 +14,7 @@ import Data.Map (Map)
 
 import qualified Syntax.Raw as C
 import Syntax.Internal.Abs
-import qualified Text.PrettyPrint.Extended        as PP
+import qualified PrettyPrint                      as PP
 
 data ScopeError = ScopeError SrcLoc String
 
@@ -536,3 +536,4 @@ instance HasSrcLoc C.Pattern where
     C.IdP x    -> srcLoc x
     C.AppP p _ -> srcLoc p
     C.HideP p  -> srcLoc p
+

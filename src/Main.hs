@@ -6,7 +6,7 @@ import           System.Exit                      (exitFailure)
 
 import           Main.Common
 import           Main.Test
-import qualified Text.PrettyPrint.Extended        as PP
+import qualified PrettyPrint                      as PP
 import           TypeCheck                        (TypeCheckConf(TypeCheckConf))
 
 parseTypeCheckConf :: Parser TypeCheckConf
@@ -42,6 +42,10 @@ parseTypeCheckConf = TypeCheckConf
   <*> switch
       ( long "checkMetaVarConsistency" <>
         help "Check consistency of instantiated term of a metavar and its type."
+      )
+  <*> switch
+      ( long "fastGetAbsName" <>
+        help "Do not spend time getting bound names in abstractions."
       )
 
 parseMain :: Parser (IO ())

@@ -7,8 +7,8 @@ import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT,
 import           Syntax.Internal                  (checkScope)
 import           Syntax.Raw                       (parseProgram)
 import           Term                             (IsTerm)
-import           Text.PrettyPrint.Extended        ((<+>), ($$))
-import qualified Text.PrettyPrint.Extended        as PP
+import           PrettyPrint                      ((<+>), ($$))
+import qualified PrettyPrint                      as PP
 import           TypeCheck                        (TypeCheckConf, checkProgram, TCState')
 
 checkFile

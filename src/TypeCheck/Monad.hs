@@ -41,6 +41,7 @@ module TypeCheck.Monad
   , debugBracket
   , debugBracket_
   , debug
+  , debug_
     -- * State
   , getState
   , putState
@@ -66,12 +67,12 @@ import           System.IO                        (hPutStr, stderr)
 import           Unsafe.Coerce                    (unsafeCoerce)
 
 import           Prelude.Extended
+import           PrettyPrint                      ((<+>), ($$))
+import qualified PrettyPrint                      as PP
 import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, DefName(SimpleName))
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import           Text.PrettyPrint.Extended        ((<+>), ($$))
-import qualified Text.PrettyPrint.Extended        as PP
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -120,16 +121,22 @@ runTC int ts (TC m) = do
 data TCEnv t p s = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
     , teInterpretProblem :: !(InterpretProblem t p s)
-    , teDebug            :: !Bool
-    , teDebugDepth       :: !Int
+    , teDebug            :: !(Maybe Debug)
     }
+
+data Debug = Debug
+  { dDepth      :: !Int
+  , dStackTrace :: ![PP.Doc]
+  }
+
+initDebug :: Debug
+initDebug = Debug 0 []
 
 initEnv :: InterpretProblem t p s -> TCEnv t p s
 initEnv int =
   TCEnv{ teCurrentSrcLoc    = noSrcLoc
        , teInterpretProblem = int
-       , teDebug            = False
-       , teDebugDepth       = 0
+       , teDebug            = Nothing
        }
 
 data TCState t p s = TCState
@@ -189,7 +196,15 @@ tcReport ts = TCReport
 
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t p s b
-typeError err = TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
+typeError err = do
+  mbD <- teDebug <$> ask
+  case mbD of
+    Nothing -> do
+      return ()
+    Just d -> do
+      debug_ "** About to trow error, stack trace:"
+      forM_ (dStackTrace d) $ debug_ . PP.indent _ERROR_INDENT
+  TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
 
 assert :: (PP.Doc -> String) -> TC t p s a -> TC t p s a
 assert msg (TC m) = TC $ \(te, ts) -> do
@@ -306,37 +321,57 @@ getMetaVarBody mv = do
 -- Debugging
 ------------------------------------------------------------------------
 
+_ERROR_INDENT :: Int
+_ERROR_INDENT = 2
+
 enableDebug :: TC t p s a -> TC t p s a
-enableDebug (TC m) = TC $ \(te, ts) -> m (te{teDebug = True}, ts)
+enableDebug (TC m) = TC $ \(te, ts) ->
+  let te' = case teDebug te of
+              Just _  -> te
+              Nothing -> te{teDebug = Just initDebug}
+  in m (te', ts)
 
 disableDebug :: TC t p s a -> TC t p s a
-disableDebug (TC m) = TC $ \(te, ts) -> m (te{teDebug = False}, ts)
+disableDebug (TC m) = TC $ \(te, ts) -> m (te{teDebug = Nothing}, ts)
 
 debugBracket :: TC t p s PP.Doc -> TC t p s a -> TC t p s a
 debugBracket docM m = do
-  doc' <- docM'
-  debug doc'
+  doc <- assertDoc docM
+  debug_ doc
   te <- ask
-  local te{teDebugDepth = teDebugDepth te + 1} m
-  where
-    docM' = TC $ \(te, ts) -> do
-      mbDoc <- unTC docM (te, ts)
-      case mbDoc of
-        OK ts' doc' ->
-          return $ OK ts' doc'
-        Error (DocErr _ err) -> do
-          error $ PP.render $ "debugBracket: the doc action got an error:" $$ err
+  let mbD = case teDebug te of
+              Nothing -> Nothing
+              Just d  -> Just d{dDepth = dDepth d + 1, dStackTrace = doc : dStackTrace d}
+  local te{teDebug = mbD} m
 
 debugBracket_ :: PP.Doc -> TC t p s a -> TC t p s a
 debugBracket_ doc = debugBracket (return doc)
 
-debug :: PP.Doc -> TC t p s ()
-debug doc = TC $ \(te, ts) -> do
-  when (teDebug te) $ do
-    let s  = PP.renderStyle PP.style{PP.lineLength = 300} doc
-    let pad = replicate (teDebugDepth te * 2) ' '
-    hPutStr stderr $ unlines $ map (pad ++) $ lines s
-  return $ OK ts ()
+assertDoc :: TC t p s PP.Doc -> TC t p s PP.Doc
+assertDoc docM = TC $ \(te, ts) -> do
+  mbDoc <- unTC docM (te, ts)
+  case mbDoc of
+    OK ts' doc' ->
+      return $ OK ts' doc'
+    Error (DocErr _ err) -> do
+      error $ PP.render $ "assertDoc: the doc action got an error:" $$ err
+
+debug :: TC t p s PP.Doc -> TC t p s ()
+debug docM = do
+  mbD <- teDebug <$> ask
+  case mbD of
+    Nothing -> do
+      return ()
+    Just d -> do
+      doc <- assertDoc docM
+      TC $ \(_, ts) -> do
+        let s  = PP.renderPretty 150 doc
+        let pad = replicate (dDepth d * _ERROR_INDENT) ' '
+        hPutStr stderr $ unlines $ map (pad ++) $ lines s
+        return $ OK ts ()
+
+debug_ :: PP.Doc -> TC t p s ()
+debug_ doc = debug (return doc)
 
 -- State
 ------------------------------------------------------------------------
@@ -368,11 +403,12 @@ newtype ProblemId a = ProblemId ProblemIdInt
 -- 'Typeable' since we store the solutions and problems dynamically so
 -- that they can all be in the same 'HMS.HashMap'.
 data Problem p = forall a b. Problem
-  { pProblem :: !(Maybe (p a b))
+  { pProblem    :: !(Maybe (p a b))
     -- ^ If 'Nothing', it means that we're just waiting on another
     -- problem to complete and we'll then return its result.
-  , pState   :: !ProblemState
-  , pSrcLoc  :: !SrcLoc
+  , pState      :: !ProblemState
+  , pSrcLoc     :: !SrcLoc
+  , pStackTrace :: !(Maybe [PP.Doc])
   }
 
 type InterpretProblem t p s =
@@ -409,6 +445,7 @@ addFreshProblem :: Problem p -> TC t p s (ProblemId a)
 addFreshProblem prob = do
   pid <- modify $ \ts ->
          let count = tsProblemCount ts in (ts{tsProblemCount = count + 1}, count)
+  debug_ $ "** Adding new problem" <+> PP.pretty pid
   addProblem pid prob
 
 -- | Store a new problem dependend on a set of 'MetaVar's.  When one of
@@ -419,7 +456,8 @@ newProblem
     -> StuckTC t p s b
 newProblem mvs m = do
     loc <- teCurrentSrcLoc <$> ask
-    let prob = Problem{pProblem = Just m, pState = BoundToMetaVars mvs, pSrcLoc = loc}
+    mbTrace <- fmap dStackTrace . teDebug <$> ask
+    let prob = Problem{pProblem = Just m, pState = BoundToMetaVars mvs, pSrcLoc = loc, pStackTrace = mbTrace}
     StuckOn <$> addFreshProblem prob
 
 newProblem_
@@ -436,7 +474,8 @@ bindProblem
     -> StuckTC t p s b
 bindProblem (ProblemId pid) f = do
     loc <- teCurrentSrcLoc <$> ask
-    let prob = Problem{pProblem = Just f, pState = BoundToProblem pid, pSrcLoc = loc}
+    mbTrace <- fmap dStackTrace . teDebug <$> ask
+    let prob = Problem{pProblem = Just f, pState = BoundToProblem pid, pSrcLoc = loc, pStackTrace = mbTrace}
     StuckOn <$> addFreshProblem prob
 
 -- | This computation solves all problems that are solvable in the
@@ -446,7 +485,7 @@ solveProblems = do
   unsolvedProbs <- HMS.toList . tsUnsolvedProblems <$> get
   -- Go over all unsolved problems and record if we made progress in any
   -- of them.
-  progress <- fmap or $ forM unsolvedProbs $ \(pid, (Problem prob state loc)) -> do
+  progress <- fmap or $ forM unsolvedProbs $ \(pid, (Problem prob state loc mbTrace)) -> do
     -- Collect the state necessary to execute the current problem, if
     -- available.
     mbSolution :: Maybe ProblemSolution <- case state of
@@ -463,7 +502,7 @@ solveProblems = do
         HMS.lookup boundTo . tsSolvedProblems <$> get
     case mbSolution of
       Nothing       -> return False
-      Just solution -> True <$ solveProblem pid prob loc solution
+      Just solution -> True <$ solveProblem pid prob loc mbTrace solution
   progress <$ when progress (void solveProblems)
   where
     solveProblem
@@ -474,10 +513,12 @@ solveProblems = do
       -- ^ ...and the suspended computation, if present.
       -> SrcLoc
       -- ^ ...and 'SrcLoc' of the problem.
+      -> Maybe [PP.Doc]
+      -- ^ ...and a stacktrace, if we have it.
       -> ProblemSolution
       -- ^ Solution to the problem we were waiting on.
       -> TC t p s ()
-    solveProblem pid mbP loc (ProblemSolution x) = do
+    solveProblem pid mbP loc mbTrace (ProblemSolution x) = do
       -- Delete the problem from the list of unsolved problems.
       modify_ $ \ts -> ts{tsUnsolvedProblems = HMS.delete pid (tsUnsolvedProblems ts)}
       -- Execute the suspended computation. From how the functions
@@ -491,9 +532,15 @@ solveProblems = do
           return $ NotStuck x'
         Just p  -> do
           let Just x' = Just $ unsafeCoerce x
-          comp <- teInterpretProblem <$> ask
-          atSrcLoc loc $ debugBracket_ ("*** Resuming problem" <+> PP.pretty pid) $
-            comp p x'
+          te <- ask
+          let comp = teInterpretProblem te
+          let te' = case (teDebug te, mbTrace) of
+                      (Nothing, _)          -> te
+                      (_, Nothing)          -> te
+                      (Just d, Just trace_) -> te{teDebug = Just d{dStackTrace = trace_}}
+          local te' $ atSrcLoc loc $ do
+            debugBracket_ ("*** Resuming problem" <+> PP.pretty pid) $
+              comp p x'
       case stuck of
         NotStuck y -> do
           -- Mark the problem as solved.
@@ -503,7 +550,7 @@ solveProblems = do
           -- If the problem is stuck, re-add it as a dependency of
           -- what it is stuck on.
           void $ addProblem pid $
-            Problem (Nothing :: Maybe (p a b)) (BoundToProblem boundTo) loc
+            Problem (Nothing :: Maybe (p a b)) (BoundToProblem boundTo) loc mbTrace
           return ()
 
 solveProblems_ :: TC t p s ()

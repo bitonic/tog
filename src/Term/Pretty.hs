@@ -12,6 +12,9 @@ module Term.Pretty
   ) where
 
 import           Prelude.Extended
+import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
+import qualified PrettyPrint                      as PP
+import qualified Syntax.Internal                  as A
 import           Term.Class
 import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
@@ -19,57 +22,18 @@ import           Term.Synonyms
 import qualified Term.Telescope                   as Tel
 import           Term.TermM
 import           Term.Utils
-import           Text.PrettyPrint.Extended        ((<+>), ($$))
-import qualified Text.PrettyPrint.Extended        as PP
 
 prettyTerm :: (IsTerm t) => Sig.Signature t -> t -> TermM PP.Doc
 prettyTerm sig = prettyPrecTerm sig 0
 
 prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
-  t <- view =<< instantiateMetaVars sig t0
-  case t of
-    Set ->
-      return $ PP.text "Set"
-    Equal a x y ->
-      prettyApp (prettyPrecTerm sig) p (PP.text "_==_") [a, x, y]
-    Pi a b -> do
-      mbN <- getAbsName b
-      aDoc <- prettyTerm sig a
-      bDoc <- prettyTerm sig b
-      return $ PP.condParens (p > 0) $
-          PP.sep [ (PP.parens $ case mbN of
-                      Nothing -> aDoc
-                      Just n  -> PP.pretty n <> PP.text " : " <> aDoc) PP.<+>
-                   PP.text "->"
-                 , PP.nest 2 bDoc
-                 ]
-    Lam b -> do
-      n <- getAbsName_ b
-      bDoc <- prettyTerm sig b
-      return $ PP.condParens (p > 0) $
-         PP.sep [ PP.text "\\" <> PP.pretty n <> PP.text " ->"
-                , PP.nest 2 bDoc
-                ]
-    App h es ->
-      prettyApp (prettyPrecElim sig) p (PP.pretty h) es
-    Refl ->
-      return $ PP.text "refl"
-    Con dataCon args ->
-      prettyApp (prettyPrecTerm sig) p (PP.pretty dataCon) args
-
-prettyApp :: (Int -> a -> TermM PP.Doc) -> Int -> PP.Doc -> [a] -> TermM (PP.Doc)
-prettyApp _f _p h [] = return h
-prettyApp f   p h xs = do
-  xsDoc <- mapM (f 4) xs
-  return $ PP.condParens (p > 3) $ h <+> PP.fsep xsDoc
+  synT <- internalToTerm =<< instantiateMetaVars sig t0
+  return $ PP.prettyPrec p synT
 
 prettyElim :: (IsTerm t) => Sig.Signature t -> Elim t -> TermM PP.Doc
-prettyElim sig = prettyPrecElim sig 0
-
-prettyPrecElim :: (IsTerm t) => Sig.Signature t -> Int -> Elim t -> TermM PP.Doc
-prettyPrecElim p sig (Apply e)  = prettyPrecTerm p sig e
-prettyPrecElim _ _   (Proj n _) = return $ PP.text $ show n
+prettyElim _   (Proj n _) = return $ PP.pretty $ A.Proj n
+prettyElim sig (Apply t)  = PP.pretty . A.Apply <$> (internalToTerm =<< instantiateMetaVars sig t)
 
 prettyElims :: (IsTerm t) => Sig.Signature t -> [Elim t] -> TermM PP.Doc
 prettyElims sig elims = PP.pretty <$> mapM (prettyElim sig) elims
@@ -79,19 +43,20 @@ prettyDefinition sig (Constant Postulate type_) =
   prettyTerm sig type_
 prettyDefinition sig (Constant (Data dataCons) type_) = do
   typeDoc <- prettyTerm sig type_
-  return $ "data" <+> typeDoc <+> "where" $$
-           PP.nest 2 (PP.vcat (map PP.pretty dataCons))
+  return $ "data" <+> typeDoc <+> "where" $$>
+           PP.vcat (map PP.pretty dataCons)
 prettyDefinition sig (Constant (Record dataCon fields) type_) = do
   typeDoc <- prettyTerm sig type_
-  return $ "record" <+> typeDoc <+> "where" $$
-           PP.nest 2 ("constructor" <+> PP.pretty dataCon) $$
-           PP.nest 2 ("field" $$ PP.nest 2 (PP.vcat (map (PP.pretty . fst) fields)))
+  return $ "record" <+> typeDoc <+> "where" $$>
+           "constructor" <+> PP.pretty dataCon $$
+           "field" $$>
+           PP.vcat (map (PP.pretty . fst) fields)
 prettyDefinition sig (DataCon tyCon pars type_) = do
   typeDoc <- prettyTelWithTerm sig pars type_
-  return $ "constructor" <+> PP.pretty tyCon $$ PP.nest 2 typeDoc
+  return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
 prettyDefinition sig (Projection _ tyCon pars type_) = do
   typeDoc <- prettyTelWithTerm sig pars type_
-  return $ "projection" <+> PP.pretty tyCon $$ PP.nest 2 typeDoc
+  return $ "projection" <+> PP.pretty tyCon $$> typeDoc
 prettyDefinition sig (Function type_ clauses) = do
   typeDoc <- prettyTerm sig type_
   clausesDoc <- mapM (prettyClause sig) $ ignoreInvertible clauses
@@ -100,7 +65,8 @@ prettyDefinition sig (Function type_ clauses) = do
 prettyClause :: (IsTerm t) => Sig.Signature t -> Closed (Clause t) -> TermM PP.Doc
 prettyClause sig (Clause pats body) = do
   bodyDoc <- prettyTerm sig body
-  return $ PP.pretty pats <+> "=" $$ PP.nest 2 bodyDoc
+  return $ PP.group $
+    PP.hsep (map PP.pretty pats ++ ["="]) //> bodyDoc
 
 prettyTel
   :: (IsTerm t)
@@ -110,7 +76,7 @@ prettyTel _ Tel.Empty = do
 prettyTel sig (Tel.Cons (n0, type0) tel0) = do
   type0Doc <- prettyTerm sig type0
   tel0Doc <- go tel0
-  return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc PP.<> tel0Doc
+  return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc </> tel0Doc
   where
     go Tel.Empty =
       return "]"
@@ -125,7 +91,7 @@ prettyTelWithTerm
 prettyTelWithTerm sig Tel.Empty t =
   prettyTerm sig t
 prettyTelWithTerm sig tel t =
-  (<+>) <$> prettyTel sig tel <*> prettyTerm sig t
+  (</>) <$> prettyTel sig tel <*> prettyTerm sig t
 
 prettyContext
   :: (IsTerm t)
@@ -135,13 +101,12 @@ prettyContext sig = prettyTel sig . Tel.tel
 -- Instances
 ------------------------------------------------------------------------
 
-instance PP.Pretty Head where
-    pretty (Var v)   = PP.pretty (varIndex v) <> "#" <> PP.pretty (varName v)
-    pretty (Def f)   = PP.pretty f
-    pretty J         = PP.text "J"
-    pretty (Meta mv) = PP.pretty mv
-
 instance PP.Pretty Pattern where
-  prettyPrec p e = case e of
+  pretty e = case e of
     VarP      -> PP.text "_"
-    ConP c es -> PP.prettyApp p (PP.pretty c) es
+    ConP c es -> prettyApp 10 (PP.pretty c) es
+
+prettyApp :: PP.Pretty a => Int -> PP.Doc -> [a] -> PP.Doc
+prettyApp _ h []   = h
+prettyApp p h args = PP.condParens (p > 3) $ h </> PP.fillSep (map (PP.prettyPrec 4) args)
+

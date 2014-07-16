@@ -6,7 +6,7 @@ import Data.String (IsString(fromString))
 import Data.Typeable (Typeable)
 import Control.Arrow                    ((***))
 import Data.Hashable (Hashable, hashWithSalt)
-import Text.PrettyPrint.Extended
+import PrettyPrint
 
 data SrcLoc = SrcLoc { pLine :: Int, pCol :: Int }
 
@@ -170,43 +170,77 @@ instance Eq Head where
 instance Show Name    where showsPrec = defaultShow
 instance Show Decl    where showsPrec = defaultShow
 instance Show TypeSig where showsPrec = defaultShow
+instance Show Elim    where showsPrec = defaultShow
 instance Show Expr    where showsPrec = defaultShow
 instance Show Head    where showsPrec = defaultShow
 instance Show Pattern where showsPrec = defaultShow
-
-instance Show Elim where
-  showsPrec p (Apply e) = showParen (p > 0) $ showString "$ " . shows e
-  showsPrec _ (Proj x) = showString "." . shows x
-
-instance Pretty Elim where
-  pretty = text . show
 
 instance Pretty Name where
   pretty (Name _ x) = text x
 
 instance Pretty TypeSig where
   pretty (Sig x e) =
-    sep [ pretty x <+> text ":"
-        , nest 2 $ pretty e ]
+    pretty x <+> text ":" //> pretty e
 
 instance Pretty Decl where
   pretty d = case d of
-    TypeSig sig -> pretty sig
-    FunDef f clauses -> vcat $
-      [ vcat $ [ sep [ pretty f <+> fsep (map (prettyPrec 10) ps)
-                     , nest 2 $ text "=" <+> pretty e ]
-               ] ++
-               (if null wheres then [] else nest 2 (text "where") : map (nest 2 . pretty) wheres)
-      | Clause ps e wheres <- clauses
-      ]
+    TypeSig sig ->
+      pretty sig
+    FunDef f clauses ->
+      vcat $ map (prettyClause f) clauses
     DataDef d xs cs ->
-      vcat [ text "data" <+> pretty d <+> fsep (map pretty xs) <+> text "where"
-           , nest 2 $ vcat $ map pretty cs ]
+      hsep (text "data" : pretty d : map pretty xs ++ [text "where"]) $$>
+      vcat (map pretty cs)
     RecDef r xs con fs ->
-      vcat [ text "record" <+> pretty r <+> fsep (map pretty xs) <+> text "where"
-           , nest 2 $ vcat [ text "constructor" <+> pretty con
-                           , sep [ text "field"
-                                 , nest 2 $ vcat $ map pretty fs ] ] ]
+      hsep (text "record" : pretty r : map pretty xs ++ [text "where"]) $$>
+      text "constructor" <+> pretty con $$
+      text "field" $$>
+      vcat (map pretty fs)
+    where
+      prettyClause f (Clause ps e wheres) = vcat $
+        group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e)
+        : if null wheres
+            then []
+            else nest 2 (text "where") : map (nest 2 . pretty) wheres
+
+instance Pretty Head where
+  pretty h = case h of
+    Var x       -> pretty x
+    Def f       -> pretty f
+    TermVar i x -> pretty i <> "#" <> pretty x
+    J _         -> text "J"
+    TermMeta mv -> "_" <> pretty mv
+
+instance Pretty DefName where
+  pretty dn = case dn of
+    SimpleName n      -> pretty n
+    SyntheticName n i -> pretty n <> "_" <> pretty i
+
+instance Pretty Pattern where
+  pretty e = case e of
+    WildP _   -> text "_"
+    VarP x    -> pretty x
+    ConP c es -> parens $ sep $ pretty c : map pretty es
+
+-- Pretty printing terms
+------------------------------------------------------------------------
+
+-- class PrettyTerm a where
+--   prettyPrecTerm
+--     :: Int
+--     -> Bool                     -- ^ Are we the last term in the line?
+--     -> a
+--     -> Doc
+
+-- defaultPrettyPrec :: PrettyTerm a => Int -> a -> Doc
+-- defaultPrettyPrec p = prettyPrecTerm p True
+
+-- instance Pretty Elim where prettyPrec = defaultPrettyPrec
+-- instance Pretty Expr where prettyPrec = defaultPrettyPrec
+
+instance Pretty Elim where
+  prettyPrec p (Apply e) = condParens (p > 0) $ "$" <+> prettyPrec p e
+  prettyPrec _ (Proj x)  = "." <> pretty x
 
 instance Pretty Expr where
   prettyPrec p e = case e of
@@ -214,25 +248,21 @@ instance Pretty Expr where
     Meta _      -> text "_"
     Equal (Meta _) x y ->
       condParens (p > 2) $
-        sep [ prettyPrec 3 x <+> text "=="
-            , nest 2 $ prettyPrec 2 y ]
+        prettyPrec 3 x <+> text "==" //> prettyPrec 2 y
     Equal a x y -> prettyApp p (text "_==_") [a, x, y]
     Fun a b ->
-      condParens (p > 0) $
-        sep [ prettyPrec 1 a <+> text "->"
-            , pretty b ]
+      condParens (p > 0) $ align $
+        prettyPrec 1 a <+> text "->" // pretty b
     Pi{} ->
-      condParens (p > 0) $
-        sep [ prettyTel tel <+> text "->"
-            , nest 2 $ pretty b ]
+      condParens (p > 0) $ align $
+        prettyTel tel <+> text "->" // pretty b
       where
         (tel, b) = piView e
         piView (Pi x a b) = ((x, a) :) *** id $ piView b
         piView a          = ([], a)
     Lam{} ->
       condParens (p > 0) $
-      sep [ text "\\" <+> fsep (map pretty xs) <+> text "->"
-          , nest 2 $ pretty b ]
+      text "\\" <> hsep (map pretty xs) <+> text "->" <+> pretty b
       where
         (xs, b) = lamView e
         lamView (Lam x b) = (x :) *** id $ lamView b
@@ -250,26 +280,15 @@ instance Pretty Expr where
     Refl{} -> text "refl"
     Con c args -> prettyApp p (pretty c) args
 
-instance Pretty Head where
-  pretty h = case h of
-    Var x       -> pretty x
-    Def f       -> pretty f
-    TermVar i x -> pretty i <> "#" <> pretty x
-    J _         -> text "J"
-    TermMeta mv -> "_" <> pretty mv
-
-instance Pretty DefName where
-  pretty dn = case dn of
-    SimpleName n      -> pretty n
-    SyntheticName n i -> pretty n <> "_" <> pretty i
-
-instance Pretty Pattern where
-  prettyPrec p e = case e of
-    WildP _ -> text "_"
-    VarP x  -> pretty x
-    ConP c es -> prettyApp p (pretty c) es
-
 prettyTel :: [(Name, Expr)] -> Doc
-prettyTel bs = fsep (map pr bs)
+prettyTel bs = hsep (map pr bs)
   where
     pr (x, e) = parens (pretty x <+> text ":" <+> pretty e)
+
+prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
+prettyApp _ h []    = h
+prettyApp p h args0 = condParens (p > 3) $ h <> group (nest 2 (space <> prettyArgs (reverse args0)))
+  where
+    prettyArgs []           = empty
+    prettyArgs [arg]        = prettyPrec 4 arg
+    prettyArgs (arg : args) = group (prettyArgs args) $$ prettyPrec 4 arg
