@@ -28,7 +28,7 @@ prettyTerm sig = prettyPrecTerm sig 0
 
 prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
-  synT <- internalToTerm =<< instantiateMetaVars sig t0
+  synT <- internalToTerm =<< nf sig t0 -- instantiateMetaVars sig t0
   return $ PP.prettyPrec p synT
 
 prettyElim :: (IsTerm t) => Sig.Signature t -> Elim t -> TermM PP.Doc
@@ -36,7 +36,8 @@ prettyElim _   (Proj n _) = return $ PP.pretty $ A.Proj n
 prettyElim sig (Apply t)  = PP.pretty . A.Apply <$> (internalToTerm =<< instantiateMetaVars sig t)
 
 prettyElims :: (IsTerm t) => Sig.Signature t -> [Elim t] -> TermM PP.Doc
-prettyElims sig elims = PP.pretty <$> mapM (prettyElim sig) elims
+prettyElims sig elims =
+  PP.vcatList <$> mapM (prettyElim sig) elims
 
 prettyDefinition :: (IsTerm t) => Sig.Signature t -> Closed (Definition t) -> TermM PP.Doc
 prettyDefinition sig (Constant Postulate type_) =
@@ -76,14 +77,14 @@ prettyTel _ Tel.Empty = do
 prettyTel sig (Tel.Cons (n0, type0) tel0) = do
   type0Doc <- prettyTerm sig type0
   tel0Doc <- go tel0
-  return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc </> tel0Doc
+  return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc $$ tel0Doc
   where
     go Tel.Empty =
       return "]"
     go (Tel.Cons (n, type_) tel) = do
       typeDoc <- prettyTerm sig type_
       telDoc <- go tel
-      return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <+> telDoc
+      return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc $$ telDoc
 
 prettyTelWithTerm
   :: (IsTerm t)

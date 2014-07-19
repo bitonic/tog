@@ -1,8 +1,7 @@
 module Prelude.Extended
   ( Foldable
   , Traversable
-  , Hashable
-  , hash
+  , Hashable(..)
   , (<*>)
   , Applicative
   , (<>)
@@ -40,6 +39,10 @@ module Prelude.Extended
   , traceM
   , (<|>)
   , ap
+  , IsString(..)
+  , (***)
+  , second
+  , isNothing
   ) where
 
 import Control.Applicative
@@ -57,3 +60,4 @@ import Data.Typeable
 import GHC.Generics
 import Control.Monad.Trans
 import Debug.Trace
+import Data.String

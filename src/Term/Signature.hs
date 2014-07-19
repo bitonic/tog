@@ -19,8 +19,8 @@ module Term.Signature
 
 import qualified Data.HashMap.Strict              as HMS
 
+import           Syntax.Internal                  (MetaVar)
 import qualified Syntax.Internal                  as A
-import           Term.MetaVar
 import           Term.Synonyms
 import           Term.Class
 import           PrettyPrint                      (render)
@@ -113,13 +113,13 @@ getMetaVarBody :: Signature t -> MetaVar -> Maybe (Closed (Term t))
 getMetaVarBody sig mv = HMS.lookup mv (sMetasBodies sig)
 
 -- | Creates a new 'MetaVar' with the provided type.
-addMetaVar :: Signature t -> Closed (Type t) -> (MetaVar, Signature t)
-addMetaVar sig type_ =
+addMetaVar :: Signature t -> A.SrcLoc -> Closed (Type t) -> (MetaVar, Signature t)
+addMetaVar sig srcLoc type_ =
     (mv, sig{ sMetasTypes = HMS.insert mv type_ (sMetasTypes sig)
             , sMetasCount = sMetasCount sig + 1
             })
   where
-    mv = MetaVar $ sMetasCount sig
+    mv = A.MetaVar (sMetasCount sig) srcLoc
 
 -- | Instantiates the given 'MetaVar' with the given body.  Fails if no
 -- type is present for the 'MetaVar'.

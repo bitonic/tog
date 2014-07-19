@@ -2,21 +2,21 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Internal.Abs where
 
-import Data.String (IsString(fromString))
-import Data.Typeable (Typeable)
-import Control.Arrow                    ((***))
-import Data.Hashable (Hashable, hashWithSalt)
+import Prelude.Extended hiding ((<>))
 import PrettyPrint
 
-data SrcLoc = SrcLoc { pLine :: Int, pCol :: Int }
+data SrcLoc = SrcLoc { pLine :: !Int, pCol :: !Int }
 
 noSrcLoc = SrcLoc 0 0
 
 instance Show SrcLoc where
   show (SrcLoc line col) = concat [show line, ":", show col]
 
-data Name = Name { nameLoc :: SrcLoc, nameString :: String }
-    deriving (Typeable)
+instance Pretty SrcLoc where
+  pretty = text . show
+
+data Name = Name { nameLoc :: !SrcLoc, nameString :: !String }
+    deriving (Typeable, Generic)
 
 data DefName
     = SimpleName Name
@@ -78,7 +78,7 @@ data Head = Var Name
           | Def DefName
           | J SrcLoc
           | TermVar Int Name
-          | TermMeta Int
+          | TermMeta MetaVar
 
 data Elim = Apply Expr
           | Proj Name
@@ -133,7 +133,7 @@ instance HasSrcLoc Head where
     TermVar _ x -> srcLoc x
     Def x       -> srcLoc x
     J loc       -> loc
-    TermMeta _  -> noSrcLoc
+    TermMeta mv -> srcLoc mv
 
 instance HasSrcLoc Pattern where
   srcLoc p = case p of
@@ -209,7 +209,7 @@ instance Pretty Head where
     Def f       -> pretty f
     TermVar i x -> pretty i <> "#" <> pretty x
     J _         -> text "J"
-    TermMeta mv -> "_" <> pretty mv
+    TermMeta mv -> pretty mv
 
 instance Pretty DefName where
   pretty dn = case dn of
@@ -224,19 +224,6 @@ instance Pretty Pattern where
 
 -- Pretty printing terms
 ------------------------------------------------------------------------
-
--- class PrettyTerm a where
---   prettyPrecTerm
---     :: Int
---     -> Bool                     -- ^ Are we the last term in the line?
---     -> a
---     -> Doc
-
--- defaultPrettyPrec :: PrettyTerm a => Int -> a -> Doc
--- defaultPrettyPrec p = prettyPrecTerm p True
-
--- instance Pretty Elim where prettyPrec = defaultPrettyPrec
--- instance Pretty Expr where prettyPrec = defaultPrettyPrec
 
 instance Pretty Elim where
   prettyPrec p (Apply e) = condParens (p > 0) $ "$" <+> prettyPrec p e
@@ -281,14 +268,45 @@ instance Pretty Expr where
     Con c args -> prettyApp p (pretty c) args
 
 prettyTel :: [(Name, Expr)] -> Doc
-prettyTel bs = hsep (map pr bs)
+prettyTel = group . prs . reverse
   where
+    prs []       = empty
+    prs [b]      = pr b
+    prs (b : bs) = group (prs bs) $$ pr b
+
     pr (x, e) = parens (pretty x <+> text ":" <+> pretty e)
 
 prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
-prettyApp _ h []    = h
-prettyApp p h args0 = condParens (p > 3) $ h <> group (nest 2 (space <> prettyArgs (reverse args0)))
+prettyApp _ h []   = h
+prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (reverse args0)))
   where
     prettyArgs []           = empty
-    prettyArgs [arg]        = prettyPrec 4 arg
+    prettyArgs [arg]        = line <> prettyPrec 4 arg
     prettyArgs (arg : args) = group (prettyArgs args) $$ prettyPrec 4 arg
+
+-- 'MetaVar'iables
+------------------------------------------------------------------------
+
+-- | 'MetaVar'iables.  Globally scoped.
+data MetaVar = MetaVar
+  { mvId     :: !Int
+  , mvSrcLoc :: !SrcLoc
+  } deriving (Generic)
+
+instance Eq MetaVar where
+  (==) = (==) `on` mvId
+
+instance Ord MetaVar where
+  compare = comparing mvId
+
+instance Hashable MetaVar where
+  hashWithSalt s = hashWithSalt s . mvId
+
+instance Pretty MetaVar where
+    prettyPrec _ = text . show
+
+instance Show MetaVar where
+   show (MetaVar mv _) = "_" ++ show mv
+
+instance HasSrcLoc MetaVar where
+  srcLoc = mvSrcLoc

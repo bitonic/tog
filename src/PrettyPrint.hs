@@ -13,6 +13,7 @@ module PrettyPrint
   , parens
   , Pretty(..)
   , list
+  , vcatList
   ) where
 
 import           Data.String                      (IsString(fromString))
@@ -32,8 +33,8 @@ renderCompact x = displayS (PP.renderCompact (pretty x)) ""
 infixr 5 $$
 infixr 5 $$>
 
-infixr 5 //
-infixr 5 //>
+infixr 6 //
+infixr 6 //>
 
 list :: [Doc] -> Doc
 list = encloseSep lbracket rbracket (comma <> space)
@@ -66,6 +67,9 @@ condParens False = id
 
 parens :: Doc -> Doc
 parens x = char '(' <> align x <> char ')'
+
+vcatList :: [Doc] -> Doc
+vcatList = PP.encloseSep "[" "]" (line <> "," <> space)
 
 instance IsString Doc where
   fromString = text

@@ -5,12 +5,11 @@ module Term.Class where
 import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, DefName(SimpleName))
+import           Syntax.Internal                  (Name, DefName(SimpleName), MetaVar)
 import qualified Syntax.Internal                  as A
 import qualified PrettyPrint                      as PP
 import {-# SOURCE #-} qualified Term.Signature    as Sig
 import {-# SOURCE #-} qualified Term.Telescope    as Tel
-import           Term.MetaVar
 import           Term.Synonyms
 import           Term.TermM
 
@@ -169,7 +168,7 @@ metaVars sig t = do
 -- HasAbs
 ---------
 
-class (Typeable t) => IsTerm t where
+class (Typeable t, Show t) => IsTerm t where
     termEq :: t -> t -> TermM Bool
     default termEq :: Eq t => t -> t -> TermM Bool
     termEq t1 t2 = return $ t1 == t2
@@ -546,5 +545,5 @@ internalToTerm t0 = do
             Var v -> A.TermVar (varIndex v) (varName v)
             Def f -> A.Def f
             J -> A.J A.noSrcLoc
-            Meta mv -> A.TermMeta $ unMetaVar mv
+            Meta mv -> A.TermMeta mv
       A.App h' <$> mapM (foldElim (\t -> A.Apply <$> internalToTerm t) (\n _ -> return $ A.Proj n)) args

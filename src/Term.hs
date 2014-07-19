@@ -1,6 +1,5 @@
 module Term
   ( module Term.Class
-  , module Term.MetaVar
   , module Term.Synonyms
   , module Term.TermM
   , module Term.Pretty
@@ -10,7 +9,6 @@ module Term
   ) where
 
 import Term.Class
-import Term.MetaVar
 import Term.Synonyms
 import Term.TermM
 import Term.Pretty

@@ -49,6 +49,7 @@ module TypeCheck.Monad
   , ProblemId
   , ProblemIdInt
   , ProblemState
+  , Problem(..)
   , Stuck(..)
   , newProblem
   , newProblem_
@@ -63,13 +64,14 @@ module TypeCheck.Monad
 
 import qualified Data.HashMap.Strict              as HMS
 import qualified Data.HashSet                     as HS
+import qualified Data.Map.Strict                  as Map
 import           System.IO                        (hPutStr, stderr)
 import           Unsafe.Coerce                    (unsafeCoerce)
 
 import           Prelude.Extended
-import           PrettyPrint                      ((<+>), ($$))
+import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
-import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, DefName(SimpleName))
+import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, DefName(SimpleName), MetaVar)
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
@@ -110,10 +112,12 @@ instance Monad (TC t p s) where
 
 -- | Takes a 'TCState' and a computation on a closed context and
 -- produces an error or a result with a new state.
-runTC :: InterpretProblem t p s -> TCState t p s
+runTC :: (IsTerm t)
+      => InterpretProblem t p s -> DescribeProblem t p s
+      -> TCState t p s
       -> TC t p s a -> IO (Either PP.Doc (a, TCState t p s))
-runTC int ts (TC m) = do
-  res <- m (initEnv int, ts)
+runTC int desc ts (TC m) = do
+  res <- m (initEnv int desc, ts)
   return $ case res of
     OK ts' x  -> Right (x, ts')
     Error err -> Left $ PP.pretty err
@@ -121,6 +125,7 @@ runTC int ts (TC m) = do
 data TCEnv t p s = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
     , teInterpretProblem :: !(InterpretProblem t p s)
+    , teDescribeProblem  :: !(DescribeProblem t p s)
     , teDebug            :: !(Maybe Debug)
     }
 
@@ -132,16 +137,17 @@ data Debug = Debug
 initDebug :: Debug
 initDebug = Debug 0 []
 
-initEnv :: InterpretProblem t p s -> TCEnv t p s
-initEnv int =
+initEnv :: InterpretProblem t p s -> DescribeProblem t p s -> TCEnv t p s
+initEnv int desc =
   TCEnv{ teCurrentSrcLoc    = noSrcLoc
        , teInterpretProblem = int
+       , teDescribeProblem  = desc
        , teDebug            = Nothing
        }
 
 data TCState t p s = TCState
     { tsSignature        :: !(Sig.Signature t)
-    , tsUnsolvedProblems :: !(HMS.HashMap ProblemIdInt (Problem p))
+    , tsUnsolvedProblems :: !(Map.Map ProblemIdInt (Problem p))
     , tsSolvedProblems   :: !(HMS.HashMap ProblemIdInt ProblemSolution)
     , tsProblemCount     :: !Int
     , tsState            :: !s
@@ -152,7 +158,7 @@ initTCState
   :: s -> TCState t p s
 initTCState s = TCState
   { tsSignature        = Sig.empty
-  , tsUnsolvedProblems = HMS.empty
+  , tsUnsolvedProblems = Map.empty
   , tsSolvedProblems   = HMS.empty
   , tsProblemCount     = 0
   , tsState            = s
@@ -179,7 +185,7 @@ instance Show TCErr where
 data TCReport t p = TCReport
   { trSignature        :: !(Sig.Signature t)
   , trSolvedProblems   :: !(HS.HashSet ProblemIdInt)
-  , trUnsolvedProblems :: !(HMS.HashMap ProblemIdInt (Problem p))
+  , trUnsolvedProblems :: !(Map.Map ProblemIdInt (Problem p))
   }
 
 tcReport :: (IsTerm t) => TCState t p s -> TCReport t p
@@ -202,8 +208,10 @@ typeError err = do
     Nothing -> do
       return ()
     Just d -> do
-      debug_ "** About to trow error, stack trace:"
-      forM_ (dStackTrace d) $ debug_ . PP.indent _ERROR_INDENT
+      debug_ $
+        "** About to trow error" $$
+        "error:" //> err $$
+        "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
   TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
 
 assert :: (PP.Doc -> String) -> TC t p s a -> TC t p s a
@@ -296,14 +304,27 @@ addClauses f clauses = do
 
 addMetaVar :: (IsTerm t) => Closed (Type t) -> TC t p s MetaVar
 addMetaVar type_ = do
+  loc <- teCurrentSrcLoc <$> ask
   sig <- tsSignature <$> get
-  let (mv, sig') = Sig.addMetaVar sig type_
+  let (mv, sig') = Sig.addMetaVar sig loc type_
+  let msg = do
+        typeDoc <- prettyTermTC type_
+        return $
+          "*** addMetaVar" <+> PP.pretty mv $$
+          typeDoc
+  debug msg
   modify_ $ \ts -> ts{tsSignature = sig'}
   return mv
 
 instantiateMetaVar
   :: (IsTerm t) => MetaVar -> Closed (Term t) -> TC t p s ()
 instantiateMetaVar mv t = do
+  let msg = do
+        tDoc <- prettyTermTC t
+        return $
+          "*** instantiateMetaVar" <+> PP.pretty mv $$
+          tDoc
+  debug msg
   modify_ $ \ts -> ts{tsSignature = Sig.instantiateMetaVar (tsSignature ts) mv t}
 
 getMetaVarType
@@ -365,7 +386,7 @@ debug docM = do
     Just d -> do
       doc <- assertDoc docM
       TC $ \(_, ts) -> do
-        let s  = PP.renderPretty 150 doc
+        let s  = PP.renderPretty 100 doc
         let pad = replicate (dDepth d * _ERROR_INDENT) ' '
         hPutStr stderr $ unlines $ map (pad ++) $ lines s
         return $ OK ts ()
@@ -396,23 +417,29 @@ type ProblemIdInt = Int
 newtype ProblemId a = ProblemId ProblemIdInt
   deriving (Show)
 
+instance PP.Pretty (ProblemId a) where
+  pretty (ProblemId pid) = PP.pretty pid
+
 -- | To store problems, we store the context of the suspended
 -- computation; and its state and description living in said context.
 --
 -- Both the type of the bound variable and the result type are
 -- 'Typeable' since we store the solutions and problems dynamically so
--- that they can all be in the same 'HMS.HashMap'.
+-- that they can all be in the same 'Map.Map'.
 data Problem p = forall a b. Problem
-  { pProblem    :: !(Maybe (p a b))
+  { problemProblem    :: !(Maybe (p a b))
     -- ^ If 'Nothing', it means that we're just waiting on another
     -- problem to complete and we'll then return its result.
-  , pState      :: !ProblemState
-  , pSrcLoc     :: !SrcLoc
-  , pStackTrace :: !(Maybe [PP.Doc])
+  , problemState      :: !ProblemState
+  , problemSrcLoc     :: !SrcLoc
+  , problemStackTrace :: !(Maybe [PP.Doc])
   }
 
 type InterpretProblem t p s =
   forall a b. p a b -> a -> StuckTC t p s b
+
+type DescribeProblem t p s =
+  forall a b. p a b -> TC t p s PP.Doc
 
 data ProblemState
     = BoundToMetaVars  !(HS.HashSet MetaVar)
@@ -439,13 +466,24 @@ data Stuck a
 
 addProblem :: ProblemIdInt -> Problem p -> TC t p s (ProblemId a)
 addProblem pid prob = do
-  modify $ \ts -> (ts{tsUnsolvedProblems = HMS.insert pid prob (tsUnsolvedProblems ts)}, ProblemId pid)
+  modify $ \ts ->
+    ( ts{tsUnsolvedProblems = Map.insert pid prob (tsUnsolvedProblems ts)}
+    , ProblemId pid
+    )
 
 addFreshProblem :: Problem p -> TC t p s (ProblemId a)
-addFreshProblem prob = do
+addFreshProblem prob@(Problem mbProb _ _ _) = do
   pid <- modify $ \ts ->
          let count = tsProblemCount ts in (ts{tsProblemCount = count + 1}, count)
-  debug_ $ "** Adding new problem" <+> PP.pretty pid
+  debug $ do
+    desc <- teDescribeProblem <$> ask
+    probDoc <- case mbProb of
+      Nothing -> return "Waiting to return."
+      Just p  -> desc p
+    return $
+      "*** Adding new problem" <+> PP.pretty pid $$
+      "state:" <+> PP.pretty (problemState prob) $$
+      "description:" //> probDoc
   addProblem pid prob
 
 -- | Store a new problem dependend on a set of 'MetaVar's.  When one of
@@ -454,10 +492,17 @@ newProblem
     :: HS.HashSet MetaVar
     -> p () b
     -> StuckTC t p s b
+newProblem mvs m | HS.null mvs = do
+    int <- teInterpretProblem <$> ask
+    int m ()
 newProblem mvs m = do
     loc <- teCurrentSrcLoc <$> ask
     mbTrace <- fmap dStackTrace . teDebug <$> ask
-    let prob = Problem{pProblem = Just m, pState = BoundToMetaVars mvs, pSrcLoc = loc, pStackTrace = mbTrace}
+    let prob = Problem{ problemProblem    = Just m
+                      , problemState      = BoundToMetaVars mvs
+                      , problemSrcLoc     = loc
+                      , problemStackTrace = mbTrace
+                      }
     StuckOn <$> addFreshProblem prob
 
 newProblem_
@@ -475,35 +520,40 @@ bindProblem
 bindProblem (ProblemId pid) f = do
     loc <- teCurrentSrcLoc <$> ask
     mbTrace <- fmap dStackTrace . teDebug <$> ask
-    let prob = Problem{pProblem = Just f, pState = BoundToProblem pid, pSrcLoc = loc, pStackTrace = mbTrace}
+    let prob = Problem{ problemProblem    = Just f
+                      , problemState      = BoundToProblem pid
+                      , problemSrcLoc     = loc
+                      , problemStackTrace = mbTrace
+                      }
     StuckOn <$> addFreshProblem prob
 
 -- | This computation solves all problems that are solvable in the
 -- current state.  Returns whether any problem was solved.
 solveProblems :: forall p t s. TC t p s Bool
 solveProblems = do
-  unsolvedProbs <- HMS.toList . tsUnsolvedProblems <$> get
-  -- Go over all unsolved problems and record if we made progress in any
-  -- of them.
-  progress <- fmap or $ forM unsolvedProbs $ \(pid, (Problem prob state loc mbTrace)) -> do
-    -- Collect the state necessary to execute the current problem, if
-    -- available.
-    mbSolution :: Maybe ProblemSolution <- case state of
-      -- If we're waiting on metavars, check if at least one is
-      -- instantiated.  The state will be ().
-      BoundToMetaVars mvs -> do
-        withSignature $ \sig -> msum
-          [ problemSolution () <$ HMS.lookup mv (Sig.metaVarsBodies sig)
-          | mv <- HS.toList mvs
-          ]
-      -- If we're bound to another problem, retrieve its result if
+  debugBracket_ "*** solveProblems" $ do
+    unsolvedProbs <- Map.toAscList . tsUnsolvedProblems <$> get
+    -- Go over all unsolved problems and record if we made progress in any
+    -- of them.
+    progress <- fmap or $ forM unsolvedProbs $ \(pid, (Problem prob state loc mbTrace)) -> do
+      -- Collect the state necessary to execute the current problem, if
       -- available.
-      BoundToProblem boundTo ->
-        HMS.lookup boundTo . tsSolvedProblems <$> get
-    case mbSolution of
-      Nothing       -> return False
-      Just solution -> True <$ solveProblem pid prob loc mbTrace solution
-  progress <$ when progress (void solveProblems)
+      mbSolution :: Maybe ProblemSolution <- case state of
+        -- If we're waiting on metavars, check if at least one is
+        -- instantiated.  The state will be ().
+        BoundToMetaVars mvs -> do
+          withSignature $ \sig -> msum
+            [ problemSolution () <$ HMS.lookup mv (Sig.metaVarsBodies sig)
+            | mv <- HS.toList mvs
+            ]
+        -- If we're bound to another problem, retrieve its result if
+        -- available.
+        BoundToProblem boundTo ->
+          HMS.lookup boundTo . tsSolvedProblems <$> get
+      case mbSolution of
+        Nothing       -> return False
+        Just solution -> True <$ solveProblem pid prob loc mbTrace solution
+    progress <$ when progress (void solveProblems)
   where
     solveProblem
       :: forall a b.
@@ -520,10 +570,11 @@ solveProblems = do
       -> TC t p s ()
     solveProblem pid mbP loc mbTrace (ProblemSolution x) = do
       -- Delete the problem from the list of unsolved problems.
-      modify_ $ \ts -> ts{tsUnsolvedProblems = HMS.delete pid (tsUnsolvedProblems ts)}
+      modify_ $ \ts -> ts{tsUnsolvedProblems = Map.delete pid (tsUnsolvedProblems ts)}
       -- Execute the suspended computation. From how the functions
       -- adding problems are designed we know that the types will match
       -- up.
+      debug_ ("** Resuming problem" <+> PP.pretty pid)
       stuck <- case mbP of
         Nothing -> do
           -- TODO replace with something safe, for example using :~:.
@@ -536,11 +587,11 @@ solveProblems = do
           let comp = teInterpretProblem te
           let te' = case (teDebug te, mbTrace) of
                       (Nothing, _)          -> te
-                      (_, Nothing)          -> te
+                      (_,      Nothing)     -> te
                       (Just d, Just trace_) -> te{teDebug = Just d{dStackTrace = trace_}}
           local te' $ atSrcLoc loc $ do
-            debugBracket_ ("*** Resuming problem" <+> PP.pretty pid) $
-              comp p x'
+            debug_ ("** Resuming problem" <+> PP.pretty pid)
+            comp p x'
       case stuck of
         NotStuck y -> do
           -- Mark the problem as solved.
@@ -594,3 +645,6 @@ ask = TC $ \(te, ts) -> return $ OK ts te
 
 local :: TCEnv t p s -> TC t p s a -> TC t p s a
 local te (TC m) = TC $ \(_, ts) -> m (te, ts)
+
+prettyTermTC :: (IsTerm t) => t -> TC t p s PP.Doc
+prettyTermTC t = withSignatureTermM $ \sig -> prettyTerm sig t
