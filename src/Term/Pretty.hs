@@ -37,7 +37,7 @@ prettyElim sig (Apply t)  = PP.pretty . A.Apply <$> (internalToTerm =<< instanti
 
 prettyElims :: (IsTerm t) => Sig.Signature t -> [Elim t] -> TermM PP.Doc
 prettyElims sig elims =
-  PP.vcatList <$> mapM (prettyElim sig) elims
+  PP.list <$> mapM (prettyElim sig) elims
 
 prettyDefinition :: (IsTerm t) => Sig.Signature t -> Closed (Definition t) -> TermM PP.Doc
 prettyDefinition sig (Constant Postulate type_) =
@@ -72,14 +72,15 @@ prettyClause sig (Clause pats body) = do
 prettyTel
   :: (IsTerm t)
   => Sig.Signature t -> Tel.Tel t -> TermM PP.Doc
-prettyTel _ Tel.Empty = do
-  return "[]"
-prettyTel sig (Tel.Cons (n0, type0) tel0) = do
-  type0Doc <- prettyTerm sig type0
-  tel0Doc <- go tel0
-  return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc $$ tel0Doc
+prettyTel sig tel00 = fmap PP.group $ case tel00 of
+  Tel.Empty -> do
+    return "[]"
+  Tel.Cons (n0, type0) tel0 -> do
+    type0Doc <- prettyTerm sig type0
+    tel0Doc <- go tel0
+    return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc $$ tel0Doc
   where
-    go Tel.Empty =
+    go Tel.Empty = do
       return "]"
     go (Tel.Cons (n, type_) tel) = do
       typeDoc <- prettyTerm sig type_

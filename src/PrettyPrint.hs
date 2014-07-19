@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module PrettyPrint
   ( module Text.PrettyPrint.Leijen
   , render
@@ -13,7 +14,6 @@ module PrettyPrint
   , parens
   , Pretty(..)
   , list
-  , vcatList
   ) where
 
 import           Data.String                      (IsString(fromString))
@@ -37,7 +37,8 @@ infixr 6 //
 infixr 6 //>
 
 list :: [Doc] -> Doc
-list = encloseSep lbracket rbracket (comma <> space)
+list [] = "[]"
+list xs = group $ PP.encloseSep ("[" <> space) (line <> "]") ("," <> space) xs
 
 tupled :: [Doc] -> Doc
 tupled = encloseSep lparen rparen (comma <> space)
@@ -68,9 +69,6 @@ condParens False = id
 parens :: Doc -> Doc
 parens x = char '(' <> align x <> char ')'
 
-vcatList :: [Doc] -> Doc
-vcatList = PP.encloseSep "[" "]" (line <> "," <> space)
-
 instance IsString Doc where
   fromString = text
 
@@ -81,7 +79,7 @@ class Pretty a where
   pretty = prettyPrec 0
 
   prettyList :: [a] -> Doc
-  prettyList  = list . map pretty
+  prettyList  = encloseSep lbracket rbracket (comma <> space) . map pretty
 
   prettyPrec :: Int -> a -> Doc
   prettyPrec _ = pretty

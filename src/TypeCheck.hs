@@ -1386,8 +1386,8 @@ etaExpandVar tyCon type_ tel = do
   App (Def _) tyConPars0 <- whnfViewTC type_
   let Just tyConPars = mapM isApply tyConPars0
   appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
-  -- TODO this should be an assertion (unrollPiWithNamesTC must not fail)
-  (dataConPars, _) <- unrollPiWithNames appliedDataConType (map fst projs)
+  (dataConPars, _) <- assert ("etaExpandVar, unrollPiWithNames:" <+>) $
+    unrollPiWithNames appliedDataConType (map fst projs)
   dataConT <- conTC dataCon =<< mapM varTC (ctxVars dataConPars)
   tel' <- liftTermM $ Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
   let telLen = Tel.length tel'
@@ -1561,7 +1561,7 @@ prettyTypeCheckProblem sig p = case p of
       "type:" //> typeDoc
   CheckSpine ctx els -> do
     ctxDoc <- prettyContext sig ctx
-    let elsDoc = PP.vcatList $ map PP.pretty els
+    let elsDoc = PP.list $ map PP.pretty els
     return $
       "CheckSpine" $$
       "context:" //> ctxDoc $$
@@ -1791,7 +1791,8 @@ instantiateMetaVar' mv t = do
       debugBracket_ ("*** Check metaVar" <+> PP.pretty mv) $ do
         solveProblems_
         absT <- liftTermM $ internalToTerm t
-        _ <- assert (const "impossible: inconsistent metavar body") $ check Ctx.Empty absT mvType
+        _ <- assert ("impossible: inconsistent metavar body:" <+>) $ freeze $
+             check Ctx.Empty absT mvType
         instantiateMetaVar mv t
     else do
       instantiateMetaVar mv t

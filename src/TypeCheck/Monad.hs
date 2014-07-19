@@ -60,6 +60,8 @@ module TypeCheck.Monad
   , StuckTC
   , returnStuckTC
   , bindStuckTC
+    -- * Freezing
+  , freeze
   ) where
 
 import qualified Data.HashMap.Strict              as HMS
@@ -127,6 +129,7 @@ data TCEnv t p s = TCEnv
     , teInterpretProblem :: !(InterpretProblem t p s)
     , teDescribeProblem  :: !(DescribeProblem t p s)
     , teDebug            :: !(Maybe Debug)
+    , teFrozen           :: !Bool
     }
 
 data Debug = Debug
@@ -143,6 +146,7 @@ initEnv int desc =
        , teInterpretProblem = int
        , teDescribeProblem  = desc
        , teDebug            = Nothing
+       , teFrozen           = False
        }
 
 data TCState t p s = TCState
@@ -214,11 +218,11 @@ typeError err = do
         "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
   TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
 
-assert :: (PP.Doc -> String) -> TC t p s a -> TC t p s a
+assert :: (PP.Doc -> PP.Doc) -> TC t p s a -> TC t p s a
 assert msg (TC m) = TC $ \(te, ts) -> do
   res <- m (te, ts)
   case res of
-    Error (DocErr _ err) -> error $ msg err
+    Error (DocErr _ err) -> error $ PP.render $ msg err
     OK ts' x             -> return $ OK ts' x
 
 -- SrcLoc
@@ -242,12 +246,12 @@ liftTermM m = TC $ \(_, ts) -> do
 -- | Do something with the current signature.
 withSignature :: (Sig.Signature t -> a) -> TC t p s a
 withSignature f = do
-  sig <- modify $ \ts -> (ts, tsSignature ts)
+  sig <- tsSignature <$> get
   return $ f sig
 
 withSignatureTermM :: (Sig.Signature t -> TermM a) -> TC t p s a
 withSignatureTermM f = do
-  sig <- modify $ \ts -> (ts, tsSignature ts)
+  sig <- tsSignature <$> get
   liftTermM $ f sig
 
 getDefinition
@@ -369,13 +373,7 @@ debugBracket_ :: PP.Doc -> TC t p s a -> TC t p s a
 debugBracket_ doc = debugBracket (return doc)
 
 assertDoc :: TC t p s PP.Doc -> TC t p s PP.Doc
-assertDoc docM = TC $ \(te, ts) -> do
-  mbDoc <- unTC docM (te, ts)
-  case mbDoc of
-    OK ts' doc' ->
-      return $ OK ts' doc'
-    Error (DocErr _ err) -> do
-      error $ PP.render $ "assertDoc: the doc action got an error:" $$ err
+assertDoc = assert ("assertDoc: the doc action got an error:" <+>)
 
 debug :: TC t p s PP.Doc -> TC t p s ()
 debug docM = do
@@ -398,12 +396,10 @@ debug_ doc = debug (return doc)
 ------------------------------------------------------------------------
 
 getState :: TC t p s s
-getState = TC $ \(_, ts) -> do
-  return $ OK ts $ tsState $ ts
+getState = tsState <$> get
 
 putState :: s -> TC t p s ()
-putState s = TC $ \(_, ts) -> do
-  return $ OK ts{tsState = s} ()
+putState s = modify_ $ \ts -> ts{tsState = s}
 
 -- Problem handling
 ------------------------------------------------------------------------
@@ -628,17 +624,28 @@ bindStuckTC m p = do
     StuckOn pid ->
       bindProblem pid p
 
+-- Freezing
+------------------------------------------------------------------------
+
+freeze :: TC t p s a -> TC t p s a
+freeze m = do
+  te <- ask
+  local te{teFrozen = True} m
+
 -- Utils
 ------------------------------------------------------------------------
 
 modify :: (TCState t p s -> (TCState t p s, a)) -> TC t p s a
-modify f = TC $ \(_, ts) -> let (ts', x) = f ts in return $ OK ts' x
+modify f = TC $ \(te, ts) ->
+  if teFrozen te
+  then unTC (typeError "Trying to modify state when frozen.") (te, ts)
+  else let (ts', x) = f ts in return $ OK ts' x
 
 modify_ :: (TCState t p s -> TCState t p s) -> TC t p s ()
 modify_ f = modify $ \ts -> (f ts, ())
 
 get :: TC t p s (TCState t p s)
-get = modify $ \ts -> (ts, ts)
+get = TC $ \(_, ts) -> return $ OK ts ts
 
 ask :: TC t p s (TCEnv t p s)
 ask = TC $ \(te, ts) -> return $ OK ts te
