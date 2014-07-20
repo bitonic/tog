@@ -262,7 +262,8 @@ checkFields ctx0 = go Ctx.Empty
         return $ Tel.tel ctx
     go ctx (A.Sig field synFieldType : fields) = do
         fieldType <- isType (ctx0 Ctx.++ ctx) synFieldType
-        go (Ctx.Snoc ctx (field, fieldType)) fields
+        extendContext ctx (field, fieldType) $ \ctx' -> do
+          go ctx' fields
 
 addProjections
     :: (IsTerm t)
@@ -446,10 +447,8 @@ check
 check ctx synT type_ = atSrcLoc synT $ do
  let msg = do
        typeDoc <- prettyTermTC type_
-       ctxDoc <- prettyContextTC ctx
        return $
          "*** check" $$
-         "context:" //> ctxDoc $$
          "term:" //> PP.pretty synT $$
          "type:" //> typeDoc
  debugBracket msg $
@@ -467,7 +466,7 @@ check ctx synT type_ = atSrcLoc synT $ do
        addMetaVarInCtx ctx type_
      A.Lam name synBody -> do
        metaVarIfStuck ctx type_ $ matchPi name type_ $ \dom cod -> do
-         body <- check (Ctx.Snoc ctx (name, dom)) synBody cod
+         body <- extendContext ctx (name, dom) $ \ctx' -> check ctx' synBody cod
          returnStuckTC =<< lamTC body
      _ -> do
        metaVarIfStuck ctx type_ $
@@ -515,7 +514,7 @@ infer ctx synT = atSrcLoc synT $ do
         returnStuckTC (set, set)
       A.Pi name synDomain synCodomain -> do
         domain   <- isType ctx synDomain
-        codomain <- isType (Ctx.Snoc ctx (name, domain)) synCodomain
+        codomain <- extendContext ctx (name, domain) $ \ctx' -> isType ctx' synCodomain
         t <- piTC domain codomain
         returnStuckTC (t, set)
       A.Fun synDomain synCodomain -> do
@@ -569,110 +568,110 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 -- Equality
 ------------
 
+-- | INVARIANT: Either both terms have been typechecked against the
+-- type, or is blocked.
 checkEqual
   :: (IsTerm t)
   => Ctx t -> Type t -> Term t -> Term t -> StuckTC' t ()
 checkEqual ctx type_ x y = do
   let msg = do
-        ctxDoc <- prettyContextTC ctx
         typeDoc <- prettyTermTC type_
         xDoc <- prettyTermTC x
         yDoc <- prettyTermTC y
         return $
           "*** checkEqual" $$
-          "context:" //> ctxDoc $$
           "type:" //> typeDoc $$
           "x:" //> xDoc $$
           "y:" //> yDoc
   debugBracket msg $ do
-    typeView <- whnfViewTC type_
-    type' <- unviewTC typeView
-    -- Eta-expansion
-    (blockedX, blockedY) <- do
-      debugBracket_ "*** Eta-expansion" $ do
-        mbExpand <- etaExpand type'
-        (x', y') <- case mbExpand of
-          Nothing -> do
-            return (x, y)
-          Just expand -> do
-            x' <- expand x
-            y' <- expand y
-            let msg' = do
-                  x'Doc <- prettyTermTC x'
-                  y'Doc <- prettyTermTC y'
-                  return $ "** Expanded to" $$ x'Doc $$ y'Doc
-            debug msg'
-            return (x', y')
-        (,) <$> whnfTC x' <*> whnfTC y'
-    -- Actual equality
-    x' <- liftTermM $ ignoreBlocking blockedX
-    y' <- liftTermM $ ignoreBlocking blockedY
-    eq <- do
-      disabled <- tcsDisableSynEquality <$> getState
-      if disabled then return False else liftTermM (termEq x' y')
-    case (blockedX, blockedY) of
-      (_, _) | eq ->
-        returnStuckTC ()
-      (MetaVarHead mv elims, _) ->
-        metaAssign ctx type_ mv elims y'
-      (_, MetaVarHead mv elims) ->
-        metaAssign ctx type_ mv elims x'
-      (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
-        -- Both blocked, and we already checked for syntactic equality,
-        -- let's try syntactic equality when normalized.
-        x'' <- nfTC x'
-        y'' <- nfTC y'
-        eq' <- liftTermM $ termEq x'' y''
-        if eq'
-          then returnStuckTC ()
-          else do
-            let mvs = HS.union mvs1 mvs2
-            debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-            newProblem mvs $ CheckEqual ctx type_ x' y'
-      (BlockedOn mvs f elims, _) -> do
-        checkEqualBlockedOn ctx type' mvs f elims y'
-      (_, BlockedOn mvs f elims) -> do
-        checkEqualBlockedOn ctx type' mvs f elims x'
-      (NotBlocked _, NotBlocked _) -> do
-         xView <- viewTC x'
-         yView <- viewTC y'
-         let mkVar n ix = varTC $ V $ named n ix
-         case (typeView, xView, yView) of
-           -- Note that here we rely on canonical terms to have canonical
-           -- types, and on the terms to be eta-expanded.
-           (Pi dom cod, Lam body1, Lam body2) -> do
-             -- TODO there is a bit of duplication between here and expansion.
-             name <- getAbsNameTC body1
-             checkEqual (Ctx.Snoc ctx (name, dom)) cod body1 body2
-           (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
-             -- Pi : (A : Set) -> (A -> Set) -> Set
-             piType <- do
-               av <- mkVar "A" 0
-               b <- piTC av set
-               piTC set =<< piTC b set
-             cod1' <- lamTC cod1
-             cod2' <- lamTC cod2
-             checkEqualApplySpine ctx piType [dom1, cod1'] [dom2, cod2']
-           (Set, Equal type1 x1 y1, Equal type2 x2 y2) -> do
-             -- _==_ : (A : Set) -> A -> A -> Set
-             equalType_ <- do
-               xv <- mkVar "A" 0
-               yv <- mkVar "A" 1
-               piTC set =<< piTC xv =<< piTC yv set
-             checkEqualApplySpine ctx equalType_ [type1, x1, y1] [type2, x2, y2]
-           (Equal _ _ _, Refl, Refl) -> do
-             returnStuckTC ()
-           (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
-              let Just tyConPars = mapM isApply tyConPars0
-              DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
-              appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
-              checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
-           (Set, Set, Set) -> do
-             returnStuckTC ()
-           (_, App h1 elims1, App h2 elims2) | h1 == h2 -> do
-             equalSpine ctx h1 elims1 elims2
-           (_, _, _) -> do
-             checkError $ TermsNotEqual x y
+    postponeIfBlockedType (CheckEqual ctx type_ x y) type_ $ \type' -> do
+      -- Eta-expansion
+      (blockedX, blockedY) <- do
+        debugBracket_ "*** Eta-expansion" $ do
+          mbExpand <- etaExpand type'
+          (x', y') <- case mbExpand of
+            Nothing -> do
+              return (x, y)
+            Just expand -> do
+              x' <- expand x
+              y' <- expand y
+              let msg' = do
+                    x'Doc <- prettyTermTC x'
+                    y'Doc <- prettyTermTC y'
+                    return $ "** Expanded to" $$ x'Doc $$ y'Doc
+              debug msg'
+              return (x', y')
+          (,) <$> whnfTC x' <*> whnfTC y'
+      -- Actual equality
+      x' <- liftTermM $ ignoreBlocking blockedX
+      y' <- liftTermM $ ignoreBlocking blockedY
+      eq <- do
+        disabled <- tcsDisableSynEquality <$> getState
+        if disabled then return False else liftTermM (termEq x' y')
+      case (blockedX, blockedY) of
+        (_, _) | eq ->
+          returnStuckTC ()
+        (MetaVarHead mv elims, _) ->
+          metaAssign ctx type_ mv elims y'
+        (_, MetaVarHead mv elims) ->
+          metaAssign ctx type_ mv elims x'
+        (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
+          -- Both blocked, and we already checked for syntactic equality,
+          -- let's try syntactic equality when normalized.
+          x'' <- nfTC x'
+          y'' <- nfTC y'
+          eq' <- liftTermM $ termEq x'' y''
+          if eq'
+            then returnStuckTC ()
+            else do
+              let mvs = HS.union mvs1 mvs2
+              debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
+              stuckOn $ newProblem mvs $ CheckEqual ctx type_ x' y'
+        (BlockedOn mvs f elims, _) -> do
+          checkEqualBlockedOn ctx type' mvs f elims y'
+        (_, BlockedOn mvs f elims) -> do
+          checkEqualBlockedOn ctx type' mvs f elims x'
+        (NotBlocked _, NotBlocked _) -> do
+           typeView <- viewTC type'
+           xView <- viewTC x'
+           yView <- viewTC y'
+           let mkVar n ix = varTC $ V $ named n ix
+           case (typeView, xView, yView) of
+             -- Note that here we rely on canonical terms to have canonical
+             -- types, and on the terms to be eta-expanded.
+             (Pi dom cod, Lam body1, Lam body2) -> do
+               -- TODO there is a bit of duplication between here and expansion.
+               name <- getAbsNameTC body1
+               extendContext ctx (name, dom) $ \ctx' -> checkEqual ctx' cod body1 body2
+             (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
+               -- Pi : (A : Set) -> (A -> Set) -> Set
+               piType <- do
+                 av <- mkVar "A" 0
+                 b <- piTC av set
+                 piTC set =<< piTC b set
+               cod1' <- lamTC cod1
+               cod2' <- lamTC cod2
+               checkEqualApplySpine ctx piType [dom1, cod1'] [dom2, cod2']
+             (Set, Equal type1 x1 y1, Equal type2 x2 y2) -> do
+               -- _==_ : (A : Set) -> A -> A -> Set
+               equalType_ <- do
+                 xv <- mkVar "A" 0
+                 yv <- mkVar "A" 1
+                 piTC set =<< piTC xv =<< piTC yv set
+               checkEqualApplySpine ctx equalType_ [type1, x1, y1] [type2, x2, y2]
+             (Equal _ _ _, Refl, Refl) -> do
+               returnStuckTC ()
+             (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
+                let Just tyConPars = mapM isApply tyConPars0
+                DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+                appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+                checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+             (Set, Set, Set) -> do
+               returnStuckTC ()
+             (_, App h1 elims1, App h2 elims2) | h1 == h2 -> do
+               equalSpine ctx h1 elims1 elims2
+             (_, _, _) -> do
+               checkError $ TermsNotEqual x y
   where
     etaExpand type' = do
       typeView <- viewTC type'
@@ -734,62 +733,68 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
           "head:" //> hDoc $$
           "elims1:" //> elims1Doc $$
           "elims2:" //> elims2Doc
-  debugBracket msg $ case (elim1, elim2) of
-    (Apply arg1, Apply arg2) -> do
-      typeView <- whnfViewTC type_
-      case typeView of
-        Pi dom cod -> do
-          stuck <- checkEqual ctx dom arg1 arg2
-          let continue arg cod' = do
-                mbH' <- traverse (`eliminateTC` [Apply arg]) mbH
-                checkEqualSpine ctx cod' mbH' elims1 elims2
-          case stuck of
-            NotStuck () -> do
-              cod' <- liftTermM $ instantiate cod arg1
-              continue arg1 cod'
-            -- If we're stuck in checking the domain, see if the
-            -- function is dependent and if it's not continue checking
-            -- and wait for both to complete.  otherwise put a
-            -- metavariable as a placeholder for the argument and
-            -- continue checking with that, forcing it to be equal to
-            -- one of the arguments later.  Then wait for both problems
-            -- to complete.
-            StuckOn pid -> do
-              mbCod <- liftTermM $ strengthen_ 1 cod
-              case mbCod of
-                Just cod' -> do
-                  debug_ "*** Stuck on domain but non-dependent."
-                  stuck' <- continue arg1 cod'
-                  case stuck' of
-                    NotStuck () ->
-                      return $ StuckOn pid
-                    StuckOn pid' ->
-                      bindProblem pid $ WaitForProblem pid'
-                Nothing -> do
-                  mvT <- addMetaVarInCtx ctx dom
-                  debug $ do
-                    mvTDoc <- prettyTermTC mvT
-                    return $ "*** Stuck on domain, will use" <+> mvTDoc <+> "as type."
-                  cod' <- liftTermM $ instantiate cod mvT
-                  stuck' <- continue mvT cod' `bindStuckTC` CheckEqual ctx dom mvT arg1
-                  case stuck' of
-                    NotStuck () ->
-                      return $ StuckOn pid
-                    StuckOn pid' ->
-                      bindProblem pid $ WaitForProblem pid'
-        _ -> do
-          doc <- prettyTermTC type_
-          error $ "impossible.checkEqualSpine: Expected function type " ++ render doc
-    (Proj proj projIx, Proj proj' projIx')
-      | proj == proj' && projIx == projIx' ->
-        case mbH of
-          Nothing ->
-            error $ "impossible.checkEqualSpine: got projection but no head."
-          Just h  ->
-            applyProjection proj h type_ `bindStuckTC`
-              CheckEqualSpine ctx elims1 elims2
-    _ ->
-      checkError $ SpineNotEqual type_ (elim1 : elims1) (elim1 : elims2)
+  debugBracket msg $ do
+    let prob = CheckEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2)
+    postponeIfBlockedType prob type_ $ \type' -> do
+      case (elim1, elim2) of
+        (Apply arg1, Apply arg2) -> do
+          typeView <- viewTC type'
+          case typeView of
+            Pi dom cod -> do
+              stuck <- checkEqual ctx dom arg1 arg2
+              let continue arg cod' = do
+                    mbH' <- traverse (`eliminateTC` [Apply arg]) mbH
+                    checkEqualSpine ctx cod' mbH' elims1 elims2
+              case stuck of
+                NotStuck () -> do
+                  cod' <- liftTermM $ instantiate cod arg1
+                  continue arg1 cod'
+                -- If we're stuck in checking the domain, see if the
+                -- function is dependent and if it's not continue checking
+                -- and wait for both to complete.  otherwise put a
+                -- metavariable as a placeholder for the argument and
+                -- continue checking with that, forcing it to be equal to
+                -- one of the arguments later.  Then wait for both problems
+                -- to complete.
+                StuckOn pid -> do
+                  mbCod <- liftTermM $ strengthen_ 1 cod
+                  case mbCod of
+                    Just cod' -> do
+                      debug_ "*** Stuck on domain but non-dependent."
+                      stuck' <- continue arg1 cod'
+                      case stuck' of
+                        NotStuck () ->
+                          stuckOn $ return pid
+                        StuckOn pid' ->
+                          stuckOn $ bindProblem pid $ WaitForProblem pid'
+                    Nothing -> do
+                      mvT <- addMetaVarInCtx ctx dom
+                      debug $ do
+                        mvTDoc <- prettyTermTC mvT
+                        return $ "*** Stuck on domain, will use" <+> mvTDoc <+> "as type."
+                      -- Check that the metavar is to the first arg once
+                      -- we've proven that the two are equal...
+                      pid1 <- bindProblem pid $ CheckEqual ctx dom mvT arg1
+                      cod' <- liftTermM $ instantiate cod mvT
+                      stuck' <- continue mvT cod'
+                      case stuck' of
+                        NotStuck () ->
+                          stuckOn $ return pid1
+                        StuckOn pid2 ->
+                          stuckOn $ bindProblem pid1 $ WaitForProblem pid2
+            _ -> do
+              typeDoc <- prettyTermTC type'
+              error $ "impossible.checkEqualSpine: Expected function type\n" ++ render typeDoc ++ "\n" ++ show type'
+        (Proj proj projIx, Proj proj' projIx')
+          | proj == proj' && projIx == projIx' ->
+            case mbH of
+              Nothing ->
+                error $ "impossible.checkEqualSpine: got projection but no head."
+              Just h  ->
+                applyProjection proj h type_ `bindStuckTC`
+                  CheckEqualSpine1 ctx elims1 elims2
+        _ ->
+          checkError $ SpineNotEqual type_ (elim1 : elims1) (elim1 : elims2)
 checkEqualSpine _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 elims2
 
@@ -804,6 +809,24 @@ equalSpine ctx h elims1 elims2 = do
     Meta mv -> getMetaVarType mv
   h' <- appTC h []
   checkEqualSpine ctx hType (Just h') elims1 elims2
+
+postponeIfBlockedType
+  :: (IsTerm t)
+  => TypeCheckProblem t () () -> Type t -> (Type t -> StuckTC' t ())
+  -> StuckTC' t ()
+postponeIfBlockedType fallbackProb type_ ret = do
+  blockedType <- whnfTC type_
+  let fallback mvs = do
+        debug $ do
+          typeDoc <- prettyTermTC type_
+          return $
+             "*** postponeIfBlockedType" $$
+             "Postponing:" //> typeDoc
+        stuckOn $ newProblem mvs fallbackProb
+  case blockedType of
+    MetaVarHead mv _  -> fallback $ HS.singleton mv
+    BlockedOn mvs _ _ -> fallback mvs
+    NotBlocked type'  -> ret type'
 
 checkEqualBlockedOn
   :: forall t.
@@ -844,7 +867,7 @@ checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
               Just _ -> do
                 checkError $ TermsNotEqual t1 t2
   where
-    fallback t1 = newProblem mvs $ CheckEqual ctx type_ t1 t2
+    fallback t1 = stuckOn $ newProblem mvs $ CheckEqual ctx type_ t1 t2
 
     matchPats :: [Pattern] -> [Elim t] -> TC' t ()
     matchPats [] [] = do
@@ -925,6 +948,13 @@ metaAssign ctx0 type0 mv elims0 t0 = do
           checkEqual ctx0 type0 mvT' t0
       Nothing -> do
         (ctx, elims, sub) <- etaExpandVars ctx0 elims0
+        debug $ do
+          -- TODO this check could be more precise
+          if Ctx.length ctx0 == Ctx.length ctx
+          then return "*** No change in context"
+          else do
+            ctxDoc <- prettyContextTC ctx
+            return $ "*** New context:" //> ctxDoc
         type_ <- liftTermM $ sub type0
         t <- liftTermM $ sub t0
         debug $ do
@@ -958,7 +988,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
             case mbMvT of
               Nothing -> do
                 mvT <- metaVarTC mv elims
-                newProblem mvs $ CheckEqual ctx type_ mvT t
+                stuckOn $ newProblem mvs $ CheckEqual ctx type_ mvT t
               Just mvT -> do
                 mvT' <- eliminateTC mvT elims'
                 checkEqual ctx type_ mvT' t'
@@ -983,7 +1013,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
               TTMetaVars mvs -> do
                 debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
                 mvT <- metaVarTC mv elims
-                newProblem (HS.insert mv mvs) $ CheckEqual ctx type_ mvT t
+                stuckOn $ newProblem (HS.insert mv mvs) $ CheckEqual ctx type_ mvT t
               TTFail v ->
                 checkError $ FreeVariableInEquatedTerm mv elims t v
 
@@ -1351,11 +1381,9 @@ etaExpandVars
 etaExpandVars ctx0 elims0 = do
   elims1 <- mapM (etaContractElim <=< nf'TC) elims0
   let msg = do
-        ctxDoc <- withSignatureTermM $ \sig -> prettyContext sig ctx0
         elimsDoc <- prettyElimsTC elims1
         return $
           "*** Eta-expand vars" $$
-          "context:" //> ctxDoc $$
           "elims:" //> elimsDoc
   debugBracket msg $ do
     mbVar <- collectProjectedVar elims1
@@ -1365,13 +1393,6 @@ etaExpandVars ctx0 elims0 = do
       Just (v, tyCon) -> do
         debug_ $ "** Found var" <+> PP.pretty v <+> "with tyCon" <+> PP.pretty tyCon
         let (ctx1, type_, tel) = splitContext ctx0 v
-        -- ctxDoc <- withSignatureTermM $ \sig -> prettyContext sig ctx1
-        -- typeDoc <- prettyTermTC type_
-        -- telDoc <- withSignatureTermM $ \sig -> prettyTel sig tel
-        -- let rend = PP.renderStyle PP.style{PP.lineLength = 500}
-        -- traceM $ rend ctxDoc
-        -- traceM $ rend typeDoc
-        -- traceM $ rend telDoc
         (tel', sub) <- etaExpandVar tyCon type_ tel
         elims2 <- mapM (liftTermM . mapElimM sub) elims1
         (ctx2, elims3, sub') <- etaExpandVars (ctx1 Ctx.++ Tel.unTel tel') elims2
@@ -1498,17 +1519,21 @@ data TypeCheckProblem t a b where
   WaitingOn :: (a -> TermM b) -> TypeCheckProblem t a b
   WaitForProblem :: ProblemId a -> TypeCheckProblem t () a
 
-  CheckEqual1     :: Ctx t -> Type t -> Term t
-                  -> TypeCheckProblem t (Term t) ()
-  CheckEqualInfer :: Ctx t -> Type t
-                  -> TypeCheckProblem t (Term t, Type t) (Term t)
-  CheckSpine      :: Ctx t -> [A.Elim]
-                  -> TypeCheckProblem t (Term t, Type t) (Term t, Type t)
-  CheckEqual      :: Ctx t -> Type t -> Term t -> Term t
-                  -> TypeCheckProblem t () ()
-  CheckEqualSpine :: Ctx t
-                  -> [Elim (Term t)] -> [Elim (Term t)]
-                  -> TypeCheckProblem t (Term t, Type t) ()
+  CheckEqual1      :: Ctx t -> Type t -> Term t
+                   -> TypeCheckProblem t (Term t) ()
+  CheckEqualInfer  :: Ctx t -> Type t
+                   -> TypeCheckProblem t (Term t, Type t) (Term t)
+  CheckSpine       :: Ctx t -> [A.Elim]
+                   -> TypeCheckProblem t (Term t, Type t) (Term t, Type t)
+  CheckEqual       :: Ctx t -> Type t -> Term t -> Term t
+                   -> TypeCheckProblem t () ()
+  CheckEqualSpine  :: Ctx t
+                   -> Type t -> Maybe (Term t)
+                   -> [Elim (Term t)] -> [Elim (Term t)]
+                   -> TypeCheckProblem t () ()
+  CheckEqualSpine1 :: Ctx t
+                   -> [Elim (Term t)] -> [Elim (Term t)]
+                   -> TypeCheckProblem t (Term t, Type t) ()
 
   MatchPi     :: Name -> Type t
               -> (Type t -> Abs (Type t) -> StuckTC' t a)
@@ -1526,7 +1551,7 @@ typeCheckProblem
 typeCheckProblem (WaitingOn f) x =
   returnStuckTC =<< liftTermM (f x)
 typeCheckProblem (WaitForProblem pid) () =
-  bindProblem pid $ WaitingOn return
+  stuckOn $ bindProblem pid $ WaitingOn return
 typeCheckProblem (CheckEqual1 ctx type_ t1) t2 =
   checkEqual ctx type_ t1 t2
 typeCheckProblem (CheckEqualInfer ctx type_) (t, type') = do
@@ -1535,8 +1560,10 @@ typeCheckProblem (CheckSpine ctx els) (h', type') = do
   checkSpine ctx h' els type'
 typeCheckProblem (CheckEqual ctx type_ x y) () = do
   checkEqual ctx type_ x y
-typeCheckProblem (CheckEqualSpine ctx elims1 elims2) (h', type') = do
+typeCheckProblem (CheckEqualSpine1 ctx elims1 elims2) (h', type') = do
   checkEqualSpine ctx type' (Just h') elims1 elims2
+typeCheckProblem (CheckEqualSpine ctx type_ mbH elims1 elims2) () = do
+  checkEqualSpine ctx type_ mbH elims1 elims2
 typeCheckProblem (MatchPi n type_ handler) () =
   matchPi n type_ handler
 typeCheckProblem (MatchEqual type_ handler) () =
@@ -1586,13 +1613,28 @@ prettyTypeCheckProblem sig p = case p of
       "type:" //> typeDoc $$
       "x:" //> xDoc $$
       "y:" //> yDoc
-  CheckEqualSpine ctx els1 els2 -> do
+  CheckEqualSpine1 ctx els1 els2 -> do
     ctxDoc <- prettyContext sig ctx
+    els1Doc <- prettyElims sig els1
+    els2Doc <- prettyElims sig els2
+    return $
+      "CheckEqualSpine1" $$
+      "context:" //> ctxDoc $$
+      "elims1:" //> els1Doc $$
+      "elims2:" //> els2Doc
+  CheckEqualSpine ctx type_ mbH els1 els2 -> do
+    ctxDoc <- prettyContext sig ctx
+    typeDoc <- prettyTerm sig type_
+    hDoc <- case mbH of
+      Nothing -> return "No head"
+      Just h  -> prettyTerm sig h
     els1Doc <- prettyElims sig els1
     els2Doc <- prettyElims sig els2
     return $
       "CheckEqualSpine" $$
       "context:" //> ctxDoc $$
+      "type:" //> typeDoc $$
+      "head:" //> hDoc $$
       "elims1:" //> els1Doc $$
       "elims2:" //> els2Doc
   MatchPi _ type_ _ -> do
@@ -1672,7 +1714,7 @@ matchTyCon tyCon t0 handler = do
         -- Maybe remove and do it explicitly?
         matchTyCon tyCon t handler
       BlockedOn mvs _ _ -> lift $ do
-        newProblem mvs (MatchTyCon tyCon t handler)
+        stuckOn $ newProblem mvs (MatchTyCon tyCon t handler)
     maybe (checkError $ DataConTypeError tyCon t) return mbRes
 
 matchPi
@@ -1703,7 +1745,7 @@ matchPi name t0 handler = do
         -- Maybe remove and do it explicitly?
         matchPi name t handler
       BlockedOn mvs _ _ -> lift $ do
-        newProblem mvs (MatchPi name t handler)
+        stuckOn $ newProblem mvs (MatchPi name t handler)
     maybe (checkError $ ExpectedFunctionType t Nothing) return mbRes
 
 matchPi_
@@ -1739,7 +1781,7 @@ matchEqual t0 handler = do
         instantiateMetaVar' mv mvT
         matchEqual t handler
       BlockedOn mvs _ _ -> lift $ do
-        newProblem mvs (MatchEqual t handler)
+        stuckOn $ newProblem mvs (MatchEqual t handler)
     maybe (checkError $ ExpectedEqual t) return mbRes
 
 applyProjection
@@ -1989,8 +2031,8 @@ checkInvertibility = go []
         _ ->
           return $ NotInvertible $ reverse (map snd injClauses) ++ (clause : clauses)
 
--- -- Telescope & context utils
--- ----------------------------
+-- Telescope & context utils
+----------------------------
 
 -- telStrengthen :: (IsTerm f) => Tel.IdTel f (Suc v) -> TermM (Maybe (Tel.IdTel f v))
 -- telStrengthen (Tel.Empty (Tel.Id t)) =
@@ -2019,6 +2061,16 @@ ctxPi (Ctx.Snoc ctx (_n, type_)) t = ctxPi ctx =<< pi type_ t
 ctxLam :: IsTerm t => Ctx (Type t) -> Term t -> TermM (Term t)
 ctxLam Ctx.Empty        t = return t
 ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx =<< lam t
+
+extendContext
+  :: (IsTerm t)
+  => Ctx (Type t) -> (Name, Type t) -> (Ctx (Type t) -> TC' t a) -> TC' t a
+extendContext ctx type_ ret = do
+  let ctx' = Ctx.Snoc ctx type_
+  let msg = do
+        ctxDoc <- prettyContextTC ctx'
+        return $ "*** extendContext" $$ ctxDoc
+  debugBracket msg $ ret ctx'
 
 -- Monad versions of signature-requiring things
 -----------------------------------------------

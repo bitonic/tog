@@ -51,6 +51,8 @@ module TypeCheck.Monad
   , ProblemState
   , Problem(..)
   , Stuck(..)
+  , notStuck
+  , stuckOn
   , newProblem
   , newProblem_
   , bindProblem
@@ -460,6 +462,12 @@ data Stuck a
     = StuckOn (ProblemId a)
     | NotStuck a
 
+stuckOn :: TC t p s (ProblemId a) -> StuckTC t p s a
+stuckOn m = StuckOn <$> m
+
+notStuck :: TC t p s a -> StuckTC t p s a
+notStuck m = NotStuck <$> m
+
 addProblem :: ProblemIdInt -> Problem p -> TC t p s (ProblemId a)
 addProblem pid prob = do
   modify $ \ts ->
@@ -487,10 +495,9 @@ addFreshProblem prob@(Problem mbProb _ _ _) = do
 newProblem
     :: HS.HashSet MetaVar
     -> p () b
-    -> StuckTC t p s b
-newProblem mvs m | HS.null mvs = do
-    int <- teInterpretProblem <$> ask
-    int m ()
+    -> TC t p s (ProblemId b)
+newProblem mvs _ | HS.null mvs =
+    error "newProblem: no metavars"
 newProblem mvs m = do
     loc <- teCurrentSrcLoc <$> ask
     mbTrace <- fmap dStackTrace . teDebug <$> ask
@@ -499,12 +506,12 @@ newProblem mvs m = do
                       , problemSrcLoc     = loc
                       , problemStackTrace = mbTrace
                       }
-    StuckOn <$> addFreshProblem prob
+    addFreshProblem prob
 
 newProblem_
     :: MetaVar
     -> p () b
-    -> StuckTC t p s b
+    -> TC t p s (ProblemId b)
 newProblem_ mv = newProblem (HS.singleton mv)
 
 -- | @bindProblem pid desc (\x -> m)@ binds computation @m@ to problem
@@ -512,7 +519,7 @@ newProblem_ mv = newProblem (HS.singleton mv)
 bindProblem
     :: ProblemId a
     -> (p a b)
-    -> StuckTC t p s b
+    -> TC t p s (ProblemId b)
 bindProblem (ProblemId pid) f = do
     loc <- teCurrentSrcLoc <$> ask
     mbTrace <- fmap dStackTrace . teDebug <$> ask
@@ -521,7 +528,7 @@ bindProblem (ProblemId pid) f = do
                       , problemSrcLoc     = loc
                       , problemStackTrace = mbTrace
                       }
-    StuckOn <$> addFreshProblem prob
+    addFreshProblem prob
 
 -- | This computation solves all problems that are solvable in the
 -- current state.  Returns whether any problem was solved.
@@ -622,7 +629,7 @@ bindStuckTC m p = do
       int <- teInterpretProblem <$> ask
       int p x
     StuckOn pid ->
-      bindProblem pid p
+      StuckOn <$> bindProblem pid p
 
 -- Freezing
 ------------------------------------------------------------------------

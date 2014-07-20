@@ -168,7 +168,7 @@ metaVars sig t = do
 -- HasAbs
 ---------
 
-class (Typeable t) => IsTerm t where
+class (Typeable t, Show t) => IsTerm t where
     termEq :: t -> t -> TermM Bool
     default termEq :: Eq t => t -> t -> TermM Bool
     termEq t1 t2 = return $ t1 == t2
