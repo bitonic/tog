@@ -307,14 +307,19 @@ checkClause
   -> TC' t (Closed (Clause t))
 checkClause fun funType sub (A.Clause synPats synClauseBody wheres) = do
   (ctx, pats, _, clauseType) <- checkPatterns fun synPats funType
-  sub' <- checkWhereClauses ctx wheres sub
-  let synClauseBody' = replaceWithSyntheticAExpr sub' synClauseBody
-  clauseBody <- check ctx synClauseBody' clauseType
-  -- This is an optimization: we want to remove as many MetaVars
-  -- as possible so that we'll avoid recomputing things.
-  -- TODO generalize this to everything which adds a term.
-  clauseBody' <- withSignatureTermM $ \sig -> instantiateMetaVars sig clauseBody
-  return $ Clause pats clauseBody'
+  let msg = do
+        ctxDoc <- prettyContextTC ctx
+        return $ "*** checkClause" $$
+                 "context:" //> ctxDoc
+  debugBracket msg $ do
+    sub' <- checkWhereClauses ctx wheres sub
+    let synClauseBody' = replaceWithSyntheticAExpr sub' synClauseBody
+    clauseBody <- check ctx synClauseBody' clauseType
+    -- This is an optimization: we want to remove as many MetaVars
+    -- as possible so that we'll avoid recomputing things.
+    -- TODO generalize this to everything which adds a term.
+    clauseBody' <- withSignatureTermM $ \sig -> instantiateMetaVars sig clauseBody
+    return $ Clause pats clauseBody'
 
 checkWhereClauses
   :: (IsTerm t)
@@ -681,8 +686,8 @@ checkEqual ctx type_ x y = do
           return $ case tyConDef of
             Constant (Record dataCon projs) _ ->
               Just $ \t -> do
-                ts <- mapM (\(n, ix) -> Apply <$> eliminateTC t [Proj n ix]) projs
-                defTC dataCon ts
+                ts <- mapM (\(n, ix) -> eliminateTC t [Proj n ix]) projs
+                conTC dataCon ts
             _ ->
               Nothing
         Pi _ codomain -> do
