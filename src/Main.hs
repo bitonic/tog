@@ -47,6 +47,10 @@ parseTypeCheckConf = TypeCheckConf
       ( long "fastGetAbsName" <>
         help "Do not spend time getting bound names in abstractions."
       )
+  <*> switch
+      ( long "disableSynEquality" <>
+        help "Disable syntactic equality"
+      )
 
 parseMain :: Parser (IO ())
 parseMain =

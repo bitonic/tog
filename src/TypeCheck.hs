@@ -45,14 +45,16 @@ data TypeCheckConf = TypeCheckConf
   , tccDebug                   :: Bool
   , tccCheckMetaVarConsistency :: Bool
   , tccFastGetAbsName          :: Bool
+  , tccDisableSynEquality      :: Bool
   }
 
 defaultTypeCheckConf :: TypeCheckConf
-defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False False False False 
+defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False False False False False
 
 data TypeCheckState = TypeCheckState
   { tcsCheckMetaVarConsistency :: Bool
   , tcsFastGetAbsName          :: Bool
+  , tcsDisableSynEquality      :: Bool
   }
 
 -- Useful types
@@ -98,6 +100,7 @@ checkProgram' _ conf decls0 ret = do
       drawLine
     let s = TypeCheckState (tccCheckMetaVarConsistency conf)
                            (tccFastGetAbsName conf)
+                           (tccDisableSynEquality conf)
     errOrTs <- runEitherT (goDecls (initTCState s) decls0)
     case errOrTs of
       Left err -> return $ Left err
@@ -587,7 +590,7 @@ checkEqual ctx type_ x y = do
     -- Eta-expansion
     (blockedX, blockedY) <- do
       debugBracket_ "*** Eta-expansion" $ do
-        mbExpand <- etaExpand typeView
+        mbExpand <- etaExpand type'
         (x', y') <- case mbExpand of
           Nothing -> do
             return (x, y)
@@ -604,7 +607,9 @@ checkEqual ctx type_ x y = do
     -- Actual equality
     x' <- liftTermM $ ignoreBlocking blockedX
     y' <- liftTermM $ ignoreBlocking blockedY
-    eq <- liftTermM $ termEq x' y'
+    eq <- do
+      disabled <- tcsDisableSynEquality <$> getState
+      if disabled then return False else liftTermM (termEq x' y')
     case (blockedX, blockedY) of
       (_, _) | eq ->
         returnStuckTC ()
@@ -651,18 +656,17 @@ checkEqual ctx type_ x y = do
            (Set, Equal type1 x1 y1, Equal type2 x2 y2) -> do
              -- _==_ : (A : Set) -> A -> A -> Set
              equalType_ <- do
-               xv <- mkVar "x" 0
-               yv <- mkVar "y" 1
+               xv <- mkVar "A" 0
+               yv <- mkVar "A" 1
                piTC set =<< piTC xv =<< piTC yv set
              checkEqualApplySpine ctx equalType_ [type1, x1, y1] [type2, x2, y2]
-           (_, Refl, Refl) -> do
+           (Equal _ _ _, Refl, Refl) -> do
              returnStuckTC ()
-           (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2)
-               | Just tyConPars <- mapM isApply tyConPars0
-               , dataCon == dataCon' -> do
-                 DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
-                 appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
-                 checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+           (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
+              let Just tyConPars = mapM isApply tyConPars0
+              DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+              appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+              checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
            (Set, Set, Set) -> do
              returnStuckTC ()
            (_, App h1 elims1, App h2 elims2) | h1 == h2 -> do
@@ -670,7 +674,8 @@ checkEqual ctx type_ x y = do
            (_, _, _) -> do
              checkError $ TermsNotEqual x y
   where
-    etaExpand typeView =
+    etaExpand type' = do
+      typeView <- viewTC type'
       case typeView of
         App (Def tyCon) _ -> do
           tyConDef <- getDefinitionSynthetic tyCon
@@ -753,6 +758,7 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
               mbCod <- liftTermM $ strengthen_ 1 cod
               case mbCod of
                 Just cod' -> do
+                  debug_ "*** Stuck on domain but non-dependent."
                   stuck' <- continue arg1 cod'
                   case stuck' of
                     NotStuck () ->
@@ -761,7 +767,10 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
                       bindProblem pid $ WaitForProblem pid'
                 Nothing -> do
                   mvT <- addMetaVarInCtx ctx dom
-                  cod' <- liftTermM $ instantiate cod arg1
+                  debug $ do
+                    mvTDoc <- prettyTermTC mvT
+                    return $ "*** Stuck on domain, will use" <+> mvTDoc <+> "as type."
+                  cod' <- liftTermM $ instantiate cod mvT
                   stuck' <- continue mvT cod' `bindStuckTC` CheckEqual ctx dom mvT arg1
                   case stuck' of
                     NotStuck () ->
