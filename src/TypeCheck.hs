@@ -160,7 +160,16 @@ checkProgram' _ conf decls0 ret = do
         putStrLn $ "-- Unsolved problems: " ++ show (Map.size (trUnsolvedProblems tr))
         when (tccProblemsReport conf) $ do
           drawLine
-          forM_ (Map.toList (trUnsolvedProblems tr)) $ \(pid, (Problem mbProb probState _ _)) -> do
+          -- We want to display problems bound to metavars first (the
+          -- "roots").
+          let compareStates ps1 ps2 = case (ps1, ps2) of
+                (BoundToMetaVars _, BoundToMetaVars _) -> EQ
+                (BoundToMetaVars _, BoundToProblem _)  -> LT
+                (BoundToProblem _,  BoundToProblem _)  -> EQ
+                (BoundToProblem _,  BoundToMetaVars _) -> GT
+          let problems =
+                sortBy (compareStates `on` problemState . snd) $ Map.toList $ trUnsolvedProblems tr
+          forM_ problems $ \(pid, (Problem mbProb probState _ _)) -> do
             probDoc <- case mbProb of
               Nothing   -> return "Waiting to return."
               Just prob -> prettyTypeCheckProblem sig prob
@@ -574,109 +583,117 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 ------------
 
 -- | INVARIANT: Either both terms have been typechecked against the
--- type, or is blocked.
+-- type, or is blocked.  Why would we ever get blocked types here?
+-- Because sometimes we put placeholder metavariables for things that
+-- have already been typechecked (see `checkEqualSpine').
 checkEqual
   :: (IsTerm t)
   => Ctx t -> Type t -> Term t -> Term t -> StuckTC' t ()
-checkEqual ctx type_ x y = do
+checkEqual ctx type_ x0 y0 = do
   let msg = do
         typeDoc <- prettyTermTC type_
-        xDoc <- prettyTermTC x
-        yDoc <- prettyTermTC y
+        xDoc <- prettyTermTC x0
+        yDoc <- prettyTermTC y0
         return $
           "*** checkEqual" $$
           "type:" //> typeDoc $$
           "x:" //> xDoc $$
           "y:" //> yDoc
   debugBracket msg $ do
-    postponeIfBlockedType (CheckEqual ctx type_ x y) type_ $ \type' -> do
-      -- Eta-expansion
-      (blockedX, blockedY) <- do
-        debugBracket_ "*** Eta-expansion" $ do
-          mbExpand <- etaExpand type'
-          (x', y') <- case mbExpand of
-            Nothing -> do
-              return (x, y)
-            Just expand -> do
-              x' <- expand x
-              y' <- expand y
-              let msg' = do
-                    x'Doc <- prettyTermTC x'
-                    y'Doc <- prettyTermTC y'
-                    return $ "** Expanded to" $$ x'Doc $$ y'Doc
-              debug msg'
-              return (x', y')
-          (,) <$> whnfTC x' <*> whnfTC y'
-      -- Actual equality
-      x' <- liftTermM $ ignoreBlocking blockedX
-      y' <- liftTermM $ ignoreBlocking blockedY
-      eq <- do
-        disabled <- tcsDisableSynEquality <$> getState
-        if disabled then return False else liftTermM (termEq x' y')
-      case (blockedX, blockedY) of
-        (_, _) | eq ->
-          returnStuckTC ()
-        (MetaVarHead mv elims, _) ->
-          metaAssign ctx type_ mv elims y'
-        (_, MetaVarHead mv elims) ->
-          metaAssign ctx type_ mv elims x'
-        (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
-          -- Both blocked, and we already checked for syntactic equality,
-          -- let's try syntactic equality when normalized.
-          x'' <- nfTC x'
-          y'' <- nfTC y'
-          eq' <- liftTermM $ termEq x'' y''
-          if eq'
-            then returnStuckTC ()
-            else do
-              let mvs = HS.union mvs1 mvs2
-              debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-              stuckOn $ newProblem mvs $ CheckEqual ctx type_ x' y'
-        (BlockedOn mvs f elims, _) -> do
-          checkEqualBlockedOn ctx type' mvs f elims y'
-        (_, BlockedOn mvs f elims) -> do
-          checkEqualBlockedOn ctx type' mvs f elims x'
-        (NotBlocked _, NotBlocked _) -> do
-           typeView <- viewTC type'
-           xView <- viewTC x'
-           yView <- viewTC y'
-           let mkVar n ix = varTC $ V $ named n ix
-           case (typeView, xView, yView) of
-             -- Note that here we rely on canonical terms to have canonical
-             -- types, and on the terms to be eta-expanded.
-             (Pi dom cod, Lam body1, Lam body2) -> do
-               -- TODO there is a bit of duplication between here and expansion.
-               name <- getAbsNameTC body1
-               extendContext ctx (name, dom) $ \ctx' -> checkEqual ctx' cod body1 body2
-             (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
-               -- Pi : (A : Set) -> (A -> Set) -> Set
-               piType <- do
-                 av <- mkVar "A" 0
-                 b <- piTC av set
-                 piTC set =<< piTC b set
-               cod1' <- lamTC cod1
-               cod2' <- lamTC cod2
-               checkEqualApplySpine ctx piType [dom1, cod1'] [dom2, cod2']
-             (Set, Equal type1 x1 y1, Equal type2 x2 y2) -> do
-               -- _==_ : (A : Set) -> A -> A -> Set
-               equalType_ <- do
-                 xv <- mkVar "A" 0
-                 yv <- mkVar "A" 1
-                 piTC set =<< piTC xv =<< piTC yv set
-               checkEqualApplySpine ctx equalType_ [type1, x1, y1] [type2, x2, y2]
-             (Equal _ _ _, Refl, Refl) -> do
-               returnStuckTC ()
-             (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
-                let Just tyConPars = mapM isApply tyConPars0
-                DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
-                appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
-                checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
-             (Set, Set, Set) -> do
-               returnStuckTC ()
-             (_, App h1 elims1, App h2 elims2) | h1 == h2 -> do
-               equalSpine ctx h1 elims1 elims2
-             (_, _, _) -> do
-               checkError $ TermsNotEqual x y
+    blockedX0 <- whnfTC x0
+    blockedY0 <- whnfTC y0
+    x1 <- ignoreBlockingTC blockedX0
+    y1 <- ignoreBlockingTC blockedY0
+    -- Optimization: try with a simple syntactic check first.
+    eq <- do
+      disabled <- tcsDisableSynEquality <$> getState
+      (not disabled &&) <$> liftTermM (blockedEq blockedX0 blockedY0)
+    if eq
+      then notStuck $ return ()
+      else do
+        postponeIfBlockedType (CheckEqual ctx type_ x1 y1) type_ $ \type' -> do
+          -- Eta-expansion
+          (blockedX, blockedY) <- do
+            debugBracket_ "*** Eta-expansion" $ do
+              mbExpand <- etaExpand type'
+              case mbExpand of
+                Nothing -> do
+                  return (blockedX0, blockedY0)
+                Just expand -> do
+                  x2 <- expand x1
+                  y2 <- expand y1
+                  let msg' = do
+                        x2Doc <- prettyTermTC x2
+                        y2Doc <- prettyTermTC y2
+                        return $ "** Expanded to" $$ x2Doc $$ y2Doc
+                  debug msg'
+                  (,) <$> whnfTC x2 <*> whnfTC y2
+          x2 <- ignoreBlockingTC blockedX
+          y2 <- ignoreBlockingTC blockedY
+          case (blockedX, blockedY) of
+            (_, _) | eq ->
+              returnStuckTC ()
+            (MetaVarHead mv elims, _) ->
+              metaAssign ctx type_ mv elims y2
+            (_, MetaVarHead mv elims) ->
+              metaAssign ctx type_ mv elims x2
+            (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
+              -- Both blocked, and we already checked for syntactic equality,
+              -- let's try syntactic equality when normalized.
+              x3 <- nfTC x2
+              y3 <- nfTC y2
+              eq' <- liftTermM $ termEq x3 y3
+              if eq'
+                then returnStuckTC ()
+                else do
+                  let mvs = HS.union mvs1 mvs2
+                  debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
+                  stuckOn $ newProblem mvs $ CheckEqual ctx type_ x3 y3
+            (BlockedOn mvs f elims, _) -> do
+              checkEqualBlockedOn ctx type' mvs f elims y2
+            (_, BlockedOn mvs f elims) -> do
+              checkEqualBlockedOn ctx type' mvs f elims x2
+            (NotBlocked _, NotBlocked _) -> do
+               typeView <- viewTC type'
+               xView <- viewTC x2
+               yView <- viewTC y2
+               let mkVar n ix = varTC $ V $ named n ix
+               case (typeView, xView, yView) of
+                 -- Note that here we rely on canonical terms to have canonical
+                 -- types, and on the terms to be eta-expanded.
+                 (Pi dom cod, Lam body1, Lam body2) -> do
+                   -- TODO there is a bit of duplication between here and expansion.
+                   name <- getAbsNameTC body1
+                   extendContext ctx (name, dom) $ \ctx' -> checkEqual ctx' cod body1 body2
+                 (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
+                   -- Pi : (A : Set) -> (A -> Set) -> Set
+                   piType <- do
+                     av <- mkVar "A" 0
+                     b <- piTC av set
+                     piTC set =<< piTC b set
+                   cod1' <- lamTC cod1
+                   cod2' <- lamTC cod2
+                   checkEqualApplySpine ctx piType [dom1, cod1'] [dom2, cod2']
+                 (Set, Equal type1 l1 r1, Equal type2 l2 r2) -> do
+                   -- _==_ : (A : Set) -> A -> A -> Set
+                   equalType_ <- do
+                     xv <- mkVar "A" 0
+                     yv <- mkVar "A" 1
+                     piTC set =<< piTC xv =<< piTC yv set
+                   checkEqualApplySpine ctx equalType_ [type1, l1, r1] [type2, l2, r2]
+                 (Equal _ _ _, Refl, Refl) -> do
+                   returnStuckTC ()
+                 (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
+                    let Just tyConPars = mapM isApply tyConPars0
+                    DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+                    appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+                    checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+                 (Set, Set, Set) -> do
+                   returnStuckTC ()
+                 (_, App h1 elims1, App h2 elims2) | h1 == h2 -> do
+                   equalSpine ctx h1 elims1 elims2
+                 (_, _, _) -> do
+                   checkError $ TermsNotEqual x1 y1
   where
     etaExpand type' = do
       typeView <- viewTC type'

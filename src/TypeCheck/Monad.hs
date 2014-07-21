@@ -48,7 +48,7 @@ module TypeCheck.Monad
     -- * Problem handling
   , ProblemId
   , ProblemIdInt
-  , ProblemState
+  , ProblemState(..)
   , Problem(..)
   , Stuck(..)
   , notStuck

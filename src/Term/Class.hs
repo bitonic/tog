@@ -122,6 +122,16 @@ foldElim :: (t -> a) -> (Name -> Field -> a) -> Elim t -> a
 foldElim f _ (Apply t)  = f t
 foldElim _ g (Proj n f) = g n f
 
+elimEq :: (IsTerm t) => Elim t -> Elim t -> TermM Bool
+elimEq (Apply t1)   (Apply t2)   = termEq t1 t2
+elimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
+elimEq _            _            = return False
+
+elimsEq :: (IsTerm t) => [Elim t] -> [Elim t] -> TermM Bool
+elimsEq []           []           = return True
+elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
+elimsEq _            _            = return False
+
 -- instance Subst' Elim where
 --     subst' (Apply t)      f = Apply <$> subst t f
 --     subst' (Proj n field) _ = return $ Proj n field
@@ -250,6 +260,18 @@ ignoreBlocking :: (IsTerm t) => Blocked t -> TermM t
 ignoreBlocking (NotBlocked t)           = return t
 ignoreBlocking (MetaVarHead mv es)      = metaVar mv es
 ignoreBlocking (BlockedOn _ funName es) = app (Def funName) es
+
+blockedEq
+  :: (IsTerm t) => Blocked t -> Blocked t -> TermM Bool
+blockedEq blockedX blockedY = case (blockedX, blockedY) of
+  (NotBlocked x, NotBlocked y) ->
+    termEq x y
+  (MetaVarHead mv1 els1, MetaVarHead mv2 els2) | mv1 == mv2 ->
+    elimsEq els1 els2
+  (BlockedOn mvs1 f1 els1, BlockedOn mvs2 f2 els2) | mvs1 == mvs2 && f1 == f2 ->
+    elimsEq els1 els2
+  (_, _) ->
+    return False
 
 -- mapBlockingM :: (t v -> TermM (t' v)) -> Blocked t v -> TermM (Blocked t' v)
 -- mapBlockingM = undefined

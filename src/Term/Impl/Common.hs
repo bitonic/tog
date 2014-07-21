@@ -289,14 +289,6 @@ genericTermViewEq tView1 tView2 = do
     (_, _) -> do
       return False
   where
-    elimsEq []           []           = return True
-    elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
-    elimsEq _            _            = return False
-
-    elimEq (Apply t1')  (Apply t2')  = termEq t1' t2'
-    elimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
-    elimEq _            _            = return False
-
     argsEq []             []             = return True
     argsEq (arg1 : args1) (arg2 : args2) = (&&) <$> termEq arg1 arg2 <*> argsEq args1 args2
     argsEq _              _              = return False
