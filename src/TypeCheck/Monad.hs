@@ -23,9 +23,7 @@ module TypeCheck.Monad
   , withSignatureTermM
     -- ** Definition handling
   , addDefinition
-  , addDefinitionSynthetic
   , getDefinition
-  , getDefinitionSynthetic
   , addConstant
   , addDataCon
   , addProjection
@@ -75,7 +73,7 @@ import           Unsafe.Coerce                    (unsafeCoerce)
 import           Prelude.Extended
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
-import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, DefName(SimpleName), MetaVar)
+import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, MetaVar)
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
@@ -258,29 +256,14 @@ withSignatureTermM f = do
 
 getDefinition
   :: (IsTerm t) => Name -> TC t p s (Closed (Definition t))
-getDefinition n = getDefinitionSynthetic (SimpleName n)
-
-getDefinitionSynthetic
-  :: (IsTerm t) => DefName -> TC t p s (Closed (Definition t))
-getDefinitionSynthetic n = do
+getDefinition n = do
   sig <- tsSignature <$> get
   return $ Sig.getDefinition sig n
 
-addDefinition'
-  :: (IsTerm t) => DefName -> Closed (Definition t) -> TC t p s ()
-addDefinition' n def' =
-  modify_ $ \ts -> ts{tsSignature = Sig.addDefinition (tsSignature ts) n def'}
-
 addDefinition
   :: (IsTerm t) => Name -> Closed (Definition t) -> TC t p s ()
-addDefinition n = addDefinition' (SimpleName n)
-
-addDefinitionSynthetic
-  :: (IsTerm t) => Name -> Closed (Definition t) -> TC t p s DefName
-addDefinitionSynthetic n def' =
-  modify $ \ts ->
-    let (dn, sig') = Sig.addDefinitionSynthetic (tsSignature ts) n def'
-    in (ts{tsSignature = sig'}, dn)
+addDefinition n def' =
+  modify_ $ \ts -> ts{tsSignature = Sig.addDefinition (tsSignature ts) n def'}
 
 addConstant
     :: (IsTerm t)
@@ -298,15 +281,15 @@ addProjection
 addProjection f n r tel t = addDefinition f (Projection n r tel t)
 
 addClauses
-    :: (IsTerm t) => DefName -> Closed (Invertible t) -> TC t p s ()
+    :: (IsTerm t) => Name -> Closed (Invertible t) -> TC t p s ()
 addClauses f clauses = do
-  def' <- getDefinitionSynthetic f
+  def' <- getDefinition f
   let ext (Constant Postulate a) = return $ Function a clauses
       ext (Function _ _)         = error $ "TC.addClause: clause `" ++ show f ++ "' already added."
       ext (Constant k _)         = error $ "TC.addClause: constant `" ++ show k ++ "'"
       ext DataCon{}              = error $ "TC.addClause: constructor"
       ext Projection{}           = error $ "TC.addClause: projection"
-  addDefinition' f =<< ext def'
+  addDefinition f =<< ext def'
 
 addMetaVar :: (IsTerm t) => Closed (Type t) -> TC t p s MetaVar
 addMetaVar type_ = do

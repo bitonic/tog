@@ -17,7 +17,7 @@ import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, DefName)
+import           Syntax.Internal                  (Name)
 import           Term
 import qualified Term.Signature                   as Sig
 
@@ -111,7 +111,7 @@ genericWhnf sig t = do
 whnfFun
   :: (IsTerm t)
   => Sig.Signature t
-  -> DefName -> [Elim t] -> [Closed (Clause t)]
+  -> Name -> [Elim t] -> [Closed (Clause t)]
   -> TermM (Maybe (Blocked t))
 whnfFun _ _ _ [] = do
   return Nothing

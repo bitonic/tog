@@ -209,7 +209,7 @@ checkDecls ds0 ret = case ds0 of
     xs <- checkHiddenNames n xs
     let is = map mkVarInfo xs
     xs <- mapC bindName is $ return
-    let t = App (Def (SimpleName x)) (map (\x -> Apply (App (Var x) [])) xs)
+    let t = App (Def x) (map (\x -> Apply (App (Var x) [])) xs)
     mapC (checkConstructor t is) cs $ \cs -> checkDecls ds $ \ds' ->
       ret (DataDef x xs cs : ds')
   C.Record x pars (C.RecordBody con fs) : ds | Just xs <- isParamDef pars -> do
@@ -233,13 +233,14 @@ checkDecls ds0 ret = case ds0 of
     let (clauses, ds) = takeFunDefs f ds0
     (f, n) <- resolveDef f
     clauses <- forM clauses $ \(ps, b, wheres) -> do
-      let whereDs = case wheres of
-            C.Where wheres -> wheres
-            C.NoWhere      -> []
-      ps <- insertImplicitPatterns (srcLoc f) n ps
-      mapC checkPattern ps $ \ps -> checkDecls whereDs $ \whereDs' -> do
-        (ps, b) <- (,) ps <$> checkExpr b
-        return $ Clause ps b whereDs'
+      case wheres of
+        C.Where _ ->
+          error "checkScope: TODO where clauses"
+        C.NoWhere -> do
+          ps <- insertImplicitPatterns (srcLoc f) n ps
+          mapC checkPattern ps $ \ps -> do
+            b <- checkExpr b
+            return $ Clause ps b
     checkDecls ds $ \ds' -> ret (FunDef f clauses : ds')
   C.Open x : ds -> do
     resolveDef x
@@ -474,7 +475,7 @@ checkAppHead x = do
     ProjName x n  -> return (IsProj x, n)
     VarName x     -> return (Other $ Var x, 0)
     ConName x n a -> return (IsCon x a, n)
-    DefName x n   -> return (Other $ Def (SimpleName x), n)
+    DefName x n   -> return (Other $ Def x, n)
 
 checkTel :: [C.Binding] -> CCheck [(Name, Expr)]
 checkTel = concatMapC checkBinding

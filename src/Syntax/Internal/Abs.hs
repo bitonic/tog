@@ -18,11 +18,6 @@ instance Pretty SrcLoc where
 data Name = Name { nameLoc :: !SrcLoc, nameString :: !String }
     deriving (Typeable, Generic)
 
-data DefName
-    = SimpleName Name
-    | SyntheticName Name Int
-    deriving (Eq, Ord)
-
 name :: String -> Name
 name s = Name noSrcLoc s
 
@@ -38,19 +33,6 @@ instance Ord Name where
 instance Hashable Name where
   hashWithSalt s (Name _ x) = hashWithSalt s x
 
-instance HasSrcLoc DefName where
-  srcLoc dn = case dn of
-    SimpleName n      -> srcLoc n
-    SyntheticName n _ -> srcLoc n
-
-instance Show DefName where
-  show = render . pretty
-
-instance Hashable DefName where
-  hashWithSalt s dn = hashWithSalt s $ case dn of
-    SimpleName n      -> Left n
-    SyntheticName n i -> Right (n, i)
-
 type Program = [Decl]
 
 data Decl = TypeSig TypeSig
@@ -62,7 +44,7 @@ data TypeSig = Sig { typeSigName :: Name
                    , typeSigType :: Expr
                    }
 
-data Clause = Clause [Pattern] Expr [Decl]
+data Clause = Clause [Pattern] Expr
 
 data Expr = Lam Name Expr
           | Pi Name Expr Expr
@@ -75,7 +57,7 @@ data Expr = Lam Name Expr
           | Con Name [Expr]
 
 data Head = Var Name
-          | Def DefName
+          | Def Name
           | J SrcLoc
           | TermVar Int Name
           | TermMeta MetaVar
@@ -197,11 +179,8 @@ instance Pretty Decl where
       text "field" $$>
       vcat (map pretty fs)
     where
-      prettyClause f (Clause ps e wheres) = vcat $
+      prettyClause f (Clause ps e) =
         group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e)
-        : if null wheres
-            then []
-            else nest 2 (text "where") : map (nest 2 . pretty) wheres
 
 instance Pretty Head where
   pretty h = case h of
@@ -210,11 +189,6 @@ instance Pretty Head where
     TermVar i x -> pretty i <> "#" <> pretty x
     J _         -> text "J"
     TermMeta mv -> pretty mv
-
-instance Pretty DefName where
-  pretty dn = case dn of
-    SimpleName n      -> pretty n
-    SyntheticName n i -> pretty n <> "_" <> pretty i
 
 instance Pretty Pattern where
   pretty e = case e of
@@ -262,7 +236,7 @@ instance Pretty Expr where
 
         buildApp :: Head -> [Expr] -> [Elim] -> (Head, [Expr])
         buildApp h es0 (Apply e : es1) = buildApp h (es0 ++ [e]) es1
-        buildApp h es0 (Proj f  : es1) = buildApp (Def (SimpleName f)) [App h $ map Apply es0] es1
+        buildApp h es0 (Proj f  : es1) = buildApp (Def f) [App h $ map Apply es0] es1
         buildApp h es []               = (h, es)
     Refl{} -> text "refl"
     Con c args -> prettyApp p (pretty c) args

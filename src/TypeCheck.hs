@@ -19,7 +19,7 @@ import           Data.Proxy                       (Proxy(Proxy))
 import qualified Data.Set                         as Set
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, DefName(SimpleName), MetaVar)
+import           Syntax.Internal                  (Name, MetaVar)
 import qualified Syntax.Internal                  as A
 import           Term
 import           Term.Context                     (Ctx)
@@ -190,7 +190,7 @@ checkDecl decl = do
       A.TypeSig sig      -> checkTypeSig sig
       A.DataDef d xs cs  -> checkData d xs cs
       A.RecDef d xs c fs -> checkRec d xs c fs
-      A.FunDef f clauses -> checkFunDef (A.SimpleName f) clauses
+      A.FunDef f clauses -> checkFunDef f clauses
 
 checkTypeSig :: (IsTerm t) => A.TypeSig -> TC' t ()
 checkTypeSig (A.Sig name absType) = do
@@ -302,99 +302,35 @@ addProjections tyCon tyConPars self fields0 =
         (go fields' <=< liftTermM . Tel.instantiate fieldTypes') =<< appTC (Var self) [Proj field ix]
       (_, _) -> error "impossible.addProjections: impossible: lengths do not match"
 
-checkFunDef :: (IsTerm t) => DefName -> [A.Clause] -> TC' t ()
+checkFunDef :: (IsTerm t) => Name -> [A.Clause] -> TC' t ()
 checkFunDef fun synClauses = do
-    funType <- definitionType =<< getDefinitionSynthetic fun
-    clauses <- mapM (checkClause fun funType []) synClauses
+    funType <- definitionType =<< getDefinition fun
+    clauses <- mapM (checkClause fun funType) synClauses
     inv <- checkInvertibility clauses
     addClauses fun inv
 
 checkClause
   :: (IsTerm t)
-  => DefName -> Closed (Type t)
-  -> [(Name, (DefName, [(Int, Name)]))] -> A.Clause
+  => Name -> Closed (Type t)
+  -> A.Clause
   -> TC' t (Closed (Clause t))
-checkClause fun funType sub (A.Clause synPats synClauseBody wheres) = do
+checkClause fun funType (A.Clause synPats synClauseBody) = do
   (ctx, pats, _, clauseType) <- checkPatterns fun synPats funType
   let msg = do
         ctxDoc <- prettyContextTC ctx
         return $ "*** checkClause" $$
                  "context:" //> ctxDoc
   debugBracket msg $ do
-    sub' <- checkWhereClauses ctx wheres sub
-    let synClauseBody' = replaceWithSyntheticAExpr sub' synClauseBody
-    clauseBody <- check ctx synClauseBody' clauseType
+    clauseBody <- check ctx synClauseBody clauseType
     -- This is an optimization: we want to remove as many MetaVars
     -- as possible so that we'll avoid recomputing things.
     -- TODO generalize this to everything which adds a term.
     clauseBody' <- withSignatureTermM $ \sig -> instantiateMetaVars sig clauseBody
     return $ Clause pats clauseBody'
 
-checkWhereClauses
-  :: (IsTerm t)
-  => Ctx t
-  -> [A.Decl]
-  -- ^ The clauses we need to typecheck
-  -> [(Name, (DefName, [(Int, Name)]))]
-  -- ^ The replacements from top-level names to where-names, plus variables.
-  -> TC' t [(Name, (DefName, [(Int, Name)]))]
-checkWhereClauses _ [] sub = do
-  return sub
-checkWhereClauses ctx (A.TypeSig (A.Sig name synType) : wheres) sub = do
-  let synType' = replaceWithSyntheticAExpr sub synType
-  type_ <- ctxPiTC ctx =<< isType ctx synType'
-  defName <- addDefinitionSynthetic name $ Constant Postulate type_
-  let vs = [(varIndex v, varName v) | v <- ctxVars ctx]
-  checkWhereClauses ctx wheres ((name, (defName, vs)) : sub)
-checkWhereClauses ctx (A.FunDef fun clauses : wheres) sub = do
-  Just (defName, defVs) <- return $ lookup fun sub
-  funType <- definitionType =<< getDefinitionSynthetic defName
-  clauses' <- forM clauses $ \(A.Clause synPats synClauseBody wheres') -> do
-    let synPats' = [A.VarP n | (_, n) <- defVs] ++ synPats
-    let lenSynPats = A.patternsBindings synPats
-    let sub' = [(n, (dn, [(i + lenSynPats, n') | (i, n') <- vs])) | (n, (dn, vs)) <- sub]
-    checkClause defName funType sub' (A.Clause synPats' synClauseBody wheres')
-  addClauses defName =<< checkInvertibility clauses'
-  checkWhereClauses ctx wheres sub
-checkWhereClauses _ (decl : _) _ = do
-  checkError $ WrongDeclInWhere decl
-
-replaceWithSyntheticAExpr
-  :: [(Name, (DefName, [(Int, Name)]))] -> A.Expr -> A.Expr
-replaceWithSyntheticAExpr [] e = e
-replaceWithSyntheticAExpr ((name, (defName, vs0)) : rest) e00 =
-  replaceWithSyntheticAExpr rest $ go vs0 e00
-  where
-    go vs e0 = case e0 of
-      A.Lam n e ->
-        A.Lam n $ go' vs e
-      A.Pi n e1 e2 ->
-        A.Pi n (go vs e1) (go' vs e2)
-      A.Fun e1 e2 ->
-        A.Fun (go vs e1) (go' vs e2)
-      A.Equal e1 e2 e3 ->
-        A.Equal (go vs e1) (go vs e2) (go vs e3)
-      A.App (A.Def name') es | SimpleName name == name' ->
-        A.App (A.Def defName) $ [A.Apply (A.App (A.TermVar i n) []) | (i, n) <- vs] ++ map (goElim vs) es
-      A.App h es ->
-        A.App h $ map (goElim vs) es
-      A.Set loc ->
-        A.Set loc
-      A.Meta loc ->
-        A.Meta loc
-      A.Refl loc ->
-        A.Refl loc
-      A.Con n es ->
-        A.Con n $ map (go vs) es
-
-    go' vs = go $ map (first (+ 1)) vs
-
-    goElim vs (A.Apply e) = A.Apply $ go vs e
-    goElim _  (A.Proj n)  = A.Proj n
-
 checkPatterns
   :: (IsTerm t)
-  => DefName
+  => Name
   -> [A.Pattern]
   -> Type t
   -- ^ Type of the clause that has the given 'A.Pattern's in front.
@@ -416,7 +352,7 @@ checkPatterns funName (synPat : synPats) type0 = atSrcLoc synPat $ do
 
 checkPattern
     :: (IsTerm t)
-    => DefName
+    => Name
     -> A.Pattern
     -> Type t
     -- ^ Type of the matched thing.
@@ -446,7 +382,7 @@ checkPattern funName synPat type_ = case synPat of
       checkPatternStuck funName stuck
 
 -- TODO we can loosen this by postponing adding clauses.
-checkPatternStuck :: (IsTerm t) => DefName -> Stuck a -> TC' t a
+checkPatternStuck :: (IsTerm t) => Name -> Stuck a -> TC' t a
 checkPatternStuck funName stuck =
   case stuck of
     NotStuck x -> return x
@@ -565,7 +501,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
     h <- appTC (Var v) []
     return (h, type_)
   A.Def name -> do
-    type_ <- definitionType =<< getDefinitionSynthetic name
+    type_ <- definitionType =<< getDefinition name
     h <- appTC (Def name) []
     return (h, type_)
   A.J{} -> do
@@ -705,7 +641,7 @@ checkEqual ctx type0 x0 y0 = do
       typeView <- viewTC type_
       case typeView of
         App (Def tyCon) _ -> do
-          tyConDef <- getDefinitionSynthetic tyCon
+          tyConDef <- getDefinition tyCon
           return $ case tyConDef of
             Constant (Record dataCon projs) _ ->
               Just $ \t -> do
@@ -859,7 +795,7 @@ equalSpine
 equalSpine ctx h elims1 elims2 = do
   hType <- case h of
     Var v   -> liftTermM $ Ctx.getVar v ctx
-    Def f   -> definitionType =<< getDefinitionSynthetic f
+    Def f   -> definitionType =<< getDefinition f
     J       -> return typeOfJ
     Meta mv -> getMetaVarType mv
   h' <- appTC h []
@@ -888,7 +824,7 @@ checkEqualBlockedOn
      (IsTerm t)
   => Ctx t
   -> Type t
-  -> HS.HashSet MetaVar -> DefName -> [Elim t]
+  -> HS.HashSet MetaVar -> Name -> [Elim t]
   -> Term t
   -> StuckTC' t ()
 checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
@@ -896,7 +832,7 @@ checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
             ", trying to invert definition" <+> PP.pretty fun1
   debugBracket_ msg $ do
     t1 <- ignoreBlockingTC $ BlockedOn mvs fun1 elims1
-    Function _ clauses <- getDefinitionSynthetic fun1
+    Function _ clauses <- getDefinition fun1
     case clauses of
       NotInvertible _ -> do
         debug_ "** Couldn't invert."
@@ -991,7 +927,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
     (_, mvEndType) <- unrollPi mvType
     mbRecordDataCon <- runMaybeT $ do
       App (Def tyCon) _ <- lift $ whnfViewTC mvEndType
-      Constant (Record dataCon _) _ <- lift $ getDefinitionSynthetic tyCon
+      Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
       return dataCon
     case mbRecordDataCon of
       Just dataCon -> do
@@ -1752,7 +1688,7 @@ matchTyCon tyCon t0 handler = do
     mbRes <- runMaybeT $ case blockedT of
       NotBlocked _ -> do
         App (Def tyCon') tyConArgs0 <- lift $ whnfViewTC t
-        guard (SimpleName tyCon == tyCon')
+        guard (tyCon == tyCon')
         tyConArgs <- MaybeT $ return $ mapM isApply tyConArgs0
         lift $ handler tyConArgs
       MetaVarHead mv _ -> lift $ do
@@ -1874,7 +1810,7 @@ instantiateDataCon mv dataCon = do
   -- typechecked the arguments already).
   App (Def tyCon') tyConArgs0 <- whnfViewTC endType'
   Just tyConArgs <- return $ mapM isApply tyConArgs0
-  True <- return $ SimpleName tyCon == tyCon'
+  True <- return $ tyCon == tyCon'
   appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConArgs
   (dataConArgsCtx, _) <- unrollPi appliedDataConType
   dataConArgs <- createMvsPars ctxMvArgs $ Tel.tel dataConArgsCtx
@@ -1979,7 +1915,7 @@ data CheckError t
     | ExpectedEqual (Term t)
     | WrongDeclInWhere A.Decl
     | NameNotInScope Name
-    | StuckTypeSignature DefName
+    | StuckTypeSignature Name
     | ClausesAlreadyAdded Name
 
 checkError :: (IsTerm t) => CheckError t -> TC' t a
@@ -2054,7 +1990,7 @@ termHead t = do
   tView <- whnfViewTC t
   case tView of
     App (Def f) _ -> do
-      fDef <- getDefinitionSynthetic f
+      fDef <- getDefinition f
       return $ case fDef of
         Constant Data{}      _ -> Just $ DefHead f
         Constant Record{}    _ -> Just $ DefHead f
@@ -2064,7 +2000,7 @@ termHead t = do
         Constant Postulate{} _ -> Nothing
         _                      -> Nothing
     Con f _ ->
-      return $ Just $ DefHead $ SimpleName f
+      return $ Just $ DefHead f
     Pi _ _ ->
       return $ Just $ PiHead
     _ ->
@@ -2176,7 +2112,7 @@ metaVarTC :: (IsTerm t) => MetaVar -> [Elim t] -> TC' t t
 metaVarTC mv = liftTermM . unview . App (Meta mv)
 
 defTC :: (IsTerm t) => Name -> [Elim t] -> TC' t t
-defTC f = liftTermM . unview . App (Def (SimpleName f))
+defTC f = liftTermM . unview . App (Def f)
 
 conTC :: (IsTerm t) => Name -> [t] -> TC' t t
 conTC c args = liftTermM $ unview (Con c args)
@@ -2211,13 +2147,13 @@ definitionType (Function type_ _)         = return type_
 
 isRecordType :: (IsTerm t) => Name -> TC' t Bool
 isRecordType tyCon = withSignature $ \sig ->
-  case Sig.getDefinition sig (A.SimpleName tyCon) of
+  case Sig.getDefinition sig tyCon of
     Constant (Record _ _) _ -> True
     _                       -> False
 
 isRecordConstr :: (IsTerm t) => Name -> TC' t Bool
 isRecordConstr dataCon = join $ withSignature $ \sig ->
-  case Sig.getDefinition sig (A.SimpleName dataCon) of
+  case Sig.getDefinition sig dataCon of
     DataCon tyCon _ _ -> isRecordType tyCon
     _                 -> return False
 

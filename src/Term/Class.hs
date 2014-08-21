@@ -5,7 +5,7 @@ module Term.Class where
 import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, DefName(SimpleName), MetaVar)
+import           Syntax.Internal                  (Name, MetaVar)
 import qualified Syntax.Internal                  as A
 import qualified PrettyPrint                      as PP
 import {-# SOURCE #-} qualified Term.Signature    as Sig
@@ -94,7 +94,7 @@ newtype Field = Field {unField :: Int}
 -- further.
 data Head
     = Var Var
-    | Def DefName
+    | Def Name
     | J
     | Meta MetaVar
     deriving (Show, Eq, Generic)
@@ -243,7 +243,7 @@ data Blocked t
     = NotBlocked t
     | MetaVarHead MetaVar [Elim t]
     -- ^ The term is 'MetaVar'-headed.
-    | BlockedOn (HS.HashSet MetaVar) DefName [Elim t]
+    | BlockedOn (HS.HashSet MetaVar) Name [Elim t]
     -- ^ Returned when some 'MetaVar's are preventing us from reducing a
     -- definition.  The 'Name' is the name of the definition, the
     -- 'Elim's the eliminators stuck on it.
@@ -403,7 +403,7 @@ metaVar :: (IsTerm t) => MetaVar -> [Elim t] -> TermM t
 metaVar mv = unview . App (Meta mv)
 
 def :: (IsTerm t) => Name -> [Elim t] -> TermM t
-def f = unview . App (Def (SimpleName f))
+def f = unview . App (Def f)
 
 con :: (IsTerm t) => Name -> [t] -> TermM t
 con c args = unview (Con c args)
@@ -495,7 +495,7 @@ data Invertible t
 -- | A 'TermHead' is an injective type- or data-former.
 --
 -- TODO Also include postulates when we have them to be explicit.
-data TermHead = PiHead | DefHead DefName
+data TermHead = PiHead | DefHead Name
     deriving (Eq, Show)
 
 instance PP.Pretty TermHead where
