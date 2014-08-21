@@ -589,9 +589,9 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 checkEqual
   :: (IsTerm t)
   => Ctx t -> Type t -> Term t -> Term t -> StuckTC' t ()
-checkEqual ctx type_ x0 y0 = do
+checkEqual ctx type0 x0 y0 = do
   let msg = do
-        typeDoc <- prettyTermTC type_
+        typeDoc <- prettyTermTC type0
         xDoc <- prettyTermTC x0
         yDoc <- prettyTermTC y0
         return $
@@ -611,11 +611,11 @@ checkEqual ctx type_ x0 y0 = do
     if eq
       then notStuck $ return ()
       else do
-        postponeIfBlockedType (CheckEqual ctx type_ x1 y1) type_ $ \type' -> do
+        postponeIfBlockedType (CheckEqual ctx type0 x1 y1) type0 $ \type1 -> do
           -- Eta-expansion
           (blockedX, blockedY) <- do
             debugBracket_ "*** Eta-expansion" $ do
-              mbExpand <- etaExpand type'
+              mbExpand <- etaExpand type1
               case mbExpand of
                 Nothing -> do
                   return (blockedX0, blockedY0)
@@ -631,12 +631,18 @@ checkEqual ctx type_ x0 y0 = do
           x2 <- ignoreBlockingTC blockedX
           y2 <- ignoreBlockingTC blockedY
           case (blockedX, blockedY) of
-            (_, _) | eq ->
-              returnStuckTC ()
+            (MetaVarHead mv els1, MetaVarHead mv' els2) | mv == mv' -> do
+              mbKills <- intersectVars els1 els2
+              case mbKills of
+                Nothing -> do
+                  checkSyntacticEquality (HS.singleton mv) type1 x2 y2
+                Just kills -> do
+                  instantiateMetaVar' mv =<< killArgs mv kills
+                  notStuck $ return ()
             (MetaVarHead mv elims, _) ->
-              metaAssign ctx type_ mv elims y2
+              metaAssign ctx type1 mv elims y2
             (_, MetaVarHead mv elims) ->
-              metaAssign ctx type_ mv elims x2
+              metaAssign ctx type1 mv elims x2
             (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
               -- Both blocked, and we already checked for syntactic equality,
               -- let's try syntactic equality when normalized.
@@ -648,13 +654,13 @@ checkEqual ctx type_ x0 y0 = do
                 else do
                   let mvs = HS.union mvs1 mvs2
                   debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-                  stuckOn $ newProblem mvs $ CheckEqual ctx type_ x3 y3
+                  stuckOn $ newProblem mvs $ CheckEqual ctx type1 x3 y3
             (BlockedOn mvs f elims, _) -> do
-              checkEqualBlockedOn ctx type' mvs f elims y2
+              checkEqualBlockedOn ctx type1 mvs f elims y2
             (_, BlockedOn mvs f elims) -> do
-              checkEqualBlockedOn ctx type' mvs f elims x2
+              checkEqualBlockedOn ctx type1 mvs f elims x2
             (NotBlocked _, NotBlocked _) -> do
-               typeView <- viewTC type'
+               typeView <- viewTC type1
                xView <- viewTC x2
                yView <- viewTC y2
                let mkVar n ix = varTC $ V $ named n ix
@@ -674,13 +680,13 @@ checkEqual ctx type_ x0 y0 = do
                    cod1' <- lamTC cod1
                    cod2' <- lamTC cod2
                    checkEqualApplySpine ctx piType [dom1, cod1'] [dom2, cod2']
-                 (Set, Equal type1 l1 r1, Equal type2 l2 r2) -> do
+                 (Set, Equal type1' l1 r1, Equal type2' l2 r2) -> do
                    -- _==_ : (A : Set) -> A -> A -> Set
                    equalType_ <- do
                      xv <- mkVar "A" 0
                      yv <- mkVar "A" 1
                      piTC set =<< piTC xv =<< piTC yv set
-                   checkEqualApplySpine ctx equalType_ [type1, l1, r1] [type2, l2, r2]
+                   checkEqualApplySpine ctx equalType_ [type1', l1, r1] [type2', l2, r2]
                  (Equal _ _ _, Refl, Refl) -> do
                    returnStuckTC ()
                  (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
@@ -695,8 +701,8 @@ checkEqual ctx type_ x0 y0 = do
                  (_, _, _) -> do
                    checkError $ TermsNotEqual x1 y1
   where
-    etaExpand type' = do
-      typeView <- viewTC type'
+    etaExpand type_ = do
+      typeView <- viewTC type_
       case typeView of
         App (Def tyCon) _ -> do
           tyConDef <- getDefinitionSynthetic tyCon
@@ -718,6 +724,17 @@ checkEqual ctx type_ x0 y0 = do
                           lamTC =<< eliminateTC t' [Apply v]
         _ ->
           return Nothing
+
+    checkSyntacticEquality mvs type_ x y = do
+      x' <- nfTC x
+      y' <- nfTC y
+      eq' <- liftTermM $ termEq x' y'
+      if eq'
+        then notStuck $ return ()
+        else do
+          debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
+          stuckOn $ newProblem mvs $ CheckEqual ctx type_ x' y'
+
 
 checkEqualApplySpine
   :: (IsTerm t)
@@ -801,6 +818,7 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
                       stuck' <- continue mvT cod'
                       case stuck' of
                         NotStuck () ->
+                          -- TODO here we can instantiate immediately
                           stuckOn $ return pid1
                         StuckOn pid2 ->
                           stuckOn $ bindProblem pid1 $ WaitForProblem pid2
@@ -819,6 +837,21 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
           checkError $ SpineNotEqual type_ (elim1 : elims1) (elim1 : elims2)
 checkEqualSpine _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 elims2
+
+-- | @intersectVars us vs@ checks whether all relevant elements in @us@
+--   and @vs@ are variables, and if yes, returns a prune list which says
+--   @True@ for arguments which are different and can be pruned.
+intersectVars :: (IsTerm t) => [Elim t] -> [Elim t] -> TC' t (Maybe [Named Bool])
+intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
+  where
+    areVars (Apply t1) (Apply t2) = do
+      t1View <- lift $ viewTC t1
+      t2View <- lift $ viewTC t2
+      case (t1View, t2View) of
+        (App (Var v1) [], App (Var v2) []) -> return $ (v1 /= v2) <$ unVar v1 -- prune different vars
+        (_,               _)               -> mzero
+    areVars _ _ =
+      mzero
 
 equalSpine
   :: (IsTerm t)
@@ -1090,7 +1123,6 @@ prune
     -> [Elim (Term t)]       -- ^ Arguments to the metavariable
     -> TC' t (Maybe (Closed (Term t)))
 prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
-  -- TODO check that newly created meta is well-typed.
   mbKills <- sequence <$> mapM (shouldKill allowedVs) args
   case mbKills of
     Just kills0 | or kills0 -> do
@@ -1107,7 +1139,7 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
         (newMvTypeTel, newMvType, kills1) <- lift $ createNewMeta oldMvType kills0
         guard $ any unNamed kills1
         newMv <- lift $ addMetaVar =<< telPiTC newMvTypeTel newMvType
-        mvT <- lift $ createMetaLam newMv kills1
+        mvT <- lift $ killArgs newMv kills1
         lift $ instantiateMetaVar' oldMv mvT
         return mvT
     _ -> do
@@ -1141,17 +1173,17 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
                 _                          -> notKilled
         _ ->
           error "impossible.createNewMeta: metavar type too short"
-
-    createMetaLam :: MetaVar -> [Named Bool] -> TC' t (Closed (Type t))
-    createMetaLam newMv kills = do
-      let vs = reverse [ V (Named n ix)
-                       | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
-                       ]
-      body <- metaVarTC newMv . map Apply =<< mapM varTC vs
-      foldl' (\body' _ -> lamTC =<< body') (return body) kills
 prune _ _ _ = do
   -- TODO we could probably do something more.
   return Nothing
+
+killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC' t (Closed (Term t))
+killArgs newMv kills = do
+  let vs = reverse [ V (Named n ix)
+                   | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
+                   ]
+  body <- metaVarTC newMv . map Apply =<< mapM varTC vs
+  foldl' (\body' _ -> lamTC =<< body') (return body) kills
 
 -- | Returns whether the term should be killed, given a set of allowed
 -- variables.
@@ -1187,7 +1219,6 @@ shouldKill vs t = runMaybeT $ do
         -- TODO: more precise analysis
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
-
 
 -- | A substitution from variables of the term on the left of the
 -- equation to terms inside the metavar.
@@ -1608,22 +1639,22 @@ prettyTypeCheckProblem sig p = case p of
     return $
       "CheckEqual1" $$
       "context:" //> ctxDoc $$
-      "type:" //> typeDoc $$
-      "term:" //> t1Doc
+      "type:" <+> typeDoc $$
+      "term:" <+> t1Doc
   CheckEqualInfer ctx type_ -> do
     ctxDoc <- prettyContext sig ctx
     typeDoc <- prettyTerm sig type_
     return $
       "CheckEqualInfer" $$
       "context:" //> ctxDoc $$
-      "type:" //> typeDoc
+      "type:" <+> typeDoc
   CheckSpine ctx els -> do
     ctxDoc <- prettyContext sig ctx
     let elsDoc = PP.list $ map PP.pretty els
     return $
       "CheckSpine" $$
       "context:" //> ctxDoc $$
-      "elims:" //> elsDoc
+      "elims:" <+> elsDoc
   CheckEqual ctx type_ x y -> do
     ctxDoc <- prettyContext sig ctx
     typeDoc <- prettyTerm sig type_
@@ -1632,9 +1663,9 @@ prettyTypeCheckProblem sig p = case p of
     return $
       "CheckEqual" $$
       "context:" //> ctxDoc $$
-      "type:" //> typeDoc $$
-      "x:" //> xDoc $$
-      "y:" //> yDoc
+      "type:" <+> typeDoc $$
+      "x:" <+> xDoc $$
+      "y:" <+> yDoc
   CheckEqualSpine1 ctx els1 els2 -> do
     ctxDoc <- prettyContext sig ctx
     els1Doc <- prettyElims sig els1
@@ -1642,8 +1673,8 @@ prettyTypeCheckProblem sig p = case p of
     return $
       "CheckEqualSpine1" $$
       "context:" //> ctxDoc $$
-      "elims1:" //> els1Doc $$
-      "elims2:" //> els2Doc
+      "elims1:" <+> els1Doc $$
+      "elims2:" <+> els2Doc
   CheckEqualSpine ctx type_ mbH els1 els2 -> do
     ctxDoc <- prettyContext sig ctx
     typeDoc <- prettyTerm sig type_
@@ -1655,25 +1686,25 @@ prettyTypeCheckProblem sig p = case p of
     return $
       "CheckEqualSpine" $$
       "context:" //> ctxDoc $$
-      "type:" //> typeDoc $$
-      "head:" //> hDoc $$
-      "elims1:" //> els1Doc $$
-      "elims2:" //> els2Doc
+      "type:" <+> typeDoc $$
+      "head:" <+> hDoc $$
+      "elims1:" <+> els1Doc $$
+      "elims2:" <+> els2Doc
   MatchPi _ type_ _ -> do
     typeDoc <- prettyTerm sig type_
     return $
       "MatchPi" $$
-      "type:" //> typeDoc
+      "type:" <+> typeDoc
   MatchEqual type_ _ -> do
     typeDoc <- prettyTerm sig type_
     return $
       "MatchEqual" $$
-      "type:" //> typeDoc
+      "type:" <+> typeDoc
   MatchTyCon n type_ _ -> do
     typeDoc <- prettyTerm sig type_
     return $
       "MatchTyCon" <+> PP.pretty n $$
-      "type:" //> typeDoc
+      "type:" <+> typeDoc
 
 metaVarIfStuck
   :: (IsTerm t)

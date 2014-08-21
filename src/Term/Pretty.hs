@@ -11,8 +11,8 @@ module Term.Pretty
   , prettyContext
   ) where
 
-import           Prelude.Extended
-import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
+import           Prelude.Extended                 hiding ((<>))
+import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>), (<>))
 import qualified PrettyPrint                      as PP
 import qualified Syntax.Internal                  as A
 import           Term.Class
@@ -78,14 +78,14 @@ prettyTel sig tel00 = fmap PP.group $ case tel00 of
   Tel.Cons (n0, type0) tel0 -> do
     type0Doc <- prettyTerm sig type0
     tel0Doc <- go tel0
-    return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc $$ tel0Doc
+    return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc <> PP.linebreak <> tel0Doc
   where
     go Tel.Empty = do
       return "]"
     go (Tel.Cons (n, type_) tel) = do
       typeDoc <- prettyTerm sig type_
       telDoc <- go tel
-      return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc $$ telDoc
+      return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <> PP.linebreak <> telDoc
 
 prettyTelWithTerm
   :: (IsTerm t)

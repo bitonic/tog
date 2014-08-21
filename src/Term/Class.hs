@@ -132,10 +132,6 @@ elimsEq []           []           = return True
 elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
 elimsEq _            _            = return False
 
--- instance Subst' Elim where
---     subst' (Apply t)      f = Apply <$> subst t f
---     subst' (Proj n field) _ = return $ Proj n field
-
 -- | The 'TermView' lets us pattern match on terms.  The actual
 -- implementation of terms might be different, but we must be able to
 -- get a 'TermView' out of it.  See 'View'.
@@ -434,27 +430,6 @@ instance Applicative (TermTraverse err) where
     TTMetaVars mvs1 <*> TTMetaVars mvs2  = TTMetaVars (mvs1 <> mvs2)
     TTMetaVars _    <*> TTFail v         = TTFail v
     TTFail v        <*> _                = TTFail v
-
--- -- Subst'
--- ------------------------------------------------------------------------
-
--- class Subst' t where
---   subst' :: (IsTerm f) => t f a -> (Var a -> TermM (f b)) -> TermM (t f b)
-
--- subst'Map
---   :: forall t f (a :: Nat) (b :: Nat).
---      (IsTerm f, Subst' t)
---   => (Var a -> Var b) -> t f a -> TermM (t f b)
--- subst'Map f t = subst' t (var . f)
-
--- -- TODO these are obviously very unsafe, I should have something better,
--- -- but I don't want them to live them in IO...
-
--- substVacuous :: (Subst t) => t Zero -> t a
--- substVacuous = unsafeCoerce
-
--- subst'Vacuous :: (Subst' t, Subst f) => t f Zero -> t f a
--- subst'Vacuous = unsafeCoerce
 
 -- Clauses
 ------------------------------------------------------------------------
