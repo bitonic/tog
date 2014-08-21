@@ -5,14 +5,13 @@ import           Options.Applicative
 import           System.Exit                      (exitFailure)
 
 import           Main.Common
-import           Main.Test
 import qualified PrettyPrint                      as PP
 import           TypeCheck                        (TypeCheckConf(TypeCheckConf))
 
 parseTypeCheckConf :: Parser TypeCheckConf
 parseTypeCheckConf = TypeCheckConf
   <$> strOption
-      ( long "termType" <> short 't' <> value "GR" <>
+      ( long "termType" <> short 't' <> value "S" <>
         help "Available types: S (Simple), GR (GraphReduce), EW (EasyWeaken)."
       )
   <*> switch
@@ -55,7 +54,7 @@ parseTypeCheckConf = TypeCheckConf
 parseMain :: Parser (IO ())
 parseMain =
   subparser
-    (command "check" parseTypeCheck <> command "test" parseTest)
+    (command "check" parseTypeCheck)
   where
     parseTypeCheck =
       info (typeCheck <$> argument Just (metavar "FILE") <*> parseTypeCheckConf)
