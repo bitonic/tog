@@ -14,6 +14,9 @@ import           Term.Impl.Common
 newtype GraphReduce = GR {unGR :: IORef (TermView GraphReduce)}
   deriving (Typeable)
 
+instance Show GraphReduce where
+  show _ = "<<ref>>"
+
 instance IsTerm GraphReduce where
   termEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
   termEq t1 t2 = genericTermEq t1 t2

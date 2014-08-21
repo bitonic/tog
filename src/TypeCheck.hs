@@ -73,7 +73,7 @@ type TCReport' t = TCReport t (TypeCheckProblem t)
 --------------------
 
 availableTermTypes :: [String]
-availableTermTypes = ["GR", "EW", "S", "H", "SUSP"]
+availableTermTypes = ["GR", "S", "H", "SUSP"]
 
 checkProgram
   :: TypeCheckConf -> [A.Decl]
@@ -82,9 +82,9 @@ checkProgram
 checkProgram conf decls ret =
   case tccTermType conf of
     "S"  -> checkProgram' (Proxy :: Proxy Simple)      conf decls ret
-    -- "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
+    "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
     -- "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  conf decls ret
-    -- "H"  -> checkProgram' (Proxy :: Proxy Hashed)      conf decls ret
+    "H"  -> checkProgram' (Proxy :: Proxy Hashed)      conf decls ret
     "SUSP" -> checkProgram' (Proxy :: Proxy Suspension) conf decls ret
     type_ -> return $ Left $ "Invalid term type" <+> PP.text type_
 

@@ -12,7 +12,7 @@ parseTypeCheckConf :: Parser TypeCheckConf
 parseTypeCheckConf = TypeCheckConf
   <$> strOption
       ( long "termType" <> short 't' <> value "S" <>
-        help "Available types: S (Simple), GR (GraphReduce), EW (EasyWeaken)."
+        help "Available types: S (Simple), GR (GraphReduce), H (Hashed), SUSP (Suspended)."
       )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")

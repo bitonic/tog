@@ -1,40 +1,27 @@
 module Term.Impl.Hashed where
 
 import           Control.Monad                    (unless)
-import           Data.Dynamic                     (Dynamic, fromDynamic, toDyn)
 import           Data.Functor                     ((<$>))
 import qualified Data.HashTable.IO                as HT
 import           Data.Hashable                    (Hashable, hashWithSalt, hash)
 import           Data.Maybe                       (fromMaybe)
-import           Data.Typeable                    (Typeable, cast)
-import           Prelude.Extras                   (Eq1((==#)))
+import           Data.Typeable                    (Typeable)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term
 import           Term.Impl.Common
 
 
-data Hashed v = H Int (TermView Hashed v)
-  deriving (Typeable)
+data Hashed = H Int (TermView Hashed)
+  deriving (Typeable, Show)
 
-instance Eq (Hashed v) where
-  H i1 t1 == H i2 t2 = i1 == i2 && go t1 t2
-    where
-      go (Lam body1) (Lam body2) =
-        body1 == body2
+instance Eq Hashed where
+  H i1 t1 == H i2 t2 = i1 == i2 && t1 == t2
 
-instance Hashable (Hashed v) where
+instance Hashable Hashed where
   hashWithSalt s (H i _) = s `hashWithSalt` i
 
-instance Subst Hashed where
-  var v = unview (App (Var v) [])
-
-  subst = genericSubst
-
 instance IsTerm Hashed where
-  termEq t1@(H i1 _) t2@(H i2 _) =
-    if i1 == i2 then genericTermEq t1 t2 else return False
-
   strengthen = genericStrengthen
   getAbsName = genericGetAbsName
 
@@ -54,6 +41,9 @@ instance IsTerm Hashed where
   view (H _ t) = return t
   unview tv = return $ H (hash tv) tv
 
+  substs = genericSubsts
+  weaken = genericWeaken
+
   set = H (hash (Set :: Closed (TermView Hashed))) Set
   refl = H (hash (Refl :: Closed (TermView Hashed))) Refl
 
@@ -65,29 +55,16 @@ typeOfJH = unsafePerformIO genericTypeOfJ
 
 -- Table
 
-data TableKey = forall v. TableKey (Hashed v)
-
-instance Hashable TableKey where
-  hashWithSalt s (TableKey t) = s `hashWithSalt` t
-
-instance Eq TableKey where
-  TableKey t1 == TableKey t2 = case (cast t2) of
-    Just t2' -> t1 == t2'
-    _        -> False
+type TableKey = Hashed
 
 {-# NOINLINE hashedTable #-}
-hashedTable :: HT.CuckooHashTable TableKey Dynamic
+hashedTable :: HT.CuckooHashTable TableKey Hashed
 hashedTable = unsafePerformIO HT.new
 
-lookupWhnfTerm :: Hashed v -> IO (Maybe (Hashed v))
+lookupWhnfTerm :: Hashed -> IO (Maybe Hashed)
 lookupWhnfTerm t0 = do
-  mbT <- HT.lookup hashedTable (TableKey t0)
-  case mbT of
-    Nothing -> return Nothing
-    Just t1 -> case fromDynamic t1 of
-      Just t2 -> return t2
-      Nothing -> error "impossible.lookupWhnfTerm"
+  HT.lookup hashedTable t0
 
-insertWhnfTerm :: Hashed v -> Hashed v -> IO ()
-insertWhnfTerm t1 t2 = HT.insert hashedTable (TableKey t1) (toDyn t2)
+insertWhnfTerm :: Hashed -> Hashed -> IO ()
+insertWhnfTerm t1 t2 = HT.insert hashedTable t1 t2
 
