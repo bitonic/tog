@@ -85,7 +85,7 @@ checkProgram conf decls ret =
     "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
     -- "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  conf decls ret
     "H"  -> checkProgram' (Proxy :: Proxy Hashed)      conf decls ret
-    "SUSP" -> checkProgram' (Proxy :: Proxy Suspension) conf decls ret
+    -- "SUSP" -> checkProgram' (Proxy :: Proxy Suspension) conf decls ret
     type_ -> return $ Left $ "Invalid term type" <+> PP.text type_
 
 checkProgram'
@@ -824,80 +824,80 @@ checkEqualBlockedOn
      (IsTerm t)
   => Ctx t
   -> Type t
-  -> HS.HashSet MetaVar -> Name -> [Elim t]
+  -> HS.HashSet MetaVar
+  -> BlockedHead -> [Elim t]
   -> Term t
   -> StuckTC' t ()
-checkEqualBlockedOn ctx type_ mvs fun1 elims1 t2 = do
+checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
   let msg = "*** Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
-            ", trying to invert definition" <+> PP.pretty fun1
+            ", trying to invert definition" <+> PP.pretty bh
+  t1 <- ignoreBlockingTC $ BlockedOn mvs bh elims1
   debugBracket_ msg $ do
-    t1 <- ignoreBlockingTC $ BlockedOn mvs fun1 elims1
-    Function _ clauses <- getDefinition fun1
-    case clauses of
-      NotInvertible _ -> do
-        debug_ "** Couldn't invert."
+    case bh of
+      BlockedOnJ -> do
+        debug_ "** Head is J, couldn't invert."
         fallback t1
-      Invertible injClauses -> do
-        t2View <- whnfViewTC t2
-        case t2View of
-          App (Def fun2) elims2 | fun1 == fun2 -> do
-            debug_ "** Could invert, and same heads, checking spines."
-            equalSpine ctx (Def fun1) elims1 elims2
-          _ -> do
-            t2Head <- termHead =<< unviewTC t2View
-            case t2Head of
-              Nothing -> do
-                debug_ "** Definition invertible but we don't have a clause head."
-                fallback t1
-              Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
-                debug_ $ "Inverting on" <+> PP.pretty tHead
-                -- Make the eliminators match the patterns
-                matchPats pats elims1
-                -- And restart
-                checkEqual ctx type_ t1 t2
-              Just _ -> do
-                checkError $ TermsNotEqual t1 t2
+      BlockedOnFunction fun1 -> do
+        Function _ clauses <- getDefinition fun1
+        case clauses of
+          NotInvertible _ -> do
+            debug_ "** Couldn't invert."
+            fallback t1
+          Invertible injClauses -> do
+            t2View <- whnfViewTC t2
+            case t2View of
+              App (Def fun2) elims2 | fun1 == fun2 -> do
+                debug_ "** Could invert, and same heads, checking spines."
+                equalSpine ctx (Def fun1) elims1 elims2
+              _ -> do
+                t2Head <- termHead =<< unviewTC t2View
+                case t2Head of
+                  Nothing -> do
+                    debug_ "** Definition invertible but we don't have a clause head."
+                    fallback t1
+                  Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
+                    debug_ $ "Inverting on" <+> PP.pretty tHead
+                    -- Make the eliminators match the patterns
+                    matched <- matchPats pats elims1
+                    -- And restart, if we matched something.
+                    if matched
+                      then checkEqual ctx type_ t1 t2
+                      else fallback t1
+                  Just _ -> do
+                    checkError $ TermsNotEqual t1 t2
   where
     fallback t1 = stuckOn $ newProblem mvs $ CheckEqual ctx type_ t1 t2
 
-    matchPats :: [Pattern] -> [Elim t] -> TC' t ()
-    matchPats [] [] = do
-      return ()
+    matchPats :: [Pattern] -> [Elim t] -> TC' t Bool
     matchPats (VarP : pats) (_ : elims) = do
       matchPats pats elims
     matchPats (ConP dataCon pats' : pats) (elim : elims) = do
-      matchPat dataCon pats' elim
-      matchPats pats elims
-    matchPats [] _ = do
+      matched <- matchPat dataCon pats' elim
+      (matched &&) <$> matchPats pats elims
+    matchPats _ _ = do
       -- Less patterns than arguments is fine.
-      return ()
-    matchPats _ [] = do
-      -- Less arguments than patterns is not fine -- we know that the
-      -- eliminators were blocked on the patterns.
-      error "impossible.checkEqualBlockedOn: got too few patterns."
+      --
+      -- Less arguments than patterns is fine too -- it happens if we
+      -- are waiting on some metavar which doesn't head an eliminator.
+      return False
 
-    matchPat :: Name -> [Pattern] -> Elim t -> TC' t ()
+    matchPat :: Name -> [Pattern] -> Elim t -> TC' t Bool
     matchPat dataCon pats (Apply t) = do
       tView <- whnfViewTC t
       case tView of
         App (Meta mv) mvArgs -> do
           mvT <- instantiateDataCon mv dataCon
-          matchPat dataCon pats . Apply =<< eliminateTC mvT mvArgs
+          void $ matchPat dataCon pats . Apply =<< eliminateTC mvT mvArgs
+          return True
         Con dataCon' dataConArgs | dataCon == dataCon' ->
           matchPats pats (map Apply dataConArgs)
         _ -> do
-          -- This can't happen -- we know that the execution was
-          -- blocked, or in other words it was impeded only by
-          -- metavariables.
-          matchPatErr dataCon pats $ Apply t
-    matchPat dataCon pats elim = do
+          -- This can happen -- when we are blocked on metavariables
+          -- that are impeding other definitions.
+          return False
+    matchPat _ _ _ = do
       -- Same as above.
-      matchPatErr dataCon pats elim
-
-    matchPatErr dataCon pats elim = do
-      doc <- prettyElimTC elim
-      error $ "impossible.matchPat: bad elim:\n" ++
-              show (ConP dataCon pats) ++ "\n" ++ render doc
+      return False
 
 equalType :: (IsTerm t) => Ctx t -> Type t -> Type t -> StuckTC' t ()
 equalType ctx a b = checkEqual ctx set a b

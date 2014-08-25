@@ -97,12 +97,18 @@ genericWhnf sig t = do
       case mbT of
         Just t' -> return t'
         Nothing -> return $ NotBlocked t
-    App J (_ : x : _ : _ : Apply p : Apply refl' : es) -> do
+    App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
       refl'' <- whnf sig refl'
-      reflView <- view =<< ignoreBlocking refl''
-      case reflView of
-        Refl -> whnf sig =<< eliminate sig p (x : es)
-        _    -> return $ NotBlocked t
+      case refl'' of
+        MetaVarHead mv _ ->
+          return $ BlockedOn (HS.singleton mv) BlockedOnJ es0
+        BlockedOn mvs _ _ ->
+          return $ BlockedOn mvs BlockedOnJ es0
+        NotBlocked refl''' -> do
+          reflView <- view refl'''
+          case reflView of
+            Refl -> whnf sig =<< eliminate sig p (x : es)
+            _    -> return $ NotBlocked t
     App (Meta mv) elims ->
       return $ MetaVarHead mv elims
     _ ->
@@ -119,7 +125,7 @@ whnfFun sig funName es (Clause patterns body : clauses) = runMaybeT $ do
   matched <- lift $ matchClause sig es patterns
   case matched of
     TTMetaVars mvs ->
-      return $ BlockedOn mvs funName es
+      return $ BlockedOn mvs (BlockedOnFunction funName) es
     TTFail () ->
       MaybeT $ whnfFun sig funName es clauses
     TTOK (args, leftoverEs) -> lift $ do
@@ -142,6 +148,9 @@ matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
     MetaVarHead mv _ -> do
       matched <- matchClause sig es patterns
       return $ TTMetaVars (HS.singleton mv) <*> matched
+    BlockedOn mvs _ _ -> do
+      matched <- matchClause sig es patterns
+      return $ TTMetaVars mvs <*> matched
     NotBlocked t -> do
       tView <- view t
       case tView of
@@ -149,8 +158,6 @@ matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
           matchClause sig (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
         _ ->
           return $ TTFail ()
-    _ ->
-      return $ TTFail ()
 matchClause _ _ _ =
   return $ TTFail ()
 

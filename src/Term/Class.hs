@@ -243,19 +243,34 @@ data Blocked t
     = NotBlocked t
     | MetaVarHead MetaVar [Elim t]
     -- ^ The term is 'MetaVar'-headed.
-    | BlockedOn (HS.HashSet MetaVar) Name [Elim t]
+    | BlockedOn (HS.HashSet MetaVar) BlockedHead [Elim t]
     -- ^ Returned when some 'MetaVar's are preventing us from reducing a
-    -- definition.  The 'Name' is the name of the definition, the
-    -- 'Elim's the eliminators stuck on it.
+    -- definition.  The 'BlockedHead' is the head, the 'Elim's the
+    -- eliminators stuck on it.
     --
-    -- Note that if anything else prevents reduction we're going to get
-    -- 'NotBlocked'.
+    -- Note that the metavariables impeding reduction might be both at
+    -- the head of some eliminators, or impeding reduction of some other
+    -- definition heading an eliminator.  In other words, even if the
+    -- term is blocked, we don't guarantee that every eliminator is
+    -- constructor headed.
    deriving (Eq, Show)
+
+data BlockedHead
+    = BlockedOnFunction Name
+    | BlockedOnJ
+    deriving (Eq, Show)
+
+instance PP.Pretty BlockedHead where
+  pretty = PP.text . show
 
 ignoreBlocking :: (IsTerm t) => Blocked t -> TermM t
 ignoreBlocking (NotBlocked t)           = return t
 ignoreBlocking (MetaVarHead mv es)      = metaVar mv es
-ignoreBlocking (BlockedOn _ funName es) = app (Def funName) es
+ignoreBlocking (BlockedOn _ bh es) =
+  let h = case bh of
+            BlockedOnFunction funName -> Def funName
+            BlockedOnJ                -> J
+  in app h es
 
 blockedEq
   :: (IsTerm t) => Blocked t -> Blocked t -> TermM Bool
