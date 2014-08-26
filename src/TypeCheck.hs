@@ -709,68 +709,66 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
           "elims1:" //> elims1Doc $$
           "elims2:" //> elims2Doc
   debugBracket msg $ do
-    let prob = CheckEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2)
-    postponeIfBlockedType prob type_ $ \type' -> do
-      case (elim1, elim2) of
-        (Apply arg1, Apply arg2) -> do
-          typeView <- viewTC type'
-          case typeView of
-            Pi dom cod -> do
-              stuck <- checkEqual ctx dom arg1 arg2
-              let continue arg cod' = do
-                    mbH' <- traverse (`eliminateTC` [Apply arg]) mbH
-                    checkEqualSpine ctx cod' mbH' elims1 elims2
-              case stuck of
-                NotStuck () -> do
-                  cod' <- liftTermM $ instantiate cod arg1
-                  continue arg1 cod'
-                -- If we're stuck in checking the domain, see if the
-                -- function is dependent and if it's not continue checking
-                -- and wait for both to complete.  otherwise put a
-                -- metavariable as a placeholder for the argument and
-                -- continue checking with that, forcing it to be equal to
-                -- one of the arguments later.  Then wait for both problems
-                -- to complete.
-                StuckOn pid -> do
-                  mbCod <- liftTermM $ strengthen_ 1 cod
-                  case mbCod of
-                    Just cod' -> do
-                      debug_ "*** Stuck on domain but non-dependent."
-                      stuck' <- continue arg1 cod'
-                      case stuck' of
-                        NotStuck () ->
-                          stuckOn $ return pid
-                        StuckOn pid' ->
-                          stuckOn $ bindProblem pid $ WaitForProblem pid'
-                    Nothing -> do
-                      mvT <- addMetaVarInCtx ctx dom
-                      debug $ do
-                        mvTDoc <- prettyTermTC mvT
-                        return $ "*** Stuck on domain, will use" <+> mvTDoc <+> "as type."
-                      -- Check that the metavar is to the first arg once
-                      -- we've proven that the two are equal...
-                      pid1 <- bindProblem pid $ CheckEqual ctx dom mvT arg1
-                      cod' <- liftTermM $ instantiate cod mvT
-                      stuck' <- continue mvT cod'
-                      case stuck' of
-                        NotStuck () ->
-                          -- TODO here we can instantiate immediately
-                          stuckOn $ return pid1
-                        StuckOn pid2 ->
-                          stuckOn $ bindProblem pid1 $ WaitForProblem pid2
-            _ -> do
-              typeDoc <- prettyTermTC type'
-              error $ "impossible.checkEqualSpine: Expected function type\n" ++ render typeDoc ++ "\n" ++ show type'
-        (Proj proj projIx, Proj proj' projIx')
-          | proj == proj' && projIx == projIx' ->
-            case mbH of
-              Nothing ->
-                error $ "impossible.checkEqualSpine: got projection but no head."
-              Just h  ->
-                applyProjection proj h type_ `bindStuckTC`
-                  CheckEqualSpine1 ctx elims1 elims2
-        _ ->
-          checkError $ SpineNotEqual type_ (elim1 : elims1) (elim1 : elims2)
+    case (elim1, elim2) of
+      (Apply arg1, Apply arg2) -> do
+        typeView <- viewTC type_
+        case typeView of
+          Pi dom cod -> do
+            stuck <- checkEqual ctx dom arg1 arg2
+            let continue arg cod' = do
+                  mbH' <- traverse (`eliminateTC` [Apply arg]) mbH
+                  checkEqualSpine ctx cod' mbH' elims1 elims2
+            case stuck of
+              NotStuck () -> do
+                cod' <- liftTermM $ instantiate cod arg1
+                continue arg1 cod'
+              -- If we're stuck in checking the domain, see if the
+              -- function is dependent and if it's not continue checking
+              -- and wait for both to complete.  otherwise put a
+              -- metavariable as a placeholder for the argument and
+              -- continue checking with that, forcing it to be equal to
+              -- one of the arguments later.  Then wait for both problems
+              -- to complete.
+              StuckOn pid -> do
+                mbCod <- liftTermM $ strengthen_ 1 cod
+                case mbCod of
+                  Just cod' -> do
+                    debug_ "*** Stuck on domain but non-dependent."
+                    stuck' <- continue arg1 cod'
+                    case stuck' of
+                      NotStuck () ->
+                        stuckOn $ return pid
+                      StuckOn pid' ->
+                        stuckOn $ bindProblem pid $ WaitForProblem pid'
+                  Nothing -> do
+                    mvT <- addMetaVarInCtx ctx dom
+                    debug $ do
+                      mvTDoc <- prettyTermTC mvT
+                      return $ "*** Stuck on domain, will use" <+> mvTDoc <+> "as type."
+                    -- Check that the metavar is to the first arg once
+                    -- we've proven that the two are equal...
+                    pid1 <- bindProblem pid $ CheckEqual ctx dom mvT arg1
+                    cod' <- liftTermM $ instantiate cod mvT
+                    stuck' <- continue mvT cod'
+                    case stuck' of
+                      NotStuck () ->
+                        -- TODO here we can instantiate immediately
+                        stuckOn $ return pid1
+                      StuckOn pid2 ->
+                        stuckOn $ bindProblem pid1 $ WaitForProblem pid2
+          _ -> do
+            typeDoc <- prettyTermTC type_
+            error $ "impossible.checkEqualSpine: Expected function type\n" ++ render typeDoc ++ "\n" ++ show type_
+      (Proj proj projIx, Proj proj' projIx')
+        | proj == proj' && projIx == projIx' ->
+          case mbH of
+            Nothing ->
+              error $ "impossible.checkEqualSpine: got projection but no head."
+            Just h  ->
+              applyProjection proj h type_ `bindStuckTC`
+                CheckEqualSpine1 ctx elims1 elims2
+      _ ->
+        checkError $ SpineNotEqual type_ (elim1 : elims1) (elim1 : elims2)
 checkEqualSpine _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 elims2
 
@@ -2080,9 +2078,6 @@ metaVarsTC t = withSignatureTermM $ \sig -> metaVars sig t
 
 prettyTermTC :: (IsTerm t) => t -> TC' t PP.Doc
 prettyTermTC t = withSignatureTermM $ \sig -> prettyTerm sig t
-
-prettyElimTC :: (IsTerm t) => Elim t -> TC' t PP.Doc
-prettyElimTC t = withSignatureTermM $ \sig -> prettyElim sig t
 
 prettyElimsTC :: (IsTerm t) => [Elim t] -> TC' t PP.Doc
 prettyElimsTC es = withSignatureTermM $ \sig -> prettyElims sig es
