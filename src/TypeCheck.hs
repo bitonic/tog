@@ -680,21 +680,34 @@ checkEqualApplySpine
   -> [Term t]
   -> StuckTC' t ()
 checkEqualApplySpine ctx type_ args1 args2 =
-  checkEqualSpine ctx type_ Nothing (map Apply args1) (map Apply args2)
+  checkEqualSpine' ctx type_ Nothing (map Apply args1) (map Apply args2)
 
 checkEqualSpine
   :: (IsTerm t)
   => Ctx t
   -> Type t
   -- ^ Type of the head.
-  -> Maybe (Term t)
-  -- ^ Head, if we have it.
+  -> Head
+  -- ^ Head
   -> [Elim (Term t)]
   -> [Elim (Term t)]
   -> StuckTC' t ()
-checkEqualSpine _ _ _ [] [] =
+checkEqualSpine ctx type_ h elims1 elims2  = do
+  h' <- appTC h []
+  checkEqualSpine' ctx type_ (Just h') elims1 elims2
+
+checkEqualSpine'
+  :: (IsTerm t)
+  => Ctx t
+  -> Type t
+  -- ^ Type of the head.
+  -> Maybe (Term t)
+  -> [Elim (Term t)]
+  -> [Elim (Term t)]
+  -> StuckTC' t ()
+checkEqualSpine' _ _ _ [] [] =
   returnStuckTC ()
-checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
   let msg = do
         typeDoc <- prettyTermTC type_
         hDoc <- case mbH of
@@ -717,7 +730,7 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
             stuck <- checkEqual ctx dom arg1 arg2
             let continue arg cod' = do
                   mbH' <- traverse (`eliminateTC` [Apply arg]) mbH
-                  checkEqualSpine ctx cod' mbH' elims1 elims2
+                  checkEqualSpine' ctx cod' mbH' elims1 elims2
             case stuck of
               NotStuck () -> do
                 cod' <- liftTermM $ instantiate cod arg1
@@ -769,7 +782,7 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
                 CheckEqualSpine1 ctx elims1 elims2
       _ ->
         checkError $ SpineNotEqual type_ (elim1 : elims1) (elim1 : elims2)
-checkEqualSpine _ type_ _ elims1 elims2 = do
+checkEqualSpine' _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 elims2
 
 -- | @intersectVars us vs@ checks whether all relevant elements in @us@
@@ -796,8 +809,7 @@ equalSpine ctx h elims1 elims2 = do
     Def f   -> definitionType =<< getDefinition f
     J       -> return typeOfJ
     Meta mv -> getMetaVarType mv
-  h' <- appTC h []
-  checkEqualSpine ctx hType (Just h') elims1 elims2
+  checkEqualSpine ctx hType h elims1 elims2
 
 postponeIfBlockedType
   :: (IsTerm t)
@@ -1514,10 +1526,6 @@ data TypeCheckProblem t a b where
                    -> TypeCheckProblem t (Term t, Type t) (Term t, Type t)
   CheckEqual       :: Ctx t -> Type t -> Term t -> Term t
                    -> TypeCheckProblem t () ()
-  CheckEqualSpine  :: Ctx t
-                   -> Type t -> Maybe (Term t)
-                   -> [Elim (Term t)] -> [Elim (Term t)]
-                   -> TypeCheckProblem t () ()
   CheckEqualSpine1 :: Ctx t
                    -> [Elim (Term t)] -> [Elim (Term t)]
                    -> TypeCheckProblem t (Term t, Type t) ()
@@ -1548,9 +1556,7 @@ typeCheckProblem (CheckSpine ctx els) (h', type') = do
 typeCheckProblem (CheckEqual ctx type_ x y) () = do
   checkEqual ctx type_ x y
 typeCheckProblem (CheckEqualSpine1 ctx elims1 elims2) (h', type') = do
-  checkEqualSpine ctx type' (Just h') elims1 elims2
-typeCheckProblem (CheckEqualSpine ctx type_ mbH elims1 elims2) () = do
-  checkEqualSpine ctx type_ mbH elims1 elims2
+  checkEqualSpine' ctx type' (Just h') elims1 elims2
 typeCheckProblem (MatchPi n type_ handler) () =
   matchPi n type_ handler
 typeCheckProblem (MatchEqual type_ handler) () =
@@ -1607,21 +1613,6 @@ prettyTypeCheckProblem sig p = case p of
     return $
       "CheckEqualSpine1" $$
       "context:" //> ctxDoc $$
-      "elims1:" <+> els1Doc $$
-      "elims2:" <+> els2Doc
-  CheckEqualSpine ctx type_ mbH els1 els2 -> do
-    ctxDoc <- prettyContext sig ctx
-    typeDoc <- prettyTerm sig type_
-    hDoc <- case mbH of
-      Nothing -> return "No head"
-      Just h  -> prettyTerm sig h
-    els1Doc <- prettyElims sig els1
-    els2Doc <- prettyElims sig els2
-    return $
-      "CheckEqualSpine" $$
-      "context:" //> ctxDoc $$
-      "type:" <+> typeDoc $$
-      "head:" <+> hDoc $$
       "elims1:" <+> els1Doc $$
       "elims2:" <+> els2Doc
   MatchPi _ type_ _ -> do
