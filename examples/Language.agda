@@ -79,17 +79,6 @@ fun a b = pi a (\ _ -> b)
 times : U -> U -> U
 times a b = sigma a (\ _ -> b)
 
--- Example.
-
-raw-categoryU : U
-raw-categoryU =
-  sigma set (\ obj ->
-  sigma (fun (el obj) (fun (el obj) set)) (\ hom ->
-  times
-    (pi (el obj) (\ x -> el (hom x x)))
-    (pi (el obj) (\ x -> pi (el obj) (\ y -> pi (el obj) (\ z ->
-       fun (el (hom x y)) (fun (el (hom y z)) (el (hom x z)))))))))
-
 ------------------------------------------------------------------------
 -- Contexts
 
@@ -222,6 +211,15 @@ app : {G : _} {t : _} {u : (g : Env G) -> El (t g) -> U} ->
 app t1 t2 = app'' t1 t2 refl
 
 -- Example.
+
+raw-categoryU : U
+raw-categoryU =
+  sigma set (\ obj ->
+  sigma (fun (el obj) (fun (el obj) set)) (\ hom ->
+  times
+    (pi (el obj) (\ x -> el (hom x x)))
+    (pi (el obj) (\ x -> pi (el obj) (\ y -> pi (el obj) (\ z ->
+       fun (el (hom x y)) (fun (el (hom y z)) (el (hom x z)))))))))
 
 raw-category : Type empty (\ _ -> raw-categoryU)
 raw-category =

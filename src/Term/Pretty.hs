@@ -28,7 +28,7 @@ prettyTerm sig = prettyPrecTerm sig 0
 
 prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
-  synT <- internalToTerm =<< nf sig t0 -- instantiateMetaVars sig t0
+  synT <- internalToTerm =<< nf sig t0
   return $ PP.prettyPrec p synT
 
 prettyElim :: (IsTerm t) => Sig.Signature t -> Elim t -> TermM PP.Doc

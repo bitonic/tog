@@ -560,7 +560,6 @@ solveProblems = do
       -- Execute the suspended computation. From how the functions
       -- adding problems are designed we know that the types will match
       -- up.
-      debug_ ("** Resuming problem" <+> PP.pretty pid)
       stuck <- case mbP of
         Nothing -> do
           -- TODO replace with something safe, for example using :~:.
