@@ -45,17 +45,19 @@ module TypeCheck.Monad
   , putState
     -- * Problem handling
   , ProblemId
+  , unProblemId
   , ProblemIdInt
   , ProblemState(..)
   , Problem(..)
   , Stuck(..)
   , notStuck
   , stuckOn
+  , WaitingOn(..)
   , newProblem
-  , newProblem_
   , bindProblem
   , solveProblems
   , solveProblems_
+  , catchProblem
     -- ** StuckTC
   , StuckTC
   , returnStuckTC
@@ -154,6 +156,7 @@ data TCState t p s = TCState
     , tsUnsolvedProblems :: !(Map.Map ProblemIdInt (Problem p))
     , tsSolvedProblems   :: !(HMS.HashMap ProblemIdInt ProblemSolution)
     , tsProblemCount     :: !Int
+    , tsCatchProblem     :: !Bool
     , tsState            :: !s
     }
 
@@ -165,6 +168,7 @@ initTCState s = TCState
   , tsUnsolvedProblems = Map.empty
   , tsSolvedProblems   = HMS.empty
   , tsProblemCount     = 0
+  , tsCatchProblem     = False
   , tsState            = s
   }
 
@@ -173,11 +177,14 @@ tcState = tsState
 
 data TCErr
     = DocErr SrcLoc PP.Doc
+    | CatchProblem ProblemState
 
 instance PP.Pretty TCErr where
   pretty (DocErr p s) =
     "Error at" <+> PP.text (show p) <+> ":" $$
     PP.nest 2 s
+  pretty (CatchProblem _) =
+    "CatchProblem"
 
 instance Show TCErr where
   show = PP.render
@@ -213,7 +220,7 @@ typeError err = do
       return ()
     Just d -> do
       debug_ $
-        "** About to trow error" $$
+        "** About to throw error" $$
         "error:" //> err $$
         "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
   TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
@@ -222,8 +229,9 @@ assert :: (PP.Doc -> PP.Doc) -> TC t p s a -> TC t p s a
 assert msg (TC m) = TC $ \(te, ts) -> do
   res <- m (te, ts)
   case res of
-    Error (DocErr _ err) -> error $ PP.render $ msg err
-    OK ts' x             -> return $ OK ts' x
+    Error (DocErr _ err)   -> error $ PP.render $ msg err
+    Error (CatchProblem _) -> error "CatchProblem"
+    OK ts' x               -> return $ OK ts' x
 
 -- SrcLoc
 ------------------------------------------------------------------------
@@ -398,6 +406,9 @@ type ProblemIdInt = Int
 newtype ProblemId a = ProblemId ProblemIdInt
   deriving (Show)
 
+unProblemId :: ProblemId a -> ProblemIdInt
+unProblemId (ProblemId pid) = pid
+
 instance PP.Pretty (ProblemId a) where
   pretty (ProblemId pid) = PP.pretty pid
 
@@ -422,14 +433,20 @@ type InterpretProblem t p s =
 type DescribeProblem t p s =
   forall a b. p a b -> TC t p s PP.Doc
 
+data WaitingOn
+    = WOAnyMeta     !(HS.HashSet MetaVar)
+    | WOAllProblems !(HS.HashSet ProblemIdInt)
+    deriving (Show)
+
 data ProblemState
-    = BoundToMetaVars  !(HS.HashSet MetaVar)
-    | BoundToProblem   !ProblemIdInt
+    = WaitingOn      !WaitingOn
+    | BoundToProblem !ProblemIdInt
     deriving (Show)
 
 instance PP.Pretty ProblemState where
-  pretty (BoundToMetaVars mvs)  = "BoundToMetaVars" <+> PP.pretty (HS.toList mvs)
-  pretty (BoundToProblem pid)   = "BoundToProblem" <+> PP.pretty pid
+  pretty (WaitingOn (WOAnyMeta mvs))      = "WaitingOn metas" <+> PP.pretty (HS.toList mvs)
+  pretty (WaitingOn (WOAllProblems pids)) = "WaitingOn problems" <+> PP.pretty (HS.toList pids)
+  pretty (BoundToProblem pid)             = "BoundToProblem" <+> PP.pretty pid
 
 -- | As remarked, we store the problems solutions dynamically to have
 -- them in a single 'HMS.HashMap'.
@@ -453,10 +470,24 @@ notStuck m = NotStuck <$> m
 
 addProblem :: ProblemIdInt -> Problem p -> TC t p s (ProblemId a)
 addProblem pid prob = do
-  modify $ \ts ->
-    ( ts{tsUnsolvedProblems = Map.insert pid prob (tsUnsolvedProblems ts)}
-    , ProblemId pid
-    )
+  err <- tsCatchProblem <$> get
+  if err
+    then do
+      mbD <- teDebug <$> ask
+      case mbD of
+        Nothing -> do
+          return ()
+        Just d -> do
+          debug_ $
+            "** About to throw error" $$
+            "error: CatchProblem" $$
+            "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
+      TC $ \_ -> return $ Error $ CatchProblem $ case prob of
+        Problem _ s _ _ -> s
+    else modify $ \ts ->
+           ( ts{tsUnsolvedProblems = Map.insert pid prob (tsUnsolvedProblems ts)}
+           , ProblemId pid
+           )
 
 addFreshProblem :: Problem p -> TC t p s (ProblemId a)
 addFreshProblem prob@(Problem mbProb _ _ _) = do
@@ -476,26 +507,24 @@ addFreshProblem prob@(Problem mbProb _ _ _) = do
 -- | Store a new problem dependend on a set of 'MetaVar's.  When one of
 -- them will be instantiated, the computation can be executed again.
 newProblem
-    :: HS.HashSet MetaVar
+    :: WaitingOn
     -> p () b
     -> TC t p s (ProblemId b)
-newProblem mvs _ | HS.null mvs =
-    error "newProblem: no metavars"
 newProblem mvs m = do
     loc <- teCurrentSrcLoc <$> ask
     mbTrace <- fmap dStackTrace . teDebug <$> ask
     let prob = Problem{ problemProblem    = Just m
-                      , problemState      = BoundToMetaVars mvs
+                      , problemState      = WaitingOn mvs
                       , problemSrcLoc     = loc
                       , problemStackTrace = mbTrace
                       }
     addFreshProblem prob
 
-newProblem_
-    :: MetaVar
-    -> p () b
-    -> TC t p s (ProblemId b)
-newProblem_ mv = newProblem (HS.singleton mv)
+-- newProblem_
+--     :: MetaVar
+--     -> p () b
+--     -> TC t p s (ProblemId b)
+-- newProblem_ mv = newProblem (HS.singleton mv)
 
 -- | @bindProblem pid desc (\x -> m)@ binds computation @m@ to problem
 -- @pid@. When @pid@ is solved with result @t@, @m t@ will be executed.
@@ -527,11 +556,16 @@ solveProblems = do
       mbSolution :: Maybe ProblemSolution <- case state of
         -- If we're waiting on metavars, check if at least one is
         -- instantiated.  The state will be ().
-        BoundToMetaVars mvs -> do
+        WaitingOn (WOAnyMeta mvs) -> do
           withSignature $ \sig -> msum
             [ problemSolution () <$ HMS.lookup mv (Sig.metaVarsBodies sig)
             | mv <- HS.toList mvs
             ]
+        WaitingOn (WOAllProblems pids) -> do
+          unsolvedProbsMap <- tsUnsolvedProblems <$> get
+          return $ if all (`Map.member` unsolvedProbsMap) $ HS.toList pids
+            then Just (problemSolution ())
+            else Nothing
         -- If we're bound to another problem, retrieve its result if
         -- available.
         BoundToProblem boundTo ->
@@ -591,6 +625,14 @@ solveProblems = do
 
 solveProblems_ :: TC t p s ()
 solveProblems_ = void solveProblems
+
+catchProblem :: TC t p s a -> TC t p s (Either ProblemState a)
+catchProblem m = debugBracket_ "*** catchProblem" $ TC $ \(te, ts) -> do
+  res <- unTC m (te, ts{tsCatchProblem = True})
+  case res of
+    Error (CatchProblem pid) -> return $ OK ts $ Left pid
+    Error err                -> return $ Error err
+    OK ts' x                 -> return $ OK ts'{tsCatchProblem = tsCatchProblem ts} $ Right x
 
 -- StuckTC
 ----------

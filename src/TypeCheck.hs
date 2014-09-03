@@ -54,6 +54,7 @@ defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False Fal
 data TypeCheckState = TypeCheckState
   { tcsCheckMetaVarConsistency :: Bool
   , tcsFastGetAbsName          :: Bool
+  -- TODO actually use this thing above.
   , tcsDisableSynEquality      :: Bool
   }
 
@@ -163,10 +164,10 @@ checkProgram' _ conf decls0 ret = do
           -- We want to display problems bound to metavars first (the
           -- "roots").
           let compareStates ps1 ps2 = case (ps1, ps2) of
-                (BoundToMetaVars _, BoundToMetaVars _) -> EQ
-                (BoundToMetaVars _, BoundToProblem _)  -> LT
-                (BoundToProblem _,  BoundToProblem _)  -> EQ
-                (BoundToProblem _,  BoundToMetaVars _) -> GT
+                (WaitingOn (WOAnyMeta _), WaitingOn (WOAnyMeta _)) -> EQ
+                (WaitingOn (WOAnyMeta _), _)                       -> LT
+                (_, WaitingOn (WOAnyMeta _))                       -> GT
+                (_, _)                                             -> EQ
           let problems =
                 sortBy (compareStates `on` problemState . snd) $ Map.toList $ trUnsolvedProblems tr
           forM_ problems $ \(pid, (Problem mbProb probState _ _)) -> do
@@ -272,8 +273,8 @@ checkFields ctx0 = go Ctx.Empty
         return $ Tel.tel ctx
     go ctx (A.Sig field synFieldType : fields) = do
         fieldType <- isType (ctx0 Ctx.++ ctx) synFieldType
-        extendContext ctx (field, fieldType) $ \ctx' -> do
-          go ctx' fields
+        ctx' <- extendContext ctx (field, fieldType)
+        go ctx' fields
 
 addProjections
     :: (IsTerm t)
@@ -409,15 +410,16 @@ check ctx synT type_ = atSrcLoc synT $ do
        metaVarIfStuck ctx type_ $ matchTyCon tyCon type_ $ \tyConArgs -> do
          appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
          checkConArgs ctx synArgs appliedDataConType `bindStuckTC`
-           WaitingOn (con dataCon)
+           Return (con dataCon)
      A.Refl _ -> do
        metaVarIfStuck ctx type_ $ matchEqual type_ $ \type' t1 t2 -> do
-         checkEqual ctx type' t1 ctx type' t2 `bindStuckTC` WaitingOn (\() -> return refl)
+         checkEqual ctx type' t1 ctx type' t2 `bindStuckTC` Return (\() -> return refl)
      A.Meta _ ->
        addMetaVarInCtx ctx type_
      A.Lam name synBody -> do
        metaVarIfStuck ctx type_ $ matchPi name type_ $ \dom cod -> do
-         body <- extendContext ctx (name, dom) $ \ctx' -> check ctx' synBody cod
+         ctx' <- extendContext ctx (name, dom)
+         body <- check ctx' synBody cod
          returnStuckTC =<< lamTC body
      _ -> do
        metaVarIfStuck ctx type_ $
@@ -447,7 +449,7 @@ checkConArgs ctx (synArg : synArgs) type_ = atSrcLoc synArg $ do
   matchPi_ type_ $ \dom cod -> do
     arg <- check ctx synArg dom
     cod' <- liftTermM $ instantiate cod arg
-    checkConArgs ctx synArgs cod' `bindStuckTC` WaitingOn (return . (arg :))
+    checkConArgs ctx synArgs cod' `bindStuckTC` Return (return . (arg :))
 
 isType :: (IsTerm t) => Ctx t -> A.Expr -> TC' t (Type t)
 isType ctx abs = check ctx abs set
@@ -465,7 +467,8 @@ infer ctx synT = atSrcLoc synT $ do
         returnStuckTC (set, set)
       A.Pi name synDomain synCodomain -> do
         domain   <- isType ctx synDomain
-        codomain <- extendContext ctx (name, domain) $ \ctx' -> isType ctx' synCodomain
+        ctx'     <- extendContext ctx (name, domain)
+        codomain <- isType ctx' synCodomain
         t <- piTC domain codomain
         returnStuckTC (t, set)
       A.Fun synDomain synCodomain -> do
@@ -529,14 +532,18 @@ checkEqual
   -> Ctx t -> Type t -> Term t -> StuckTC' t ()
 checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
   let msg = do
+        ctxXDoc <- prettyContextTC ctxX
         typeXDoc <- prettyTermTC typeX0
         xDoc <- prettyTermTC x0
+        ctxYDoc <- prettyContextTC ctxY
         typeYDoc <- prettyTermTC typeY0
         yDoc <- prettyTermTC y0
         return $
           "*** checkEqual" $$
+          "ctxX:" //> ctxXDoc $$
           "typeX:" //> typeXDoc $$
           "x:" //> xDoc $$
+          "ctxY:" //> ctxYDoc $$
           "typeY:" //> typeYDoc $$
           "y:" //> yDoc
   debugBracket msg $ do
@@ -555,13 +562,12 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
       else do
         -- Eta-expansion
         let runExpand type_ s blockedT t = do
-              mbExpand <- etaExpand type_
-              case mbExpand of
+              mbT <- etaExpand type_ t
+              case mbT of
                 Nothing -> do
                   debug_ $ "** Could not eta-expand" <+> s
                   return blockedT
-                Just expand -> do
-                  t' <- expand t
+                Just t' -> do
                   debug $ do
                     tDoc <- prettyTermTC t'
                     return $ "** Expanded" <+> s <+> "to" $$ tDoc
@@ -579,14 +585,12 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
               Just kills -> do
                 instantiateMetaVar' mv =<< killArgs mv kills
                 notStuck $ return ()
-          (MetaVarHead mv elims, _) ->
-            -- TODO we should probably compare the contexts as well.
-            -- Also below.
-            equalType ctxX typeX ctxY typeY `bindStuckTC`
-            MetaAssign ctxX typeY mv elims y2
-          (_, MetaVarHead mv elims) ->
-            equalType ctxX typeX ctxY typeY `bindStuckTC`
-            MetaAssign ctxX typeX mv elims x2
+          (MetaVarHead mv elims, _) -> do
+            checkEqualContexts ctxX typeX x2 ctxY typeY y2 `bindStuckTC`
+              MetaAssign ctxX typeY mv elims y2
+          (_, MetaVarHead mv elims) -> do
+            checkEqualContexts ctxX typeX x2 ctxY typeY y2 `bindStuckTC`
+              MetaAssign ctxX typeX mv elims x2
           (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
             -- Both blocked, and we already checked for syntactic equality,
             -- let's try syntactic equality when normalized.
@@ -598,7 +602,7 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
               else do
                 let mvs = HS.union mvs1 mvs2
                 debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-                stuckOn $ newProblem mvs $ CheckEqual ctxX typeX x3 ctxY typeY y3
+                stuckOn $ newProblem (WOAnyMeta mvs) $ CheckEqual ctxX typeX x3 ctxY typeY y3
           (BlockedOn mvs f elims, _) -> do
             checkEqualBlockedOn ctxX typeX mvs f elims ctxY typeY y2
           (_, BlockedOn mvs f elims) -> do
@@ -606,7 +610,7 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
           (NotBlocked _, NotBlocked _) -> do
              typeXView <- viewTC typeX
              xView <- viewTC x2
-             typeYView <- viewTC typeX
+             typeYView <- viewTC typeY
              yView <- viewTC y2
              let mkVar n ix = varTC $ V $ named n ix
              case (typeXView, xView, typeYView, yView) of
@@ -616,9 +620,9 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
                  -- TODO there is a bit of duplication between here and expansion.
                  name1 <- getAbsNameTC body1
                  name2 <- getAbsNameTC body2
-                 extendContext ctxX (name1, dom1) $ \ctxX' ->
-                   extendContext ctxY (name2, dom2) $ \ctxY' ->
-                     checkEqual ctxX' cod1 body1 ctxY' cod2 body2
+                 ctxX' <- extendContext ctxX (name1, dom1)
+                 ctxY' <- extendContext ctxY (name2, dom2)
+                 checkEqual ctxX' cod1 body1 ctxY' cod2 body2
                (Set, Pi dom1 cod1, Set, Pi dom2 cod2) -> do
                  -- Pi : (A : Set) -> (A -> Set) -> Set
                  piType <- do
@@ -653,27 +657,30 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
                (_, _, _, _) -> do
                 checkError $ TermsNotEqual typeX x1 typeY y1
   where
-    etaExpand type_ = do
+    etaExpand type_ t = do
       typeView <- viewTC type_
       case typeView of
         App (Def tyCon) _ -> do
           tyConDef <- getDefinition tyCon
-          return $ case tyConDef of
-            Constant (Record dataCon projs) _ ->
-              Just $ \t -> do
-                ts <- mapM (\(n, ix) -> eliminateTC t [Proj n ix]) projs
-                conTC dataCon ts
+          case tyConDef of
+            Constant (Record dataCon projs) _ -> do
+              tView <- viewTC t
+              case tView of
+                Con _ _ -> return Nothing
+                _       -> do
+                  ts <- mapM (\(n, ix) -> eliminateTC t [Proj n ix]) projs
+                  Just <$> conTC dataCon ts
             _ ->
-              Nothing
+              return Nothing
         Pi _ codomain -> do
           name <- getAbsNameTC codomain
           v <- varTC $ boundVar name
-          return $ Just $ \t -> do
-            tView <- whnfViewTC t
-            case tView of
-              Lam _ -> return t
-              _     -> do t' <- liftTermM $ weaken_ 1 t
-                          lamTC =<< eliminateTC t' [Apply v]
+          tView <- whnfViewTC t
+          case tView of
+            Lam _ -> return Nothing
+            _     -> do t' <- liftTermM $ weaken_ 1 t
+                        t'' <- lamTC =<< eliminateTC t' [Apply v]
+                        return $ Just t''
         _ ->
           return Nothing
 
@@ -685,8 +692,53 @@ checkEqual ctxX typeX0 x0 ctxY typeY0 y0 = do
         then notStuck $ return ()
         else do
           debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-          stuckOn $ newProblem mvs $ CheckEqual ctxX typeX' x' ctxY typeY' y'
+          stuckOn $ newProblem (WOAnyMeta mvs) $ CheckEqual ctxX typeX' x' ctxY typeY' y'
 
+checkEqualContexts
+  :: IsTerm t
+  => Ctx (Type t) -> Type t -> Term t
+  -> Ctx (Type t) -> Type t -> Term t
+  -> StuckTC' t ()
+checkEqualContexts ctx10 type10 t10 ctx20 type20 t20 = do
+  type10' <- nfTC type10
+  t1 <- nfTC t10
+  type20' <- nfTC type20
+  t2 <- nfTC t20
+  fvs1 <- fvAll <$> freeVarsTC t1
+  fvs2 <- fvAll <$> freeVarsTC t2
+  let fvs = fvs1 <> fvs2
+  let canKill ix = not (Set.member (V (named "_" ix)) fvs)
+  stuck <- go canKill (0 :: Int) ctx10 type10' ctx20 type20'
+  case stuck of
+    NotStuck () -> return ()
+    StuckOn _   -> debug_ "** checkEqualContexts was stuck."
+  return stuck
+  where
+    go _ _ Ctx.Empty t1 Ctx.Empty t2 = do
+      let msg = do
+            t1Doc <- prettyTermTC t1
+            t2Doc <- prettyTermTC t2
+            return $
+              "*** checkEqualContexts" $$
+              "ctx1:" //> t1Doc $$
+              "ctx2:" //> t2Doc
+      debugBracket msg $ equalType Ctx.Empty t1 Ctx.Empty t2
+    go canKill ix (Ctx.Snoc ctx1 (_, dom1)) cod1 (Ctx.Snoc ctx2 (_, dom2)) cod2 = do
+      let fallback = (,) <$> piTC dom1 cod1 <*> piTC dom2 cod2
+      (cod1', cod2') <-
+        if canKill ix
+        then do
+          mbCod1 <- liftTermM . strengthen_ 1 =<< nfTC cod1
+          mbCod2 <- liftTermM . strengthen_ 1 =<< nfTC cod2
+          case (mbCod1, mbCod2) of
+            (Just cod1', Just cod2') -> do
+              return (cod1', cod2')
+            (_, _) -> do
+              fallback
+        else fallback
+      go canKill (ix + 1) ctx1 cod1' ctx2 cod2'
+    go _ _ _ _ _ _ = do
+      error "impossible.checkEqualContexts: contexts of different length"
 
 checkEqualApplySpine
   :: (IsTerm t)
@@ -699,7 +751,7 @@ checkEqualApplySpine ctx1 type1 args1 ctx2 type2 args2 =
 checkEqualSpine
   :: (IsTerm t)
   => Ctx t -> Type t -> Head -> [Elim (Term t)]
-  -> Ctx t-> Type t -> Head -> [Elim (Term t)]
+  -> Ctx t -> Type t -> Head -> [Elim (Term t)]
   -> StuckTC' t ()
 checkEqualSpine ctx1 type1 h1 elims1 ctx2 type2 h2 elims2  = do
   h1' <- appTC h1 []
@@ -751,7 +803,7 @@ checkEqualSpine' ctx1 type1 mbH1 (elim1 : elims1) ctx2 type2 mbH2 (elim2 : elims
               (_, NotStuck ()) ->
                 return stuck1
               (StuckOn pid1, StuckOn pid2) ->
-                stuckOn $ bindProblem pid1 $ WaitForProblem pid2
+                stuckOn $ newProblem (WOAllProblems (HS.fromList (map unProblemId [pid1, pid2]))) $ Return $ \() -> return ()
           (_, _) -> do
             type1Doc <- prettyTermTC type1
             type2Doc <- prettyTermTC type2
@@ -848,7 +900,7 @@ checkEqualBlockedOn ctx1 type1 mvs bh elims1 ctx2 type2 t2 = do
                   Just _ -> do
                     checkError $ TermsNotEqual type1 t1 type2 t2
   where
-    fallback t1 = stuckOn $ newProblem mvs $ CheckEqual ctx1 type1 t1 ctx2 type2 t2
+    fallback t1 = stuckOn $ newProblem (WOAnyMeta mvs) $ CheckEqual ctx1 type1 t1 ctx2 type2 t2
 
     matchPats :: [Pattern] -> [Elim t] -> TC' t Bool
     matchPats (VarP : pats) (_ : elims) = do
@@ -881,78 +933,6 @@ checkEqualBlockedOn ctx1 type1 mvs bh elims1 ctx2 type2 t2 = do
       -- Same as above.
       return False
 
-
--- checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
---   let msg = "*** Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
---             ", trying to invert definition" <+> PP.pretty bh
---   t1 <- ignoreBlockingTC $ BlockedOn mvs bh elims1
---   debugBracket_ msg $ do
---     case bh of
---       BlockedOnJ -> do
---         debug_ "** Head is J, couldn't invert."
---         fallback t1
---       BlockedOnFunction fun1 -> do
---         Function _ clauses <- getDefinition fun1
---         case clauses of
---           NotInvertible _ -> do
---             debug_ "** Couldn't invert."
---             fallback t1
---           Invertible injClauses -> do
---             t2View <- whnfViewTC t2
---             case t2View of
---               App (Def fun2) elims2 | fun1 == fun2 -> do
---                 debug_ "** Could invert, and same heads, checking spines."
---                 equalSpine ctx (Def fun1) elims1 elims2
---               _ -> do
---                 t2Head <- termHead =<< unviewTC t2View
---                 case t2Head of
---                   Nothing -> do
---                     debug_ "** Definition invertible but we don't have a clause head."
---                     fallback t1
---                   Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
---                     debug_ $ "Inverting on" <+> PP.pretty tHead
---                     -- Make the eliminators match the patterns
---                     matched <- matchPats pats elims1
---                     -- And restart, if we matched something.
---                     if matched
---                       then checkEqual ctx type_ t1 t2
---                       else fallback t1
---                   Just _ -> do
---                     checkError $ TermsNotEqual t1 t2
---   where
---     fallback t1 = stuckOn $ newProblem mvs $ CheckEqual ctx type_ t1 t2
-
---     matchPats :: [Pattern] -> [Elim t] -> TC' t Bool
---     matchPats (VarP : pats) (_ : elims) = do
---       matchPats pats elims
---     matchPats (ConP dataCon pats' : pats) (elim : elims) = do
---       matched <- matchPat dataCon pats' elim
---       (matched &&) <$> matchPats pats elims
---     matchPats _ _ = do
---       -- Less patterns than arguments is fine.
---       --
---       -- Less arguments than patterns is fine too -- it happens if we
---       -- are waiting on some metavar which doesn't head an eliminator.
---       return False
-
---     matchPat :: Name -> [Pattern] -> Elim t -> TC' t Bool
---     matchPat dataCon pats (Apply t) = do
---       tView <- whnfViewTC t
---       case tView of
---         App (Meta mv) mvArgs -> do
---           mvT <- instantiateDataCon mv dataCon
---           void $ matchPat dataCon pats . Apply =<< eliminateTC mvT mvArgs
---           return True
---         Con dataCon' dataConArgs | dataCon == dataCon' ->
---           matchPats pats (map Apply dataConArgs)
---         _ -> do
---           -- This can happen -- when we are blocked on metavariables
---           -- that are impeding other definitions.
---           return False
---     matchPat _ _ _ = do
---       -- Same as above.
---       return False
-
 equalType :: (IsTerm t) => Ctx t -> Type t -> Ctx t -> Type t -> StuckTC' t ()
 equalType ctxA a ctxB b = checkEqual ctxA set a ctxB set b
 
@@ -960,7 +940,7 @@ equalType ctxA a ctxB b = checkEqual ctxA set a ctxB set b
 ------------------------------------------------------------------------
 
 metaAssign
-  :: (IsTerm t)
+  :: forall t. (IsTerm t)
   => Ctx t -> Type t -> MetaVar -> [Elim (Term t)] -> Term t
   -> StuckTC' t ()
 metaAssign ctx0 type0 mv elims0 t0 = do
@@ -996,10 +976,10 @@ metaAssign ctx0 type0 mv elims0 t0 = do
         debug $ do
           -- TODO this check could be more precise
           if Ctx.length ctx0 == Ctx.length ctx
-          then return "*** No change in context"
+          then return "** No change in context"
           else do
             ctxDoc <- prettyContextTC ctx
-            return $ "*** New context:" //> ctxDoc
+            return $ "** New context:" //> ctxDoc
         type_ <- liftTermM $ sub type0
         t <- liftTermM $ sub t0
         debug $ do
@@ -1033,7 +1013,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
             case mbMvT of
               Nothing -> do
                 mvT <- metaVarTC mv elims
-                stuckOn $ newProblem mvs $ CheckEqual ctx type_ mvT ctx type_ t
+                stuckOn $ newProblem (WOAnyMeta mvs) $ CheckEqual ctx type_ mvT ctx type_ t
               Just mvT -> do
                 mvT' <- eliminateTC mvT elims'
                 checkEqual ctx type_ mvT' ctx type_ t'
@@ -1053,14 +1033,27 @@ metaAssign ctx0 type0 mv elims0 t0 = do
                 mvs <- metaVarsTC t'
                 when (mv `HS.member` mvs) $
                   checkError $ OccursCheckFailed mv t'
-                instantiateMetaVar' mv t'
-                returnStuckTC ()
+                -- Check that the type to instantiate has the right
+                -- type.  This might not be the case since we've kept
+                -- two contexts around...
+                checkAndInstantiateMetaVar mv t'
               TTMetaVars mvs -> do
                 debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
                 mvT <- metaVarTC mv elims
-                stuckOn $ newProblem (HS.insert mv mvs) $ CheckEqual ctx type_ mvT ctx type_ t
+                stuckOn $ newProblem (WOAnyMeta (HS.insert mv mvs)) $ CheckEqual ctx type_ mvT ctx type_ t
               TTFail v ->
                 checkError $ FreeVariableInEquatedTerm mv elims t v
+
+checkAndInstantiateMetaVar :: (IsTerm t) => MetaVar -> Term t -> StuckTC' t ()
+checkAndInstantiateMetaVar mv t' = do
+  mvType <- getMetaVarType mv
+  absT <- liftTermM $ internalToTerm t'
+  mbProb <- catchProblem $ check Ctx.Empty absT mvType
+  case mbProb of
+    Left (WaitingOn wo) -> stuckOn $ newProblem wo $ CheckAndInstantiateMetaVar mv t'
+    Left (BoundToProblem pid) -> stuckOn $ newProblem (WOAllProblems (HS.singleton pid)) $ CheckAndInstantiateMetaVar mv t'
+    Right _  -> do instantiateMetaVar' mv t'
+                   notStuck $ return ()
 
 -- | The term must be in normal form.
 --
@@ -1108,7 +1101,7 @@ pruneTerm vs t = do
 prune
     :: forall t.
        (IsTerm t)
-    => Set.Set Var               -- ^ allowed vars
+    => Set.Set Var           -- ^ allowed vars
     -> MetaVar
     -> [Elim (Term t)]       -- ^ Arguments to the metavariable
     -> TC' t (Maybe (Closed (Term t)))
@@ -1407,6 +1400,47 @@ applyInvertMetaSubst sub t0 =
             (Meta mv, _) ->
               sequenceA $ appTC (Meta mv) <$> resElims
 
+{-
+
+-- Eta-expansion of context arguments
+-------------------------------------
+
+
+etaExpandContextVars
+  :: (IsTerm t)
+  => Ctx t -> TC' t (Ctx t, [(Int, Term t)])
+etaExpandContextVars Ctx.Empty = do
+  return (Ctx.Empty, [])
+etaExpandContextVars (Ctx.Snoc ctx (n, type_)) = do
+  (ctx', sub) <- etaExpandContextVars ctx
+  type' <- liftTermM $ substs sub type_
+  typeView <- whnfViewTC type'
+  sub' <- weakenSub sub
+  let fallback =
+        return (Ctx.Snoc ctx' (n, type'), reverse sub')
+  case typeView of
+    App (Def tyCon) tyConPars0 -> do
+      tyConDef <- getDefinition tyCon
+      case tyConDef of
+        Constant (Record dataCon projs) _ -> do
+          let Just tyConPars = mapM isApply tyConPars0
+          DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+          appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+          (dataConPars, _) <- assert ("etaExpandContextVars, unrollPiWithNames:" <+>) $
+            unrollPiWithNames appliedDataConType (map fst projs)
+          dataConT <- conTC dataCon =<< mapM varTC (ctxVars dataConPars)
+          let ctx' = ctx Ctx.++ dataConPars
+          undefined
+        _ -> do
+          fallback
+    _ -> do
+      fallback
+  where
+    weakenSub = mapM $ \(ix, t) -> do
+      t' <- liftTermM $ weaken_ 1 t
+      return (ix + 1, t')
+-}
+
 -- Eta-expansion of arguments of metas
 --------------------------------------
 
@@ -1559,8 +1593,7 @@ createMvsPars ctx (Tel.Cons (_, type') tel) = do
 ------------------------------------------------------------------------
 
 data TypeCheckProblem t a b where
-  WaitingOn :: (a -> TermM b) -> TypeCheckProblem t a b
-  WaitForProblem :: ProblemId a -> TypeCheckProblem t () a
+  Return :: (a -> TermM b) -> TypeCheckProblem t a b
 
   CheckEqual1      :: Ctx t -> Type t -> Term t
                    -> TypeCheckProblem t (Term t) ()
@@ -1583,17 +1616,17 @@ data TypeCheckProblem t a b where
               -> ([Term t] -> StuckTC' t a)
               -> TypeCheckProblem t () a
 
+  CheckAndInstantiateMetaVar :: MetaVar -> Term t -> TypeCheckProblem t () ()
+
 typeCheckProblem
   :: (IsTerm t)
   => TypeCheckProblem t a b -> a -> StuckTC' t b
-typeCheckProblem (WaitingOn f) x =
+typeCheckProblem (Return f) x =
   returnStuckTC =<< liftTermM (f x)
-typeCheckProblem (WaitForProblem pid) () =
-  stuckOn $ bindProblem pid $ WaitingOn return
 typeCheckProblem (CheckEqual1 ctx type_ t1) t2 =
   checkEqual ctx type_ t1 ctx type_ t2
 typeCheckProblem (CheckEqualInfer ctx type_) (t, type') = do
-  checkEqual ctx set type_ ctx set type' `bindStuckTC` WaitingOn (\() -> return t)
+  checkEqual ctx set type_ ctx set type' `bindStuckTC` Return (\() -> return t)
 typeCheckProblem (CheckSpine ctx els) (h', type') = do
   checkSpine ctx h' els type'
 typeCheckProblem (CheckEqual ctx1 type1 t1 ctx2 type2 t2) () = do
@@ -1606,15 +1639,15 @@ typeCheckProblem (MatchTyCon n type_ handler) () =
   matchTyCon n type_ handler
 typeCheckProblem (MetaAssign ctx type_ mv elims t) () =
   metaAssign ctx type_ mv elims t
+typeCheckProblem (CheckAndInstantiateMetaVar mv t) () =
+  checkAndInstantiateMetaVar mv t
 
 prettyTypeCheckProblem
   :: (IsTerm t)
   => Sig.Signature t -> TypeCheckProblem t a b -> TermM PP.Doc
 prettyTypeCheckProblem sig p = case p of
-  WaitingOn _ -> do
-    return "WaitingOn"
-  WaitForProblem pid -> do
-    return $ "WaitForProblem" <+> PP.pretty pid
+  Return _ -> do
+    return "Return"
   CheckEqual1 ctx type_ t1 -> do
     ctxDoc <- prettyContext sig ctx
     typeDoc <- prettyTerm sig type_
@@ -1679,6 +1712,11 @@ prettyTypeCheckProblem sig p = case p of
       "type:" //> typeDoc $$
       "x:" //> t1Doc $$
       "y:" //> t2Doc
+  CheckAndInstantiateMetaVar mv t -> do
+    tDoc <- prettyTerm sig t
+    return $
+      "CheckAndInstantiateMetaVar" <+> PP.pretty mv $$
+      "term:" //> tDoc
 
 metaVarIfStuck
   :: (IsTerm t)
@@ -1741,7 +1779,7 @@ matchTyCon tyCon t0 handler = do
         -- Maybe remove and do it explicitly?
         matchTyCon tyCon t handler
       BlockedOn mvs _ _ -> lift $ do
-        stuckOn $ newProblem mvs (MatchTyCon tyCon t handler)
+        stuckOn $ newProblem (WOAnyMeta mvs) (MatchTyCon tyCon t handler)
     maybe (checkError $ DataConTypeError tyCon t) return mbRes
 
 matchPi
@@ -1772,7 +1810,7 @@ matchPi name t0 handler = do
         -- Maybe remove and do it explicitly?
         matchPi name t handler
       BlockedOn mvs _ _ -> lift $ do
-        stuckOn $ newProblem mvs (MatchPi name t handler)
+        stuckOn $ newProblem (WOAnyMeta mvs) (MatchPi name t handler)
     maybe (checkError $ ExpectedFunctionType t Nothing) return mbRes
 
 matchPi_
@@ -1808,7 +1846,7 @@ matchEqual t0 handler = do
         instantiateMetaVar' mv mvT
         matchEqual t handler
       BlockedOn mvs _ _ -> lift $ do
-        stuckOn $ newProblem mvs (MatchEqual t handler)
+        stuckOn $ newProblem (WOAnyMeta mvs) (MatchEqual t handler)
     maybe (checkError $ ExpectedEqual t) return mbRes
 
 applyProjection
@@ -2074,13 +2112,14 @@ ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx =<< lam t
 
 extendContext
   :: (IsTerm t)
-  => Ctx (Type t) -> (Name, Type t) -> (Ctx (Type t) -> TC' t a) -> TC' t a
-extendContext ctx type_ ret = do
+  => Ctx (Type t) -> (Name, Type t) -> TC' t (Ctx (Type t))
+extendContext ctx type_ = do
   let ctx' = Ctx.Snoc ctx type_
   let msg = do
         ctxDoc <- prettyContextTC ctx'
         return $ "*** extendContext" $$ ctxDoc
-  debugBracket msg $ ret ctx'
+  debug msg
+  return ctx'
 
 -- Monad versions of signature-requiring things
 -----------------------------------------------

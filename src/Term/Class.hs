@@ -201,12 +201,6 @@ class (Typeable t, Show t) => IsTerm t where
       Just t'' <- strengthen_ 1 t'
       return t''
 
-    -- abstract :: Var -> t -> TermM (Abs t)
-    -- abstract v t = do
-    --   t' <- weaken_ 1 t
-    --   vt <- var $ boundVar $ varName v
-    --   subst (varIndex v + 1) vt t'
-
     getAbsName :: Abs t -> TermM (Maybe Name)
 
     -- Evaluation
