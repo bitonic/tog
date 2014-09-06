@@ -10,7 +10,7 @@ module TypeCheck
 
 import           Prelude                          hiding (abs, pi)
 
-import           Control.Monad.Trans.Either       (EitherT(EitherT), runEitherT)
+import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashMap.Strict              as HMS
 import qualified Data.HashSet                     as HS
@@ -102,12 +102,12 @@ checkProgram' _ conf decls0 ret = do
     let s = TypeCheckState (tccCheckMetaVarConsistency conf)
                            (tccFastGetAbsName conf)
                            (tccDisableSynEquality conf)
-    errOrTs <- runEitherT (goDecls (initTCState s) decls0)
+    errOrTs <- runExceptT (goDecls (initTCState s) decls0)
     case errOrTs of
       Left err -> return $ Left err
       Right t  -> Right <$> ret t
   where
-    goDecls :: TCState' t -> [A.Decl] -> EitherT PP.Doc IO (TCState' t)
+    goDecls :: TCState' t -> [A.Decl] -> ExceptT PP.Doc IO (TCState' t)
     goDecls ts [] = do
       lift $ unless (tccQuiet conf) $ report ts
       return ts
@@ -127,7 +127,7 @@ checkProgram' _ conf decls0 ret = do
       let debug' = if (not (tccQuiet conf) && tccDebug conf) then enableDebug else id
       let describeProblem p =
             withSignatureTermM $ \sig -> prettyTypeCheckProblem sig p
-      ((), ts') <- EitherT $ runTC typeCheckProblem describeProblem ts $ debug' $
+      ((), ts') <- ExceptT $ runTC typeCheckProblem describeProblem ts $ debug' $
         checkDecl decl >> solveProblems_
       goDecls ts' decls
 
@@ -1971,8 +1971,8 @@ unrollPi type_ = do
     _ ->
       return (Ctx.Empty, type_)
 
--- -- Errors
--- ---------
+-- Errors
+---------
 
 data CheckError t
     = DataConTypeError Name (Type t)

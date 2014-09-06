@@ -1,33 +1,25 @@
 name:                tc
 version:             0.1.0.0
--- synopsis:            
--- description:         
--- license:             
 license-file:        LICENSE
 author:              Francesco Mazzoli
 maintainer:          f@mazzo.li
--- copyright:           
--- category:            
 build-type:          Simple
--- extra-source-files:  
 cabal-version:       >= 1.10
 
 executable tc
   main-is:             Main.hs
   other-modules:       Syntax.Raw.Lex
                      , Syntax.Raw.Par
-  -- other-extensions:    
 
   build-depends:       base >= 4.7
                      , array >= 0.4
                      , containers >= 0.5
-                     , either >= 4.1
                      , hashable >= 1.2
                      , hashtables >= 1.1
                      , mtl >= 2.1
                      , optparse-applicative >= 0.9
-                     , tagged >= 0.7
-                     , transformers >= 0.3
+                     , transformers >= 0.2
+                     , transformers-compat >= 0.3
                      , unordered-containers >= 0.2
                      , wl-pprint >= 1.1
 
