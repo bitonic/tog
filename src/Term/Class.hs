@@ -136,12 +136,12 @@ elimsEq _            _            = return False
 -- implementation of terms might be different, but we must be able to
 -- get a 'TermView' out of it.  See 'View'.
 data TermView t
-    = Lam (Abs t)
-    | Pi t (Abs t)
+    = Pi t (Abs t)
+    | Lam (Abs t)
     | Equal t t t
     | Refl
-    | Con Name [t]
     | Set
+    | Con Name [t]
     | App Head [Elim t]
     deriving (Eq, Generic, Show)
 

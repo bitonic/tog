@@ -5,8 +5,6 @@ module Prelude.Extended
   , (<*>)
   , Applicative
   , (<>)
-  , mempty
-  , mconcat
   , (<$>)
   , (>=>)
   , (<=<)
@@ -43,7 +41,12 @@ module Prelude.Extended
   , (***)
   , second
   , isNothing
+  , Monoid(..)
+  , mplus
+  , any
   ) where
+
+import Prelude ()
 
 import Control.Applicative
 import Control.Arrow
@@ -51,7 +54,7 @@ import Control.Monad hiding (forM_, msum, forM)
 import Data.Foldable
 import Data.Function
 import Data.Hashable
-import Data.List hiding (foldl')
+import Data.List hiding (foldl', any)
 import Data.Maybe
 import Data.Monoid
 import Data.Ord

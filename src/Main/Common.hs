@@ -9,7 +9,7 @@ import           Syntax.Raw                       (parseProgram)
 import           Term                             (IsTerm)
 import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
-import           TypeCheck2                       (TypeCheckConf, checkProgram, TCState')
+import           TypeCheck3                       (TypeCheckConf, checkProgram, TCState')
 
 checkFile
   :: TypeCheckConf -> FilePath

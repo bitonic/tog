@@ -26,6 +26,7 @@ import           TypeCheck2.Monad
 
 data TypeCheckProblem t a b where
   CheckEqual :: (Ctx t, Type t, Term t, Ctx t, Type t, Term t) -> TypeCheckProblem t () ()
+  InstantiateMeta :: Term t -> TypeCheckProblem t () ()
 
 prettyTypeCheckProblem
   :: (IsTerm t) => Sig.Signature t -> TypeCheckProblem t a b -> TermM PP.Doc

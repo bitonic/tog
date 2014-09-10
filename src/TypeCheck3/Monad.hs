@@ -364,9 +364,6 @@ mapTC l (TC m) = TC $ \(te, ts) -> do
     OK ts'' x -> OK ((\s -> L.set l s (tsState ts)) <$> ts'') x
     Error err -> Error err
 
-mapUnitTC :: TC t () a -> TC t s a
-mapUnitTC = mapTC (\f x -> x <$ f ())
-
 -- Utils
 ------------------------------------------------------------------------
 

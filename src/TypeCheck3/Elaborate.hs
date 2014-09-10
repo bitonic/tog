@@ -11,7 +11,7 @@ import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
-import           PrettyPrint                      (($$), (<+>), (//>), render)
+import           PrettyPrint                      (($$), (//>), render)
 import qualified PrettyPrint                      as PP
 
 elaborate

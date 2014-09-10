@@ -291,10 +291,12 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
       case actions0 of
         []                 -> finally args
         (action : actions) -> do
-          mbArgs <- action args
-          forM_ mbArgs $ runCheckEqual actions finally
+          proofOrArgs <- action args
+          case proofOfArgs of
+            Left proof -> return proof
+            Right args -> runCheckEqual actions finally
 
-checkSynEq :: (IsTerm t) => CheckEqual t -> TC' t (Maybe (CheckEqual t))
+checkSynEq :: (IsTerm t) => CheckEqual t -> TC' t (Either (Term t) (CheckEqual t))
 checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
   debugBracket_ "*** Syntactic check" $ do
     -- Optimization: try with a simple syntactic check first.
@@ -303,15 +305,15 @@ checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
     -- TODO add option to skip this check
     eq <- termEqTC t1' t2'
     return $ if eq
-      then Nothing
-      else Just (ctx1, type1, t1', ctx2, type2, t2')
+      then Left refl
+      else Right (ctx1, type1, t1', ctx2, type2, t2')
 
-etaExpand :: (IsTerm t) => CheckEqual t -> TC' t (Maybe (CheckEqual t))
+etaExpand :: (IsTerm t) => CheckEqual t -> TC' t (Either (Term t) (CheckEqual t))
 etaExpand (ctx1, type1, t1, ctx2, type2, t2) = do
   debugBracket_ "*** Eta expansion" $ do
     t1' <- expandOrDont "x" type1 t1
     t2' <- expandOrDont "y" type2 t2
-    return $ Just (ctx1, type1, t1', ctx2, type2, t2')
+    return $ Right (ctx1, type1, t1', ctx2, type2, t2')
   where
     expandOrDont desc type_ t = do
       mbT <- expand type_ t
@@ -365,7 +367,7 @@ checkedInstantiateMetaVar mv mvT = do
     Left _err -> error "TODO checkedInstantiateMetaVar"
     Right ()  -> instantiateMetaVar mv mvT
 
-checkMetaVars :: (IsTerm t) => CheckEqual t -> TC' t (Maybe (CheckEqual t))
+checkMetaVars :: (IsTerm t) => CheckEqual t -> TC' t (Either (Term t) (CheckEqual t))
 checkMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
   blockedT1 <- whnfTC t1
   t1' <- ignoreBlockingTC blockedT1
@@ -375,9 +377,11 @@ checkMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
         t1'' <- nfTC t1'
         t2'' <- nfTC t2'
         eq <- liftTermM $ termEq t1'' t2''
-        unless eq $ do
-          debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-          storeConstraint mvs (ctx1, type1, t1'', ctx2, type2, t2'')
+        if eq
+          then return refl
+          else do
+            debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
+            storeConstraint mvs (ctx1, type1, t1'', ctx2, type2, t2'')
   case (blockedT1, blockedT2) of
     (MetaVarHead mv els1, MetaVarHead mv' els2) | mv == mv' -> do
       mbKills <- intersectVars els1 els2

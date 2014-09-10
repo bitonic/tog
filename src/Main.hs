@@ -6,7 +6,7 @@ import           System.Exit                      (exitFailure)
 
 import           Main.Common
 import qualified PrettyPrint                      as PP
-import           TypeCheck2                       (TypeCheckConf(TypeCheckConf))
+import           TypeCheck3                       (TypeCheckConf(TypeCheckConf))
 
 parseTypeCheckConf :: Parser TypeCheckConf
 parseTypeCheckConf = TypeCheckConf

@@ -11,27 +11,15 @@ module TypeCheck3
 import           Prelude                          hiding (abs, pi)
 
 import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
-import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
-import qualified Data.HashMap.Strict              as HMS
-import qualified Data.HashSet                     as HS
-import qualified Data.Map.Strict                  as Map
 import           Data.Proxy                       (Proxy(Proxy))
-import qualified Data.Set                         as Set
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, MetaVar)
 import qualified Syntax.Internal                  as A
 import           Term
-import           Term.Context                     (Ctx)
-import qualified Term.Context                     as Ctx
 import           Term.Impl
-import qualified Term.Signature                   as Sig
-import qualified Term.Telescope                   as Tel
-import           PrettyPrint                      (($$), (<+>), (//>), render)
+import           PrettyPrint                      ((<+>), render)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
-import           TypeCheck3.Common
-import           TypeCheck3.Elaborate
 import           TypeCheck3.Check
 
 -- Configuration

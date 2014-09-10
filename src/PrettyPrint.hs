@@ -36,9 +36,13 @@ infixr 5 $$>
 infixr 6 //
 infixr 6 //>
 
-list :: [Doc] -> Doc
-list [] = "[]"
-list xs = group $ PP.encloseSep ("[" <> space) (line <> "]") ("," <> space) xs
+list :: [Doc] -> PP.Doc
+list xs0 = PP.group $ case xs0 of
+  []       -> "[]"
+  (x : xs) -> nest 2 ("[" <+> x) <> PP.linebreak <> go xs
+  where
+    go []       = "]"
+    go (x : xs) = nest 2 ("," <+> x) <> PP.linebreak <> go xs
 
 tupled :: [Doc] -> Doc
 tupled = encloseSep lparen rparen (comma <> space)
