@@ -19,11 +19,9 @@ import qualified Term.Context                     as Ctx
 import           Term.Impl
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import           PrettyPrint                      (($$), (<+>), (//>), render)
+import           PrettyPrint                      (($$), (<+>), (//>), render, (//), group, hang)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
-
-type TC' t = TC t ()
 
 -- Errors
 ---------
@@ -39,10 +37,10 @@ data CheckError t
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
     | PatternMatchOnRecord A.Pattern Name -- Record type constructor
 
-checkError :: (IsTerm t) => CheckError t -> TC' t a
+checkError :: (IsTerm t) => CheckError t -> TC t s a
 checkError err = typeError =<< renderError err
 
-renderError :: forall t. (IsTerm t) => CheckError t -> TC' t PP.Doc
+renderError :: (IsTerm t) => CheckError t -> TC t s PP.Doc
 renderError err =
   case err of
     TermsNotEqual type1 t1 type2 t2 -> do
@@ -75,6 +73,15 @@ renderError err =
       return $ "Name not in scope:" <+> PP.pretty name
     PatternMatchOnRecord synPat tyCon -> do
       return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> PP.pretty tyCon
+    ExpectingPi type_ -> do
+      typeDoc <- prettyTermTC type_
+      return $ "Expecting a pi type, not:" //> typeDoc
+    ExpectingEqual type_ -> do
+      typeDoc <- prettyTermTC type_
+      return $ "Expecting an identity type, not:" //> typeDoc
+    ExpectingTyCon tyCon type_ -> do
+      typeDoc <- prettyTermTC type_
+      return $ "Expecting a" <+> PP.pretty tyCon PP.<> ", not:" //> typeDoc
   where
     prettyVar = PP.pretty
 
@@ -84,7 +91,7 @@ renderError err =
 
 addMetaVarInCtx
   :: (IsTerm t)
-  => Ctx t -> Type t -> TC' t (Term t)
+  => Ctx t -> Type t -> TC t s (Term t)
 addMetaVarInCtx ctx type_ = do
   mv <- addMetaVar =<< ctxPiTC ctx type_
   ctxAppTC (metaVar mv []) ctx
@@ -93,19 +100,19 @@ addMetaVarInCtx ctx type_ = do
 -- Whnf'ing and view'ing
 ------------------------
 
-nfTC :: (IsTerm t) => t -> TC' t t
+nfTC :: (IsTerm t) => t -> TC t s t
 nfTC t = withSignatureTermM $ \sig -> nf sig t
 
-nf'TC :: (IsTerm t, Nf f) => f t -> TC' t (f t)
+nf'TC :: (IsTerm t, Nf f) => f t -> TC t s (f t)
 nf'TC t = withSignatureTermM $ \sig -> nf' sig t
 
-whnfTC :: (IsTerm t) => t -> TC' t (Blocked t)
+whnfTC :: (IsTerm t) => t -> TC t s (Blocked t)
 whnfTC t = withSignatureTermM $ \sig -> whnf sig t
 
-whnfViewTC :: (IsTerm t) => t -> TC' t (TermView t)
+whnfViewTC :: (IsTerm t) => t -> TC t s (TermView t)
 whnfViewTC t = withSignatureTermM $ \sig -> whnfView sig t
 
-viewTC :: (IsTerm t) => t -> TC' t (TermView t)
+viewTC :: (IsTerm t) => t -> TC t s (TermView t)
 viewTC t = liftTermM $ view t
 
 -- Telescope & context utils
@@ -141,7 +148,7 @@ ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx =<< lam t
 
 extendContext
   :: (IsTerm t)
-  => Ctx (Type t) -> (Name, Type t) -> TC' t (Ctx (Type t))
+  => Ctx (Type t) -> (Name, Type t) -> TC t s (Ctx (Type t))
 extendContext ctx type_ = do
   let ctx' = Ctx.Snoc ctx type_
   let msg = do
@@ -153,75 +160,75 @@ extendContext ctx type_ = do
 -- Monad versions of signature-requiring things
 -----------------------------------------------
 
-ctxAppTC :: (IsTerm t) => TermM (Term t) -> Ctx (Type t) -> TC' t (Term t)
+ctxAppTC :: (IsTerm t) => TermM (Term t) -> Ctx (Type t) -> TC t s (Term t)
 ctxAppTC t ctx0 = do
   t' <- liftTermM t
   eliminateTC t' . map Apply =<< mapM varTC (ctxVars ctx0)
 
-eliminateTC :: (IsTerm t) => t -> [Elim t] -> TC' t t
+eliminateTC :: (IsTerm t) => t -> [Elim t] -> TC t s t
 eliminateTC h els = withSignatureTermM $ \sig -> eliminate sig h els
 
-freeVarsTC :: (IsTerm t) => t -> TC' t FreeVars
+freeVarsTC :: (IsTerm t) => t -> TC t s FreeVars
 freeVarsTC t = withSignatureTermM $ \sig -> freeVars sig t
 
-metaVarsTC :: (IsTerm t) => t -> TC' t (HS.HashSet MetaVar)
+metaVarsTC :: (IsTerm t) => t -> TC t s (HS.HashSet MetaVar)
 metaVarsTC t = withSignatureTermM $ \sig -> metaVars sig t
 
-prettyTermTC :: (IsTerm t) => t -> TC' t PP.Doc
+prettyTermTC :: (IsTerm t) => t -> TC t s PP.Doc
 prettyTermTC t = withSignatureTermM $ \sig -> prettyTerm sig t
 
-prettyElimsTC :: (IsTerm t) => [Elim t] -> TC' t PP.Doc
+prettyElimsTC :: (IsTerm t) => [Elim t] -> TC t s PP.Doc
 prettyElimsTC es = withSignatureTermM $ \sig -> prettyElims sig es
 
-prettyDefinitionTC :: (IsTerm t) => Closed (Definition t) -> TC' t PP.Doc
+prettyDefinitionTC :: (IsTerm t) => Closed (Definition t) -> TC t s PP.Doc
 prettyDefinitionTC def' = withSignatureTermM $ \sig -> prettyDefinition sig def'
 
-prettyContextTC :: (IsTerm t) => Ctx.Ctx t -> TC' t PP.Doc
+prettyContextTC :: (IsTerm t) => Ctx.Ctx t -> TC t s PP.Doc
 prettyContextTC ctx = withSignatureTermM $ \sig -> prettyContext sig ctx
 
-unviewTC :: (IsTerm t) => TermView t -> TC' t t
+unviewTC :: (IsTerm t) => TermView t -> TC t s t
 unviewTC = liftTermM . unview
 
-lamTC :: (IsTerm t) => Abs t -> TC' t t
+lamTC :: (IsTerm t) => Abs t -> TC t s t
 lamTC body = liftTermM $ unview $ Lam body
 
-piTC :: (IsTerm t) => t -> Abs t -> TC' t  t
+piTC :: (IsTerm t) => t -> Abs t -> TC t s  t
 piTC domain codomain = liftTermM $ unview $ Pi domain codomain
 
-equalTC :: (IsTerm t) => t -> t -> t -> TC' t t
+equalTC :: (IsTerm t) => t -> t -> t -> TC t s t
 equalTC type_ x y = liftTermM $ unview $ Equal type_ x y
 
-appTC :: (IsTerm t) => Head -> [Elim t] -> TC' t t
+appTC :: (IsTerm t) => Head -> [Elim t] -> TC t s t
 appTC h elims = liftTermM $ unview $ App h elims
 
-metaVarTC :: (IsTerm t) => MetaVar -> [Elim t] -> TC' t t
+metaVarTC :: (IsTerm t) => MetaVar -> [Elim t] -> TC t s t
 metaVarTC mv = liftTermM . unview . App (Meta mv)
 
-defTC :: (IsTerm t) => Name -> [Elim t] -> TC' t t
+defTC :: (IsTerm t) => Name -> [Elim t] -> TC t s t
 defTC f = liftTermM . unview . App (Def f)
 
-conTC :: (IsTerm t) => Name -> [t] -> TC' t t
+conTC :: (IsTerm t) => Name -> [t] -> TC t s t
 conTC c args = liftTermM $ unview (Con c args)
 
-varTC :: (IsTerm t) => Var -> TC' t t
+varTC :: (IsTerm t) => Var -> TC t s t
 varTC = liftTermM . var
 
-ctxLamTC :: (IsTerm t) => Ctx.Ctx (Type t) -> Term t -> TC' t (Term t)
+ctxLamTC :: (IsTerm t) => Ctx.Ctx (Type t) -> Term t -> TC t s (Term t)
 ctxLamTC ctx = liftTermM . ctxLam ctx
 
-ctxPiTC :: (IsTerm t) => Ctx (Type t) -> Type t -> TC' t (Type t)
+ctxPiTC :: (IsTerm t) => Ctx (Type t) -> Type t -> TC t s (Type t)
 ctxPiTC ctx type_ = liftTermM $ ctxPi ctx type_
 
-telPiTC :: (IsTerm t) => Tel.Tel (Type t) -> Type t -> TC' t (Type t)
+telPiTC :: (IsTerm t) => Tel.Tel (Type t) -> Type t -> TC t s (Type t)
 telPiTC tel = ctxPiTC (Tel.unTel tel)
 
-ignoreBlockingTC :: (IsTerm t) => Blocked t -> TC' t t
+ignoreBlockingTC :: (IsTerm t) => Blocked t -> TC t s t
 ignoreBlockingTC = liftTermM . ignoreBlocking
 
-termEqTC :: (IsTerm t) => Term t -> Term t -> TC' t Bool
+termEqTC :: (IsTerm t) => Term t -> Term t -> TC t s Bool
 termEqTC x y = liftTermM $ termEq x y
 
-instantiateTC :: (IsTerm t) => Term t -> Term t -> TC' t (Term t)
+instantiateTC :: (IsTerm t) => Term t -> Term t -> TC t s (Term t)
 instantiateTC x y = liftTermM $ instantiate x y
 
 -- Miscellanea
@@ -231,26 +238,26 @@ isApply :: Elim (Term t) -> Maybe (Term t)
 isApply (Apply v) = Just v
 isApply Proj{}    = Nothing
 
-definitionType :: (IsTerm t) => Closed (Definition t) -> TC' t (Closed (Type t))
+definitionType :: (IsTerm t) => Closed (Definition t) -> TC t s (Closed (Type t))
 definitionType (Constant _ type_)         = return type_
 definitionType (DataCon _ tel type_)      = telPiTC tel type_
 definitionType (Projection _ _ tel type_) = telPiTC tel type_
 definitionType (Function type_ _)         = return type_
 
-isRecordType :: (IsTerm t) => Name -> TC' t Bool
+isRecordType :: (IsTerm t) => Name -> TC t s Bool
 isRecordType tyCon = withSignature $ \sig ->
   case Sig.getDefinition sig tyCon of
     Constant (Record _ _) _ -> True
     _                       -> False
 
-isRecordConstr :: (IsTerm t) => Name -> TC' t Bool
+isRecordConstr :: (IsTerm t) => Name -> TC t s Bool
 isRecordConstr dataCon = join $ withSignature $ \sig ->
   case Sig.getDefinition sig dataCon of
     DataCon tyCon _ _ -> isRecordType tyCon
     _                 -> return False
 
 getAbsNameTC
-  :: (IsTerm t) => Abs (Term t) -> TC' t Name
+  :: (IsTerm t) => Abs (Term t) -> TC t s Name
 getAbsNameTC t = do
   -- TODO introduce configuration
   -- fast <- tcsFastGetAbsName <$> getState
@@ -261,7 +268,7 @@ getAbsNameTC t = do
 
 headType
   :: (IsTerm t)
-  => Ctx t -> Head -> TC' t (Type t)
+  => Ctx t -> Head -> TC t s (Type t)
 headType ctx h = case h of
   Var v   -> liftTermM $ Ctx.getVar v ctx
   Def f   -> definitionType =<< getDefinition f
@@ -279,7 +286,7 @@ unrollPiWithNames
   -- ^ Type to unroll
   -> [Name]
   -- ^ Names to give to each parameter
-  -> TC' t (Ctx (Type t), Type t)
+  -> TC t s (Ctx (Type t), Type t)
   -- ^ A telescope with accumulated domains of the pis and the final
   -- codomain.
 unrollPiWithNames type_ [] =
@@ -297,7 +304,7 @@ unrollPi
   :: (IsTerm t)
   => Type t
   -- ^ Type to unroll
-  -> TC' t (Ctx (Type t), Type t)
+  -> TC t s (Ctx (Type t), Type t)
 unrollPi type_ = do
   typeView <- whnfViewTC type_
   case typeView of
@@ -320,10 +327,30 @@ instance Monoid (Constraint t) where
   mempty = Conj []
   c1 `mappend` c2 = Conj [c1, c2]
 
+prettyConstraintTC
+  :: (IsTerm t) => Constraint t -> TC t s PP.Doc
+prettyConstraintTC c = case c of
+  Unify ctx type_ t1 t2 -> do
+    ctxDoc <- prettyContextTC ctx
+    typeDoc <- prettyTermTC type_
+    t1Doc <- prettyTermTC t1
+    t2Doc <- prettyTermTC t2
+    return $ group $
+      ctxDoc <+> "|-" //
+      group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
+  c1 :>>: c2 -> do
+    c1Doc <- prettyConstraintTC c1
+    c2Doc <- prettyConstraintTC c2
+    return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+  Conj cs -> do
+    csDoc <- mapM prettyConstraintTC cs
+    return $
+      "Conj" //> PP.list csDoc
+
 -- Clauses invertibility
 ------------------------
 
-termHead :: (IsTerm t) => t -> TC' t (Maybe TermHead)
+termHead :: (IsTerm t) => t -> TC t s (Maybe TermHead)
 termHead t = do
   tView <- whnfViewTC t
   case tView of
@@ -345,7 +372,7 @@ termHead t = do
       return $ Nothing
 
 checkInvertibility
-  :: (IsTerm t) => [Closed (Clause t)] -> TC' t (Closed (Invertible t))
+  :: (IsTerm t) => [Closed (Clause t)] -> TC t s (Closed (Invertible t))
 checkInvertibility = go []
   where
     go injClauses [] =

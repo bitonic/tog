@@ -1,8 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Solve (SolveState, solve) where
+module TypeCheck3.Solve
+  ( SolveState
+  , initSolveState
+  , solve
+  ) where
 
 import           Prelude                          hiding (any)
 
+import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import           Control.Monad.Trans.Writer.Strict
 import qualified Data.HashSet                     as HS
@@ -11,17 +16,18 @@ import           Syntax.Internal                  (Name, MetaVar)
 import           Data.Monoid                      (Any(Any))
 
 import           Prelude.Extended
-import           PrettyPrint                      (($$), (<+>), (//>), render)
+import           PrettyPrint                      (($$), (<+>), (//>), (//), render, group, hang)
 import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import           TypeCheck3.Common                hiding (Constraint(..))
+import           TypeCheck3.Common                hiding (Constraint(..), prettyConstraintTC)
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Monad
 
+type SolveM t = TC t (SolveState t)
 
 newtype SolveState t = SolveState {unSolveState :: Constraints t}
 
@@ -62,16 +68,31 @@ sequenceConstraints :: Constraints t -> Constraint t -> Constraints t
 sequenceConstraints scs1 c2 =
   let (css, cs1) = unzip scs1 in [(mconcat css, Conj cs1 :>>: c2)]
 
-solve :: forall t. (IsTerm t) => Common.Constraint t -> TC' t (SolveState t)
-solve c = SolveState <$> go False [(mempty, constraint c)] []
+initSolveState :: SolveState t
+initSolveState = SolveState []
+
+solve :: forall t. (IsTerm t) => Common.Constraint t -> TC t (SolveState t) ()
+solve c = do
+  debugBracket_ "*** solve" $ do
+    SolveState constrs0 <- get
+    constrs <- go False [] ((mempty, constraint c) : constrs0)
+    put $ SolveState constrs
   where
-    go :: Bool -> Constraints t -> Constraints t -> TC' t (Constraints t)
+    go :: Bool -> Constraints t -> Constraints t -> TC t s (Constraints t)
     go progress constrs [] = do
       if progress
       then go False [] constrs
       else return constrs
     go progress newConstrs ((mvs, constr) : constrs) = do
-      attempt <- any isJust <$> forM (HS.toList mvs) getMetaVarBody
+      debug $ do
+        let mvsDoc = PP.pretty $ HS.toList mvs
+        constrDoc <- prettyConstraintTC constr
+        return $
+          "** Attempting" $$
+          "constraint:" //> constrDoc $$
+          "mvs:" //> mvsDoc
+      attempt <- do mvsBodies <- forM (HS.toList mvs) getMetaVarBody
+                    return $ null mvsBodies || any isJust mvsBodies
       if attempt
         then do
           constrs' <- solve' constr
@@ -79,7 +100,7 @@ solve c = SolveState <$> go False [(mempty, constraint c)] []
         else do
           go progress ((mvs, constr) : newConstrs) constrs
 
-solve' :: (IsTerm t) => Constraint t -> TC' t (Constraints t)
+solve' :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
 solve' (Conj constrs) = do
   mconcat <$> forM constrs solve'
 solve' (constr1 :>>: constr2) = do
@@ -103,7 +124,7 @@ solve' (UnifySpine ctx type_ mbH elims1 elims2) = do
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
 checkEqual
-  :: (IsTerm t) => CheckEqual t -> TC' t (Constraints t)
+  :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 checkEqual (ctx0, type0, t1_0, t2_0) = do
   let msg = do
         ctxDoc <- prettyContextTC ctx0
@@ -133,7 +154,7 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
 
 checkSynEq
   :: (IsTerm t)
-  => CheckEqual t -> TC' t (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
 checkSynEq (ctx, type_, t1, t2) = do
   debugBracket_ "*** Syntactic check" $ do
     -- Optimization: try with a simple syntactic check first.
@@ -147,7 +168,7 @@ checkSynEq (ctx, type_, t1, t2) = do
 
 etaExpand
   :: (IsTerm t)
-  => CheckEqual t -> TC' t (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
 etaExpand (ctx, type0, t1, t2) = do
   debugBracket_ "*** Eta expansion" $ do
     -- TODO compute expanding function once
@@ -197,7 +218,7 @@ etaExpand (ctx, type0, t1, t2) = do
 
 checkMetaVars
   :: (IsTerm t)
-  => CheckEqual t -> TC' t (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
 checkMetaVars (ctx, type_, t1, t2) = do
   blockedT1 <- whnfTC t1
   t1' <- ignoreBlockingTC blockedT1
@@ -239,7 +260,7 @@ checkMetaVars (ctx, type_, t1, t2) = do
 -- | @intersectVars us vs@ checks whether all relevant elements in @us@
 --   and @vs@ are variables, and if yes, returns a prune list which says
 --   @True@ for arguments which are different and can be pruned.
-intersectVars :: (IsTerm t) => [Elim t] -> [Elim t] -> TC' t (Maybe [Named Bool])
+intersectVars :: (IsTerm t) => [Elim t] -> [Elim t] -> TC t s (Maybe [Named Bool])
 intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
   where
     areVars (Apply t1) (Apply t2) = do
@@ -251,7 +272,7 @@ intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
     areVars _ _ =
       mzero
 
-killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC' t (Closed (Term t))
+killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (Closed (Term t))
 killArgs newMv kills = do
   let vs = reverse [ V (Named n ix)
                    | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
@@ -260,12 +281,12 @@ killArgs newMv kills = do
   foldl' (\body' _ -> lamTC =<< body') (return body) kills
 
 checkEqualBlockedOn
-  :: forall t.
+  :: forall t s.
      (IsTerm t)
   => Ctx t -> Type t
   -> HS.HashSet MetaVar -> BlockedHead -> [Elim t]
   -> Term t
-  -> TC' t (Constraints t)
+  -> TC t s (Constraints t)
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
   let msg = "*** Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
             ", trying to invert definition" <+> PP.pretty bh
@@ -310,7 +331,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
   where
     fallback t1 = return $ [(mvs, Unify ctx type_ t1 t2)]
 
-    matchPats :: [Pattern] -> [Elim t] -> TC' t Bool
+    matchPats :: [Pattern] -> [Elim t] -> TC t s Bool
     matchPats (VarP : pats) (_ : elims) = do
       matchPats pats elims
     matchPats (ConP dataCon pats' : pats) (elim : elims) = do
@@ -323,7 +344,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
       -- are waiting on some metavar which doesn't head an eliminator.
       return False
 
-    matchPat :: Name -> [Pattern] -> Elim t -> TC' t Bool
+    matchPat :: Name -> [Pattern] -> Elim t -> TC t s Bool
     matchPat dataCon pats (Apply t) = do
       tView <- whnfViewTC t
       case tView of
@@ -346,7 +367,7 @@ instantiateDataCon
   => MetaVar
   -> Name
   -- ^ Name of the datacon
-  -> TC' t (Closed (Term t))
+  -> TC t s (Closed (Term t))
 instantiateDataCon mv dataCon = do
   mvType <- getMetaVarType mv
   (ctxMvArgs, endType') <- unrollPi mvType
@@ -366,7 +387,7 @@ instantiateDataCon mv dataCon = do
   return mvT
 
 createMvsPars
-  :: (IsTerm t) => Ctx t -> Tel.Tel (Type t) -> TC' t [Term t]
+  :: (IsTerm t) => Ctx t -> Tel.Tel (Type t) -> TC t s [Term t]
 createMvsPars _ Tel.Empty =
   return []
 createMvsPars ctx (Tel.Cons (_, type') tel) = do
@@ -376,7 +397,7 @@ createMvsPars ctx (Tel.Cons (_, type') tel) = do
 
 equalSpine
   :: (IsTerm t)
-  => Head -> Ctx t -> [Elim t] -> [Elim t] -> TC' t (Constraints t)
+  => Head -> Ctx t -> [Elim t] -> [Elim t] -> TC t s (Constraints t)
 equalSpine h ctx elims1 elims2 = do
   hType <- headType ctx h
   checkEqualSpine ctx hType h elims1 elims2
@@ -384,14 +405,14 @@ equalSpine h ctx elims1 elims2 = do
 checkEqualApplySpine
   :: (IsTerm t)
   => Ctx t -> Type t -> [Term t] -> [Term t]
-  -> TC' t (Constraints t)
+  -> TC t s (Constraints t)
 checkEqualApplySpine ctx type_ args1 args2 =
   checkEqualSpine' ctx type_ Nothing (map Apply args1) (map Apply args2)
 
 checkEqualSpine
   :: (IsTerm t)
   => Ctx t -> Type t -> Head -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC' t (Constraints t)
+  -> TC t s (Constraints t)
 checkEqualSpine ctx type_ h elims1 elims2  = do
   h' <- appTC h []
   checkEqualSpine' ctx type_ (Just h') elims1 elims2
@@ -400,7 +421,7 @@ checkEqualSpine'
   :: (IsTerm t)
   => Ctx t -> Type t -> Maybe (Term t)
   -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC' t (Constraints t)
+  -> TC t s (Constraints t)
 checkEqualSpine' _ _ _ [] [] = do
   return []
 checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
@@ -450,7 +471,7 @@ applyProjection
   -- ^ Head
   -> Type t
   -- ^ Type of the head
-  -> TC' t (Term t, Type t)
+  -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
   h' <- eliminateTC h [Proj proj projIx]
@@ -463,9 +484,9 @@ applyProjection proj h type_ = do
   return (h', endType')
 
 metaAssign
-  :: forall t. (IsTerm t)
+  :: (IsTerm t)
   => Ctx t -> Type t -> MetaVar -> [Elim (Term t)] -> Term t
-  -> TC' t (Constraints t)
+  -> TC t s (Constraints t)
 metaAssign ctx0 type0 mv elims0 t0 = do
   mvType <- getMetaVarType mv
   let msg = do
@@ -572,7 +593,7 @@ pruneTerm
     :: (IsTerm t)
     => Set.Set Var                -- ^ allowed vars
     -> Term t
-    -> TC' t (Term t)
+    -> TC t s (Term t)
 pruneTerm vs t = do
   tView <- whnfViewTC t
   case tView of
@@ -609,12 +630,12 @@ pruneTerm vs t = do
 --
 -- The term must be in normal form.
 prune
-    :: forall t.
+    :: forall t s.
        (IsTerm t)
     => Set.Set Var           -- ^ allowed vars
     -> MetaVar
     -> [Elim (Term t)]       -- ^ Arguments to the metavariable
-    -> TC' t (Maybe (Closed (Term t)))
+    -> TC t s (Maybe (Closed (Term t)))
 prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
   mbKills <- sequence <$> mapM (shouldKill allowedVs) args
   case mbKills of
@@ -646,7 +667,7 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
     -- the remaining type, so that this dependency check will be
     -- performed on it as well.
     createNewMeta
-      :: Type t -> [Bool] -> TC' t (Tel.Tel (Type t), Type t, [Named Bool])
+      :: Type t -> [Bool] -> TC t s (Tel.Tel (Type t), Type t, [Named Bool])
     createNewMeta type_ [] =
       return (Tel.Empty, type_, [])
     createNewMeta type_ (kill : kills) = do
@@ -674,7 +695,7 @@ prune _ _ _ = do
 -- variables.
 shouldKill
   :: (IsTerm t)
-  => Set.Set Var -> Term t -> TC' t (Maybe Bool)
+  => Set.Set Var -> Term t -> TC t s (Maybe Bool)
 shouldKill vs t = runMaybeT $ do
   tView <- lift $ whnfViewTC t
   case tView of
@@ -719,7 +740,7 @@ invertMetaVars :: InvertMeta t -> [Var]
 invertMetaVars (InvertMeta sub _) = map fst sub
 
 prettyInvertMetaTC
-  :: (IsTerm t) => InvertMeta t -> TC' t PP.Doc
+  :: (IsTerm t) => InvertMeta t -> TC t s PP.Doc
 prettyInvertMetaTC (InvertMeta ts vs) = do
   ts' <- forM ts $ \(v, t) -> do
     tDoc <- prettyTermTC t
@@ -737,10 +758,10 @@ prettyInvertMetaTC (InvertMeta ts vs) = do
 --
 -- 'TTFail' if the pattern condition fails.
 invertMeta
-  :: forall t.
+  :: forall t s.
      (IsTerm t)
   => [Elim (Term t)]
-  -> TC' t (TermTraverse () (InvertMeta t))
+  -> TC t s (TermTraverse () (InvertMeta t))
 invertMeta elims0 = case mapM isApply elims0 of
     -- First we build up a list of variables representing the bound
     -- arguments in the metavar body.
@@ -750,7 +771,7 @@ invertMeta elims0 = case mapM isApply elims0 of
     -- Then we try to invert passing pairs of arguments to the
     -- metavariable and bound arguments of the body of the
     -- metavariable.
-    go :: [Term t] -> [Var] -> TC' t (TermTraverse () (InvertMeta t))
+    go :: [Term t] -> [Var] -> TC t s (TermTraverse () (InvertMeta t))
     go args vs = do
       res <- checkArgs . zip args =<< mapM varTC vs
       return $ case res of
@@ -764,7 +785,7 @@ invertMeta elims0 = case mapM isApply elims0 of
     -- arguments), on the right the bound variables corrisponding to
     -- them.  We return an inversion from variables outside to terms
     -- inside.
-    checkArgs :: [(Term t, Term t)] -> TC' t (TermTraverse () [(Var, Term t)])
+    checkArgs :: [(Term t, Term t)] -> TC t s (TermTraverse () [(Var, Term t)])
     checkArgs xs = do
       res <- mapM (uncurry checkArg) xs
       return $ concat <$> sequenceA res
@@ -774,7 +795,7 @@ invertMeta elims0 = case mapM isApply elims0 of
       -- ^ Term outside (argument to the metavar)
       -> Term t
       -- ^ Term inside (corresponding bound variable)
-      -> TC' t (TermTraverse () [(Var, Term t)])
+      -> TC t s (TermTraverse () [(Var, Term t)])
     checkArg arg v = do
       blockedArg <- whnfTC arg
       case blockedArg of
@@ -818,10 +839,10 @@ invertMeta elims0 = case mapM isApply elims0 of
 -- | Takes a meta inversion and applies it to a term.  Fails returning a
 -- 'Var' if that 'Var' couldn't be substituted in the term.
 applyInvertMeta
-  :: forall t.
+  :: forall t s.
      (IsTerm t)
   => InvertMeta t -> Term t
-  -> TC' t (TermTraverse Var (Closed (Term t)))
+  -> TC t s (TermTraverse Var (Closed (Term t)))
 applyInvertMeta (InvertMeta sub vsNum) t = do
   tt <- applyInvertMetaSubst sub t
   case tt of
@@ -833,24 +854,25 @@ applyInvertMeta (InvertMeta sub vsNum) t = do
       return . TTOK =<< lambdaAbstract vsNum t'
 
 -- | Wraps the given term 'n' times.
-lambdaAbstract :: (IsTerm t) => Int -> Term t -> TC' t (Term t)
+lambdaAbstract :: (IsTerm t) => Int -> Term t -> TC t s (Term t)
 lambdaAbstract n t | n <= 0 = return t
 lambdaAbstract n t = (lamTC <=< lambdaAbstract (n - 1)) t
 
 applyInvertMetaSubst
-  :: forall t. (IsTerm t)
+  :: forall t s.
+     (IsTerm t)
   => [(Var, Term t)]
   -- ^ Inversion from variables outside to terms inside
   -> Term t
   -- ^ Term outside
-  -> TC' t (TermTraverse Var (Term t))
+  -> TC t s (TermTraverse Var (Term t))
   -- ^ Either we fail with a variable that isn't present in the
   -- substitution, or we return a new term.
 applyInvertMetaSubst sub t0 =
   flip go t0 $ \v -> return $ maybe (Left v) Right (lookup v sub)
   where
-    lift' :: (Var -> TC' t (Either Var (Term t)))
-          -> (Var -> TC' t (Either Var (Term t)))
+    lift' :: (Var -> TC t s (Either Var (Term t)))
+          -> (Var -> TC t s (Either Var (Term t)))
     lift' f v0 = case strengthenVar_ 1 v0 of
       Nothing ->
         Right <$> varTC v0
@@ -860,7 +882,7 @@ applyInvertMetaSubst sub t0 =
           Left v' -> return $ Left v'
           Right t -> Right <$> (liftTermM (weaken_ 1 t))
 
-    go :: (Var -> TC' t (Either Var (Term t))) -> Term t -> TC' t (TermTraverse Var t)
+    go :: (Var -> TC t s (Either Var (Term t))) -> Term t -> TC t s (TermTraverse Var t)
     go invert t = do
       tView <- whnfViewTC t
       case tView of
@@ -910,7 +932,7 @@ etaExpandVars
   -- ^ Context we're in
   -> [Elim t]
   -- ^ Eliminators on the MetaVar
-  -> TC' t (Ctx t, [Elim t], t -> TermM t)
+  -> TC t s (Ctx t, [Elim t], t -> TermM t)
   -- ^ Returns the new context, the new eliminators, and a substituting
   -- action to update terms to the new context.
 etaExpandVars ctx0 elims0 = do
@@ -944,7 +966,7 @@ etaExpandVar
   -> Type t
   -- ^ The type of the variable we're expanding.
   -> Tel.Tel t
-  -> TC' t (Tel.Tel t, t -> TermM t)
+  -> TC t s (Tel.Tel t, t -> TermM t)
 etaExpandVar tyCon type_ tel = do
   Constant (Record dataCon projs) _ <- getDefinition tyCon
   DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
@@ -963,7 +985,7 @@ etaExpandVar tyCon type_ tel = do
 -- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
 -- variable.
 collectProjectedVar
-  :: (IsTerm t) => [Elim t] -> TC' t (Maybe (Var, Name))
+  :: (IsTerm t) => [Elim t] -> TC t s (Maybe (Var, Name))
 collectProjectedVar elims = runMaybeT $ do
   (v, projName) <- msum $ flip map elims $ \elim -> do
     Apply t <- return elim
@@ -993,11 +1015,11 @@ splitContext ctx00 v0 = go ctx00 (varIndex v0) Tel.Empty
         then go ctx (ix - 1) (Tel.Cons (n', type_) tel)
         else (ctx, type_, tel)
 
-etaContractElim :: (IsTerm t) => Elim t -> TC' t (Elim t)
+etaContractElim :: (IsTerm t) => Elim t -> TC t s (Elim t)
 etaContractElim (Apply t)  = Apply <$> etaContract t
 etaContractElim (Proj n f) = return $ Proj n f
 
-etaContract :: (IsTerm t) => t -> TC' t t
+etaContract :: (IsTerm t) => t -> TC t s t
 etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
   t0View <- lift $ whnfViewTC t0
   case t0View of
@@ -1025,7 +1047,7 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
       guard $ n == n' && f == f'
       lift $ nfTC =<< appTC h (init elims)
 
-compareTerms :: (IsTerm t) => CheckEqual t -> TC' t (Constraints t)
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 compareTerms (ctx, type_, t1, t2) = do
   typeView <- whnfViewTC type_
   t1View <- whnfViewTC t1
@@ -1068,3 +1090,41 @@ compareTerms (ctx, type_, t1, t2) = do
       equalSpine h ctx elims1 elims2
     (_, _, _) -> do
      checkError $ TermsNotEqual type_ t1 type_ t2
+
+
+-- Pretty printing Constraints
+
+prettyConstraintTC
+  :: (IsTerm t) => Constraint t -> TC t s PP.Doc
+prettyConstraintTC c = case c of
+  Unify ctx type_ t1 t2 -> do
+    ctxDoc <- prettyContextTC ctx
+    typeDoc <- prettyTermTC type_
+    t1Doc <- prettyTermTC t1
+    t2Doc <- prettyTermTC t2
+    return $ group $
+      ctxDoc <+> "|-" //
+      group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
+  c1 :>>: c2 -> do
+    c1Doc <- prettyConstraintTC c1
+    c2Doc <- prettyConstraintTC c2
+    return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+  Conj cs -> do
+    csDoc <- mapM prettyConstraintTC cs
+    return $
+      "Conj" //> PP.list csDoc
+  UnifySpine ctx type_ mbH elims1 elims2 -> do
+    ctxDoc <- prettyContextTC ctx
+    typeDoc <- prettyTermTC type_
+    hDoc <- case mbH of
+      Nothing -> return "no head"
+      Just h  -> prettyTermTC h
+    elims1Doc <- prettyElimsTC elims1
+    elims2Doc <- prettyElimsTC elims2
+    return $
+      "UnifySpine" $$
+      "ctx:" //> ctxDoc $$
+      "type:" //> typeDoc $$
+      "h:" //> hDoc $$
+      "elims1:" //> elims1Doc $$
+      "elims2:" //> elims1Doc

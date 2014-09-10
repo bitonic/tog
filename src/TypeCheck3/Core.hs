@@ -13,7 +13,7 @@ import           TypeCheck3.Common
 
 check
   :: (IsTerm t)
-  => Ctx t -> Term t -> Type t -> TC' t ()
+  => Ctx t -> Term t -> Type t -> TC t s ()
 check ctx t type_ = do
   let msg = do
         tDoc <- prettyTermTC t
@@ -48,7 +48,7 @@ check ctx t type_ = do
 
 checkConArgs
   :: (IsTerm t)
-  => Ctx t -> [Term t] -> Type t -> TC' t ()
+  => Ctx t -> [Term t] -> Type t -> TC t s ()
 checkConArgs _ [] _ = do
   return ()
 checkConArgs ctx (arg : args) type_ = do
@@ -59,7 +59,7 @@ checkConArgs ctx (arg : args) type_ = do
 
 checkSpine
   :: (IsTerm t)
-  => Ctx t -> Term t -> [Elim t] -> Type t -> TC' t (Type t)
+  => Ctx t -> Term t -> [Elim t] -> Type t -> TC t s (Type t)
 checkSpine _ _ [] type_ =
   return (type_)
 checkSpine ctx h (el : els) type_ = case el of
@@ -81,7 +81,7 @@ applyProjection
   -- ^ Head
   -> Type t
   -- ^ Type of the head
-  -> TC' t (Term t, Type t)
+  -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
   h' <- eliminateTC h [Proj proj projIx]
@@ -97,7 +97,7 @@ applyProjection proj h type_ = do
       error $ "impossible.applyProjection: " ++ render doc
 
 matchTyCon
-  :: (IsTerm t) => Name -> Type t -> TC' t [Term t]
+  :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
 matchTyCon tyCon type_ = do
   typeView <- whnfViewTC type_
   case typeView of
@@ -108,7 +108,7 @@ matchTyCon tyCon type_ = do
       checkError $ ExpectingTyCon tyCon type_
 
 matchPi
-  :: (IsTerm t) => Type t -> TC' t (Type t, Type t)
+  :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
 matchPi type_ = do
   typeView <- whnfViewTC type_
   case typeView of
@@ -119,7 +119,7 @@ matchPi type_ = do
 
 infer
   :: (IsTerm t)
-  => Ctx t -> Term t -> TC' t (Type t)
+  => Ctx t -> Term t -> TC t s (Type t)
 infer ctx t = do
   tView <- viewTC t
   case tView of
@@ -144,8 +144,8 @@ infer ctx t = do
       error "impossible.infer: non-inferrable type."
 
 inferHead
-  :: forall t. (IsTerm t)
-  => Ctx t -> Head -> TC' t (Type t)
+  :: (IsTerm t)
+  => Ctx t -> Head -> TC t s (Type t)
 inferHead ctx h = case h of
   Var v    -> liftTermM $ Ctx.getVar v ctx
   Def name -> definitionType =<< getDefinition name
@@ -156,14 +156,14 @@ type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
 checkEqual
   :: (IsTerm t)
-  => CheckEqual t -> TC' t ()
+  => CheckEqual t -> TC t s ()
 checkEqual x@(_, type_, t1, t2) = do
   let msg = do
         typeDoc <- prettyTermTC type_
         t1Doc <- prettyTermTC t1
         t2Doc <- prettyTermTC t2
         return $
-          "Core.checkEqual" $$
+          "*** Core.checkEqual" $$
           "typeDoc:" //> typeDoc $$
           "t1:" //> t1Doc $$
           "t2:" //> t2Doc
@@ -175,7 +175,7 @@ checkEqual x@(_, type_, t1, t2) = do
       mbX <- action x'
       forM_ mbX $ runCheckEqual actions finally
 
-checkSynEq :: (IsTerm t) => CheckEqual t -> TC' t (Maybe (CheckEqual t))
+checkSynEq :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
 checkSynEq (ctx, type_, t1, t2) = do
   -- Optimization: try with a simple syntactic check first.
   t1' <- ignoreBlockingTC =<< whnfTC t1
@@ -186,7 +186,7 @@ checkSynEq (ctx, type_, t1, t2) = do
     then Nothing
     else Just (ctx, type_, t1', t2')
 
-etaExpand :: (IsTerm t) => CheckEqual t -> TC' t (Maybe (CheckEqual t))
+etaExpand :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
 etaExpand (ctx, type_, t1, t2) = do
   f <- expand
   t1' <- f t1
@@ -220,7 +220,7 @@ etaExpand (ctx, type_, t1, t2) = do
         _ ->
           return return
 
-compareTerms :: (IsTerm t) => CheckEqual t -> TC' t ()
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t s ()
 compareTerms (ctx, type_, t1, t2) = do
   typeView <- whnfViewTC type_
   t1View <- whnfViewTC t1
@@ -261,7 +261,7 @@ compareTerms (ctx, type_, t1, t2) = do
 
 checkEqualSpine
   :: (IsTerm t)
-  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC' t ()
+  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC t s ()
 checkEqualSpine _ _ _ [] [] = do
   return ()
 checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do

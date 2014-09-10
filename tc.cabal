@@ -16,6 +16,7 @@ executable tc
                      , containers >= 0.5
                      , hashable >= 1.2
                      , hashtables >= 1.1
+                     , lens >= 4.4
                      , mtl >= 2.1
                      , optparse-applicative >= 0.9
                      , transformers >= 0.2

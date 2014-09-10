@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Elaborate (elaborate) where
+module TypeCheck3.Elaborate
+  ( elaborate
+  ) where
 
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
@@ -9,56 +11,66 @@ import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
+import           PrettyPrint                      (($$), (<+>), (//>), render)
+import qualified PrettyPrint                      as PP
 
 elaborate
-  :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> TC' t (Term t, Constraint t)
+  :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> TC t s (Term t, Constraint t)
 elaborate ctx type_ absT = atSrcLoc absT $ do
-  mvT <- addMetaVarInCtx ctx type_
-  let waitForUnifiedType' type' t = waitForUnifiedType ctx type_ type' mvT t
-  case absT of
-    A.Set _ -> do
-      return (mvT, waitForUnifiedType' set set)
-    A.Pi name synDom synCod -> do
-      (dom, constrDom) <- elaborate ctx set synDom
-      (cod, constrCod) <- elaborate (Ctx.Snoc ctx (name, dom)) set synCod
-      t <- piTC dom cod
-      return (mvT, Conj [waitForUnifiedType' set t, constrDom, constrCod])
-    A.Fun synDom synCod -> do
-      elaborate ctx type_ (A.Pi "_" synDom synCod)
-    A.Meta _ ->
-      return (mvT, Conj [])
-    A.Equal synType synT1 synT2 -> do
-      (type', constrType) <- elaborate ctx set synType
-      (t1, constrT1) <- elaborate ctx type' synT1
-      (t2, constrT2) <- elaborate ctx type' synT2
-      t <- equalTC type' t1 t2
-      return (mvT, Conj [waitForUnifiedType' set t, constrType, constrT1, constrT2])
-    A.Lam name synBody -> do
-      dom <- addMetaVarInCtx ctx set
-      let ctx' = Ctx.Snoc ctx (name, dom)
-      cod <- addMetaVarInCtx ctx' set
-      (body, constrBody) <- elaborate ctx' cod synBody
-      type' <- piTC dom cod
-      t <- lamTC body
-      return (mvT, Conj [waitForUnifiedType' type' t, constrBody])
-    A.Refl _ -> do
-      eqType <- addMetaVarInCtx ctx set
-      t1 <- addMetaVarInCtx ctx eqType
-      type' <- equalTC eqType t1 t1
-      return (mvT, waitForUnifiedType' type' t1)
-    A.Con dataCon synArgs -> do
-      DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon
-      tyConType <- definitionType =<< getDefinition tyCon
-      tyConArgs <- fillArgsWithMetas ctx tyConType
-      appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
-      (dataConArgs, constrDataConArgs) <- elaborateDataConArgs ctx appliedDataConType synArgs
-      type' <- appTC (Def tyCon) $ map Apply tyConArgs
-      t <- conTC dataCon dataConArgs
-      return (mvT, Conj (waitForUnifiedType' type' t : constrDataConArgs))
-    A.App h elims -> do
-      elaborateApp ctx type_ h (reverse elims)
+  let msg = do
+        typeDoc <- prettyTermTC type_
+        let absTDoc = PP.pretty absT
+        return $
+          "*** elaborate" $$
+          "type:" //> typeDoc $$
+          "t:" //> absTDoc
+  debugBracket msg $ do
+    mvT <- addMetaVarInCtx ctx type_
+    let waitForUnifiedType' type' t = waitForUnifiedType ctx type_ type' mvT t
+    case absT of
+      A.Set _ -> do
+        return (mvT, waitForUnifiedType' set set)
+      A.Pi name synDom synCod -> do
+        (dom, constrDom) <- elaborate ctx set synDom
+        (cod, constrCod) <- elaborate (Ctx.Snoc ctx (name, dom)) set synCod
+        t <- piTC dom cod
+        return (mvT, Conj [waitForUnifiedType' set t, constrDom, constrCod])
+      A.Fun synDom synCod -> do
+        elaborate ctx type_ (A.Pi "_" synDom synCod)
+      A.Meta _ ->
+        return (mvT, Conj [])
+      A.Equal synType synT1 synT2 -> do
+        (type', constrType) <- elaborate ctx set synType
+        (t1, constrT1) <- elaborate ctx type' synT1
+        (t2, constrT2) <- elaborate ctx type' synT2
+        t <- equalTC type' t1 t2
+        return (mvT, Conj [waitForUnifiedType' set t, constrType, constrT1, constrT2])
+      A.Lam name synBody -> do
+        dom <- addMetaVarInCtx ctx set
+        let ctx' = Ctx.Snoc ctx (name, dom)
+        cod <- addMetaVarInCtx ctx' set
+        (body, constrBody) <- elaborate ctx' cod synBody
+        type' <- piTC dom cod
+        t <- lamTC body
+        return (mvT, Conj [waitForUnifiedType' type' t, constrBody])
+      A.Refl _ -> do
+        eqType <- addMetaVarInCtx ctx set
+        t1 <- addMetaVarInCtx ctx eqType
+        type' <- equalTC eqType t1 t1
+        return (mvT, waitForUnifiedType' type' t1)
+      A.Con dataCon synArgs -> do
+        DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon
+        tyConType <- definitionType =<< getDefinition tyCon
+        tyConArgs <- fillArgsWithMetas ctx tyConType
+        appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
+        (dataConArgs, constrDataConArgs) <- elaborateDataConArgs ctx appliedDataConType synArgs
+        type' <- appTC (Def tyCon) $ map Apply tyConArgs
+        t <- conTC dataCon dataConArgs
+        return (mvT, Conj (waitForUnifiedType' type' t : constrDataConArgs))
+      A.App h elims -> do
+        elaborateApp ctx type_ h (reverse elims)
 
-fillArgsWithMetas :: IsTerm t => Ctx t -> Term t -> TC' t [Term t]
+fillArgsWithMetas :: IsTerm t => Ctx t -> Term t -> TC t s [Term t]
 fillArgsWithMetas ctx' type' = do
   typeView <- whnfViewTC type'
   case typeView of
@@ -85,10 +97,10 @@ waitForUnifiedType
   -- ^ ..with this term.
   -> Constraint t
 waitForUnifiedType ctx type_ type' mvT t =
-  Unify ctx type' type_ set :>>: Unify ctx type_ mvT t
+  Unify ctx set type' type_ :>>: Unify ctx type_ mvT t
 
 elaborateDataConArgs
-  :: (IsTerm t) => Ctx t -> Type t -> [A.Expr] -> TC' t ([Term t], [Constraint t])
+  :: (IsTerm t) => Ctx t -> Type t -> [A.Expr] -> TC t s ([Term t], [Constraint t])
 elaborateDataConArgs _ _ [] =
   return ([], [])
 elaborateDataConArgs ctx type_ (synArg : synArgs) = do
@@ -99,8 +111,8 @@ elaborateDataConArgs ctx type_ (synArg : synArgs) = do
   return (arg : args, constrArg : constrArgs)
 
 inferHead
-  :: forall t. (IsTerm t)
-  => Ctx t -> A.Head -> TC' t (Term t, Type t)
+  :: (IsTerm t)
+  => Ctx t -> A.Head -> TC t s (Term t, Type t)
 inferHead ctx synH = atSrcLoc synH $ case synH of
   A.Var name -> do
     mbV <- liftTermM $ Ctx.lookupName name ctx
@@ -120,7 +132,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 
 elaborateApp
   :: (IsTerm t)
-  => Ctx t -> Type t -> A.Head -> [A.Elim] -> TC' t (Term t, Constraint t)
+  => Ctx t -> Type t -> A.Head -> [A.Elim] -> TC t s (Term t, Constraint t)
 elaborateApp ctx type_ h [] = do
   (t, hType) <- inferHead ctx h
   mvT <- addMetaVarInCtx ctx type_

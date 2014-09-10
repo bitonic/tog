@@ -34,6 +34,8 @@ module TypeCheck3.Monad
   , instantiateMetaVar
   , getMetaVarType
   , getMetaVarBody
+    -- ** State handling
+  , mapTC
     -- * Debugging
   , enableDebug
   , disableDebug
@@ -43,8 +45,9 @@ module TypeCheck3.Monad
   , debug_
   ) where
 
-import           System.IO                        (hPutStr, stderr)
+import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
+import           System.IO                        (hPutStr, stderr)
 
 import           Prelude.Extended
 import           PrettyPrint                      ((<+>), ($$), (//>))
@@ -66,7 +69,7 @@ import qualified Term.Telescope                   as Tel
 -- Moreover, it lets us suspend computations waiting on a 'MetaVar' to
 -- be instantiated, or on another suspended computation to be completed.
 -- See 'ProblemId' and related functions.
-newtype TC t s a = TC {unTC :: (TCEnv t s, TCState t s) -> IO (TCRes t s a)}
+newtype TC t s a = TC {unTC :: (TCEnv, TCState t s) -> IO (TCRes t s a)}
   deriving (Functor)
 
 data TCRes t s a
@@ -108,7 +111,7 @@ runTC ts (TC m) = do
     OK ts' x  -> Right (x, ts')
     Error err -> Left $ PP.pretty err
 
-data TCEnv t s = TCEnv
+data TCEnv = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
     , teDebug            :: !(Maybe Debug)
     }
@@ -121,7 +124,7 @@ data Debug = Debug
 initDebug :: Debug
 initDebug = Debug 0 []
 
-initEnv :: TCEnv t s
+initEnv :: TCEnv
 initEnv =
   TCEnv{ teCurrentSrcLoc    = noSrcLoc
        , teDebug            = Nothing
@@ -131,6 +134,7 @@ data TCState t s = TCState
     { tsSignature        :: !(Sig.Signature t)
     , tsState            :: !s
     }
+    deriving (Functor)
 
 -- | An empty state.
 initTCState
@@ -353,6 +357,16 @@ instance State.MonadState s (TC t s) where
   put s = modify_ $ \ts -> ts{tsState = s}
   state f = modify $ \ts -> let (x, s) = f (tsState ts) in (ts{tsState = s}, x)
 
+mapTC :: L.Lens' s s' -> TC t s' a -> TC t s a
+mapTC l (TC m) = TC $ \(te, ts) -> do
+  res <- m (te, L.view l <$> ts)
+  return $ case res of
+    OK ts'' x -> OK ((\s -> L.set l s (tsState ts)) <$> ts'') x
+    Error err -> Error err
+
+mapUnitTC :: TC t () a -> TC t s a
+mapUnitTC = mapTC (\f x -> x <$ f ())
+
 -- Utils
 ------------------------------------------------------------------------
 
@@ -366,10 +380,10 @@ modify_ f = modify $ \ts -> (f ts, ())
 get :: TC t s (TCState t s)
 get = TC $ \(_, ts) -> return $ OK ts ts
 
-ask :: TC t s (TCEnv t s)
+ask :: TC t s (TCEnv)
 ask = TC $ \(te, ts) -> return $ OK ts te
 
-local :: TCEnv t s -> TC t s a -> TC t s a
+local :: TCEnv -> TC t s a -> TC t s a
 local te (TC m) = TC $ \(_, ts) -> m (te, ts)
 
 prettyTermTC :: (IsTerm t) => t -> TC t s PP.Doc
