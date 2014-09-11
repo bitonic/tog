@@ -4,5 +4,5 @@ module TypeCheck3.Solve
   , solve
   ) where
 
-import           TypeCheck3.Solve.Simple
-import           TypeCheck3.Solve.TwoContexts ()
+import           TypeCheck3.Solve.Simple ()
+import           TypeCheck3.Solve.TwoContexts

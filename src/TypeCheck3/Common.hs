@@ -319,7 +319,13 @@ data Constraint t
 
 instance Monoid (Constraint t) where
   mempty = Conj []
-  c1 `mappend` c2 = Conj [c1, c2]
+
+  Conj cs1 `mappend` Conj cs2 = Conj (cs1 ++ cs2)
+  Conj cs1 `mappend` c2       = Conj (c2 : cs1)
+  c1       `mappend` Conj cs2 = Conj (c1 : cs2)
+  c1       `mappend` c2       = Conj [c1, c2]
+
+-- Pretty printing Constraints
 
 prettyConstraintTC
   :: (IsTerm t) => Constraint t -> TC t s PP.Doc

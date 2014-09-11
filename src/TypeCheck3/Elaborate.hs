@@ -139,6 +139,7 @@ elaborateApp ctx type_ h [] = do
   return (mvT, waitForUnifiedType ctx type_ hType mvT t)
 elaborateApp ctx type_ h (A.Apply arg : elims) = do
   dom <- addMetaVarInCtx ctx set
+  -- TODO better name here
   cod <- addMetaVarInCtx (Ctx.Snoc ctx ("_", dom)) set
   typeF <- piTC dom cod
   (f, constrF) <- elaborateApp ctx typeF h elims
