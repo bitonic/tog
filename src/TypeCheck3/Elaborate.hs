@@ -57,7 +57,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         eqType <- addMetaVarInCtx ctx set
         t1 <- addMetaVarInCtx ctx eqType
         type' <- equalTC eqType t1 t1
-        return (mvT, waitForUnifiedType' type' t1)
+        return (mvT, waitForUnifiedType' type' refl)
       A.Con dataCon synArgs -> do
         DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon
         tyConType <- definitionType =<< getDefinition tyCon
