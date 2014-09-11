@@ -35,7 +35,7 @@ check ctx t type_ = do
           "t:" //> tDoc $$
           "type:" //> typeDoc
   debugBracket msg $ do
-    tView <- viewTC t
+    tView <- whnfViewTC t
     case tView of
       Con dataCon args -> do
         DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon

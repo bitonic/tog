@@ -121,27 +121,32 @@ infer
   :: (IsTerm t)
   => Ctx t -> Term t -> TC t s (Type t)
 infer ctx t = do
-  tView <- viewTC t
-  case tView of
-    Set ->
-      return set
-    Pi dom cod -> do
-      check ctx dom set
-      name <- getAbsNameTC cod
-      ctx' <- extendContext ctx (name, dom)
-      check ctx' cod set
-      return set
-    App h elims -> do
-      type_ <- inferHead ctx h
-      h' <- appTC h []
-      checkSpine ctx h' elims type_
-    Equal type_ t1 t2 -> do
-      check ctx type_ set
-      check ctx t1 type_
-      check ctx t2 type_
-      return set
-    _ -> do
-      error "impossible.infer: non-inferrable type."
+  let msg = do
+        tDoc <- prettyTermTC t
+        return $
+          "** infer:" //> tDoc
+  debugBracket msg $ do
+    tView <- whnfViewTC t
+    case tView of
+      Set ->
+        return set
+      Pi dom cod -> do
+        check ctx dom set
+        name <- getAbsNameTC cod
+        ctx' <- extendContext ctx (name, dom)
+        check ctx' cod set
+        return set
+      App h elims -> do
+        type_ <- inferHead ctx h
+        h' <- appTC h []
+        checkSpine ctx h' elims type_
+      Equal type_ t1 t2 -> do
+        check ctx type_ set
+        check ctx t1 type_
+        check ctx t2 type_
+        return set
+      _ -> do
+        error "impossible.infer: non-inferrable type."
 
 inferHead
   :: (IsTerm t)

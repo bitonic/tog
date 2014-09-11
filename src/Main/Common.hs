@@ -9,17 +9,17 @@ import           Syntax.Raw                       (parseProgram)
 import           Term                             (IsTerm)
 import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
-import           TypeCheck3                       (TypeCheckConf, checkProgram, TCState')
+import           TypeCheck3                       (checkProgram, TCState')
 
 checkFile
-  :: TypeCheckConf -> FilePath
+  :: FilePath
   -> (forall t. (IsTerm t) => TCState' t -> IO a)
   -> IO (Either PP.Doc a)
-checkFile conf file ret = runExceptT $ do
+checkFile file ret = runExceptT $ do
     s   <- lift $ readFile file
     raw <- ExceptT $ return $ showError "Parse" $ parseProgram s
     int <- ExceptT $ return $ showError "Scope" $ checkScope raw
-    ExceptT $ fmap (showError "Type") $ checkProgram conf int ret
+    ExceptT $ fmap (showError "Type") $ checkProgram int ret
   where
     showError :: String -> Either PP.Doc b -> Either PP.Doc b
     showError errType =

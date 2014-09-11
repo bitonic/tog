@@ -46,6 +46,7 @@ data TypeCheckConf = TypeCheckConf
   , tccCheckMetaVarConsistency :: Bool
   , tccFastGetAbsName          :: Bool
   , tccDisableSynEquality      :: Bool
+  , tccNormalizePrettyPrinted  :: Bool
   }
 
 defaultTypeCheckConf :: TypeCheckConf
@@ -56,6 +57,7 @@ data TypeCheckState = TypeCheckState
   , tcsFastGetAbsName          :: Bool
   -- TODO actually use this thing above.
   , tcsDisableSynEquality      :: Bool
+  , tcsNormalizePrettyPrinted  :: Bool
   }
 
 -- Useful types

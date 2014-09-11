@@ -106,9 +106,6 @@ whnfTC t = withSignatureTermM $ \sig -> whnf sig t
 whnfViewTC :: (IsTerm t) => t -> TC t s (TermView t)
 whnfViewTC t = withSignatureTermM $ \sig -> whnfView sig t
 
-viewTC :: (IsTerm t) => t -> TC t s (TermView t)
-viewTC t = liftTermM $ view t
-
 -- Telescope & context utils
 ----------------------------
 

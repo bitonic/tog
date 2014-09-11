@@ -1,18 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- TODO add options that are present in TypeCheck
 module TypeCheck3
-  ( TypeCheckConf(..)
-  , defaultTypeCheckConf
-  , availableTermTypes
+  ( availableTermTypes
   , checkProgram
   , TCState'
   ) where
 
 import           Prelude                          hiding (abs, pi)
 
+import qualified Control.Lens                     as L
 import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Data.Proxy                       (Proxy(Proxy))
 
+import           Conf
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
 import           Term
@@ -21,26 +22,6 @@ import           PrettyPrint                      ((<+>), render)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 import           TypeCheck3.Check
-
--- Configuration
-------------------------------------------------------------------------
-
-data TypeCheckConf = TypeCheckConf
-  { tccTermType                :: String
-  , tccQuiet                   :: Bool
-  , tccNoMetaVarsSummary       :: Bool
-  , tccMetaVarsReport          :: Bool
-  , tccMetaVarsOnlyUnsolved    :: Bool
-  , tccNoProblemsSummary       :: Bool
-  , tccProblemsReport          :: Bool
-  , tccDebug                   :: Bool
-  , tccCheckMetaVarConsistency :: Bool
-  , tccFastGetAbsName          :: Bool
-  , tccDisableSynEquality      :: Bool
-  }
-
-defaultTypeCheckConf :: TypeCheckConf
-defaultTypeCheckConf = TypeCheckConf "GR" True False False False False False False False False False
 
 -- Type checking
 ------------------------------------------------------------------------
@@ -54,25 +35,27 @@ availableTermTypes = ["GR", "S", "H", "SUSP"]
 type TCState' t = TCState t (CheckState t)
 
 checkProgram
-  :: TypeCheckConf -> [A.Decl]
+  :: [A.Decl]
   -> (forall t. (IsTerm t) => TCState' t -> IO a)
   -> IO (Either PP.Doc a)
-checkProgram conf decls ret =
-  case tccTermType conf of
-    "S"  -> checkProgram' (Proxy :: Proxy Simple)      conf decls ret
-    "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) conf decls ret
+checkProgram decls ret = do
+  tt <- confTermType <$> readConf
+  case tt of
+    "S"  -> checkProgram' (Proxy :: Proxy Simple)      decls ret
+    "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) decls ret
     -- "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  conf decls ret
-    "H"  -> checkProgram' (Proxy :: Proxy Hashed)      conf decls ret
+    "H"  -> checkProgram' (Proxy :: Proxy Hashed)      decls ret
     -- "SUSP" -> checkProgram' (Proxy :: Proxy Suspension) conf decls ret
     type_ -> return $ Left $ "Invalid term type" <+> PP.text type_
 
 checkProgram'
     :: forall t a. (IsTerm t)
-    => Proxy t -> TypeCheckConf -> [A.Decl]
+    => Proxy t -> [A.Decl]
     -> (TCState' t -> IO a)
     -> IO (Either PP.Doc a)
-checkProgram' _ conf decls0 ret = do
-    unless (tccQuiet conf) $ do
+checkProgram' _ decls0 ret = do
+    quiet <- confQuiet <$> readConf
+    unless quiet $ do
       drawLine
       putStrLn "-- Checking declarations"
       drawLine
@@ -88,7 +71,9 @@ checkProgram' _ conf decls0 ret = do
       -- TODO report
       return ts
     goDecls ts (decl : decls) = do
-      lift $ unless (tccQuiet conf) $ do
+      quiet <- confQuiet <$> lift readConf
+      debug <- confDebug <$> lift readConf
+      lift $ unless quiet $ do
         putStrLn $ render decl
         let separate = case decl of
               A.TypeSig (A.Sig n _) -> case decls of
@@ -100,8 +85,8 @@ checkProgram' _ conf decls0 ret = do
               _ ->
                 not $ null decls
         when separate $ putStrLn ""
-      let debug' = if (not (tccQuiet conf) && tccDebug conf) then enableDebug else id
-      ((), ts') <- ExceptT $ runTC  ts $ debug' $ checkDecl decl
+      let debug' = if (not quiet && debug) then enableDebug else id
+      ((), ts') <- ExceptT $ runTC ts $ debug' $ checkDecl decl
       goDecls ts' decls
 
     -- report :: TCState' t -> IO ()

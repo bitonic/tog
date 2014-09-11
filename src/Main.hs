@@ -4,16 +4,18 @@ import           Control.Monad                    (join)
 import           Options.Applicative
 import           System.Exit                      (exitFailure)
 
+import           Conf
 import           Main.Common
 import qualified PrettyPrint                      as PP
-import           TypeCheck3                       (TypeCheckConf(TypeCheckConf))
 
-parseTypeCheckConf :: Parser TypeCheckConf
-parseTypeCheckConf = TypeCheckConf
+parseTypeCheckConf :: Parser Conf
+parseTypeCheckConf = Conf
   <$> strOption
       ( long "termType" <> short 't' <> value "S" <>
         help "Available types: S (Simple), GR (GraphReduce), H (Hashed), SUSP (Suspended)."
       )
+  <*> strOption
+      ( long "solver" <> value "S" )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch
@@ -50,6 +52,10 @@ parseTypeCheckConf = TypeCheckConf
       ( long "disableSynEquality" <>
         help "Disable syntactic equality"
       )
+  <*> switch
+      ( long "normalizePrettyPrinted" <>
+        help "Normalize terms before pretty printing them"
+      )
 
 parseMain :: Parser (IO ())
 parseMain =
@@ -61,7 +67,8 @@ parseMain =
            (progDesc "Typecheck a file.")
 
     typeCheck file conf = do
-      errOrTs <- checkFile conf file $ \_ -> return ()
+      writeConf conf
+      errOrTs <- checkFile file $ \_ -> return ()
       case errOrTs of
         Left err -> putStrLn (PP.render err) >> exitFailure
         _        -> return ()

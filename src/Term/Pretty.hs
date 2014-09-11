@@ -11,6 +11,7 @@ module Term.Pretty
   , prettyContext
   ) where
 
+import           Conf
 import           Prelude.Extended                 hiding ((<>))
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>), (<>))
 import qualified PrettyPrint                      as PP
@@ -28,7 +29,9 @@ prettyTerm sig = prettyPrecTerm sig 0
 
 prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
-  synT <- internalToTerm =<< nf sig t0
+  normalize <- confNormalizePrettyPrinted <$> readConf
+  t <- if normalize then nf sig t0 else return t0
+  synT <- internalToTerm t
   return $ PP.prettyPrec p synT
 
 prettyElim :: (IsTerm t) => Sig.Signature t -> Elim t -> TermM PP.Doc
