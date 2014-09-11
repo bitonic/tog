@@ -28,7 +28,7 @@ instance Monoid FreeVars where
   mempty = FreeVars Set.empty Set.empty
 
   FreeVars rigid1 flex1 `mappend` FreeVars rigid2 flex2 =
-    FreeVars (rigid1 `mappend` flex1) (rigid2 `mappend` flex2)
+    FreeVars (rigid1 `mappend` rigid2) (flex1 `mappend` flex2)
 
 freeVars
   :: forall t. (IsTerm t)
