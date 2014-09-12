@@ -12,6 +12,7 @@ module Term.Signature
     , getMetaVarBody
     , addMetaVar
     , instantiateMetaVar
+    , unsafeRemoveMetaVar
     , metaVarsTypes
     , metaVarsBodies
     ) where
@@ -113,6 +114,14 @@ instantiateMetaVar sig mv _ | not (HMS.member mv (sMetasTypes sig)) =
   error $ "impossible.instantiateMetaVar: " ++ show mv ++ " not present."
 instantiateMetaVar sig mv term =
   sig{sMetasBodies = HMS.insert mv term (sMetasBodies sig)}
+
+-- | Use with caution: this is safe only is said metavariable is not
+-- referenced anywhere.
+unsafeRemoveMetaVar :: Signature t -> MetaVar -> Signature t
+unsafeRemoveMetaVar sig mv =
+  let bodies = HMS.delete mv $ sMetasBodies sig
+      types  = HMS.delete mv $ sMetasTypes sig
+  in sig{sMetasBodies = bodies, sMetasTypes = types}
 
 -- | Gets the types of all 'MetaVar's.
 metaVarsTypes :: Signature t -> HMS.HashMap MetaVar (Closed (Type t))

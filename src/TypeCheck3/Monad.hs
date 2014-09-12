@@ -35,6 +35,7 @@ module TypeCheck3.Monad
   , instantiateMetaVar
   , getMetaVarType
   , getMetaVarBody
+  , unsafeRemoveMetaVar
     -- ** State handling
   , mapTC
     -- * Debugging
@@ -301,6 +302,13 @@ getMetaVarBody
 getMetaVarBody mv = do
   sig <- tsSignature <$> get
   return $ Sig.getMetaVarBody sig mv
+
+unsafeRemoveMetaVar
+  :: (IsTerm t) => MetaVar -> TC t s ()
+unsafeRemoveMetaVar mv = do
+  debug_ $ "*** unsafeRemoveMetaVar" <+> PP.pretty mv
+  modify_ $ \ts -> ts{tsSignature = Sig.unsafeRemoveMetaVar (tsSignature ts) mv}
+
 
 -- Debugging
 ------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 module TypeCheck3.Solve.Simple
   ( SolveState
   , initSolveState
+  , prettySolveState
   , solve
   ) where
 
@@ -112,6 +113,16 @@ solve' (Unify ctx type_ t1 t2) = do
   checkEqual (ctx, type_, t1, t2)
 solve' (UnifySpine ctx type_ mbH elims1 elims2) = do
   checkEqualSpine' ctx type_ mbH elims1 elims2
+
+prettySolveState :: (IsTerm t) => SolveState t -> TC t s PP.Doc
+prettySolveState (SolveState []) =
+  return "Done!"
+prettySolveState (SolveState cs) = do
+  let cs' = [(mvs, c') | (mvs, c) <- cs, Just c' <- [simplify c]]
+  docs <- forM cs' $ \(mvs, c) -> do
+    cDoc <- prettyConstraintTC c
+    return $ "Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
+  return $ PP.vcat docs
 
 -- This is local stuff
 ----------------------

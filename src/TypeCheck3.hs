@@ -9,16 +9,17 @@ module TypeCheck3
 
 import           Prelude                          hiding (abs, pi)
 
-import qualified Control.Lens                     as L
 import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Data.Proxy                       (Proxy(Proxy))
+import qualified Data.HashMap.Strict              as HMS
 
 import           Conf
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
 import           Term
+import qualified Term.Signature                   as Sig
 import           Term.Impl
-import           PrettyPrint                      ((<+>), render)
+import           PrettyPrint                      ((<+>), render, (//>))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 import           TypeCheck3.Check
@@ -67,8 +68,8 @@ checkProgram' _ decls0 ret = do
   where
     goDecls :: TCState' t -> [A.Decl] -> ExceptT PP.Doc IO (TCState' t)
     goDecls ts [] = do
-      -- lift $ unless (tccQuiet conf) $ report ts
-      -- TODO report
+      quiet <- confQuiet <$> lift readConf
+      lift $ unless quiet  $ report ts
       return ts
     goDecls ts (decl : decls) = do
       quiet <- confQuiet <$> lift readConf
@@ -88,30 +89,33 @@ checkProgram' _ decls0 ret = do
       ((), ts') <- ExceptT $ runTC (not quiet && cdebug) ts $ checkDecl decl
       goDecls ts' decls
 
-    -- report :: TCState' t -> IO ()
-    -- report ts = do
-    --   let tr  = tcReport ts
-    --   let sig = trSignature tr
-    --   when (not (tccNoMetaVarsSummary conf) || tccMetaVarsReport conf) $ do
-    --     let mvsTypes  = Sig.metaVarsTypes sig
-    --     let mvsBodies = Sig.metaVarsBodies sig
-    --     drawLine
-    --     putStrLn $ "-- Solved MetaVars: " ++ show (HMS.size mvsBodies)
-    --     putStrLn $ "-- Unsolved MetaVars: " ++ show (HMS.size mvsTypes - HMS.size mvsBodies)
-    --     when (tccMetaVarsReport conf) $ do
-    --       drawLine
-    --       forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
-    --         let mbBody = HMS.lookup mv mvsBodies
-    --         when (isNothing mbBody || not (tccMetaVarsOnlyUnsolved conf)) $ do
-    --           mvTypeDoc <- prettyTerm sig mvType
-    --           putStrLn $ render $
-    --             PP.pretty mv <+> PP.parens (PP.pretty (A.mvSrcLoc mv)) <+> ":" //> mvTypeDoc
-    --           when (not (tccMetaVarsOnlyUnsolved conf)) $ do
-    --             mvBody <- case HMS.lookup mv mvsBodies of
-    --               Nothing      -> return "?"
-    --               Just mvBody0 -> prettyTerm sig mvBody0
-    --             putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
-    --           putStrLn ""
+    report :: TCState' t -> IO ()
+    report ts = do
+      let tr  = tcReport ts
+      let sig = trSignature tr
+      mvNoSummary <- confNoMetaVarsSummary <$> readConf
+      mvReport <- confMetaVarsReport <$> readConf
+      mvOnlyUnsolved <- confMetaVarsOnlyUnsolved <$> readConf
+      when (not mvNoSummary || mvReport) $ do
+        let mvsTypes  = Sig.metaVarsTypes sig
+        let mvsBodies = Sig.metaVarsBodies sig
+        drawLine
+        putStrLn $ "-- Solved MetaVars: " ++ show (HMS.size mvsBodies)
+        putStrLn $ "-- Unsolved MetaVars: " ++ show (HMS.size mvsTypes - HMS.size mvsBodies)
+        when mvReport $ do
+          drawLine
+          forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
+            let mbBody = HMS.lookup mv mvsBodies
+            when (isNothing mbBody || not mvOnlyUnsolved) $ do
+              mvTypeDoc <- prettyTerm sig mvType
+              putStrLn $ render $
+                PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc
+              when (not mvOnlyUnsolved) $ do
+                mvBody <- case HMS.lookup mv mvsBodies of
+                  Nothing      -> return "?"
+                  Just mvBody0 -> prettyTerm sig mvBody0
+                putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
+              putStrLn ""
     --   when (not (tccNoProblemsSummary conf) || tccProblemsReport conf) $ do
     --     drawLine
     --     putStrLn $ "-- Solved problems: " ++ show (HS.size (trSolvedProblems tr))
@@ -136,7 +140,7 @@ checkProgram' _ decls0 ret = do
     --           PP.indent 2 (PP.pretty probState) $$
     --           PP.indent 2 probDoc
     --         putStrLn ""
-    --   drawLine
+      drawLine
 
     drawLine =
       putStrLn "------------------------------------------------------------------------"
