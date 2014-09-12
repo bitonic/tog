@@ -115,3 +115,39 @@ prettyApp :: PP.Pretty a => Int -> PP.Doc -> [a] -> PP.Doc
 prettyApp _ h []   = h
 prettyApp p h args = PP.condParens (p > 3) $ h </> PP.fillSep (map (PP.prettyPrec 4) args)
 
+
+
+-- To A.Expr
+------------------------------------------------------------------------
+
+internalToTerm
+  :: (IsTerm t) => t -> TermM A.Expr
+internalToTerm t0 = do
+  tView <- view t0
+  case tView of
+    Lam body -> do
+      n <- getAbsName_ body
+      A.Lam n <$> internalToTerm body
+    Pi dom cod -> do
+      mbCod <- strengthen_ 1 cod
+      case mbCod of
+        Nothing -> do
+          n <- getAbsName_ cod
+          A.Pi n <$> internalToTerm dom <*> internalToTerm cod
+        Just cod' -> do
+          A.Fun <$> internalToTerm dom <*> internalToTerm cod'
+    Equal type_ x y ->
+      A.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
+    Refl ->
+      return $ A.Refl A.noSrcLoc
+    Con dataCon args ->
+      A.Con dataCon <$> mapM internalToTerm args
+    Set ->
+      return $ A.Set A.noSrcLoc
+    App h args -> do
+      let h' = case h of
+            Var v -> A.Var (A.name (PP.render v))
+            Def f -> A.Def f
+            J -> A.J A.noSrcLoc
+            Meta mv -> A.Var (A.Name (A.srcLoc mv) (PP.render mv))
+      A.App h' <$> mapM (foldElim (\t -> A.Apply <$> internalToTerm t) (\n _ -> return $ A.Proj n)) args

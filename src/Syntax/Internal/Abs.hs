@@ -59,8 +59,6 @@ data Expr = Lam Name Expr
 data Head = Var Name
           | Def Name
           | J SrcLoc
-          | TermVar Int Name
-          | TermMeta MetaVar
 
 data Elim = Apply Expr
           | Proj Name
@@ -112,10 +110,8 @@ instance HasSrcLoc Expr where
 instance HasSrcLoc Head where
   srcLoc h = case h of
     Var x       -> srcLoc x
-    TermVar _ x -> srcLoc x
     Def x       -> srcLoc x
     J loc       -> loc
-    TermMeta mv -> srcLoc mv
 
 instance HasSrcLoc Pattern where
   srcLoc p = case p of
@@ -186,9 +182,7 @@ instance Pretty Head where
   pretty h = case h of
     Var x       -> pretty x
     Def f       -> pretty f
-    TermVar i x -> pretty i <> "#" <> pretty x
     J _         -> text "J"
-    TermMeta mv -> pretty mv
 
 instance Pretty Pattern where
   pretty e = case e of
@@ -257,30 +251,3 @@ prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (rever
     prettyArgs []           = empty
     prettyArgs [arg]        = line <> prettyPrec 4 arg
     prettyArgs (arg : args) = group (prettyArgs args) $$ prettyPrec 4 arg
-
--- 'MetaVar'iables
-------------------------------------------------------------------------
-
--- | 'MetaVar'iables.  Globally scoped.
-data MetaVar = MetaVar
-  { mvId     :: !Int
-  , mvSrcLoc :: !SrcLoc
-  } deriving (Generic)
-
-instance Eq MetaVar where
-  (==) = (==) `on` mvId
-
-instance Ord MetaVar where
-  compare = comparing mvId
-
-instance Hashable MetaVar where
-  hashWithSalt s = hashWithSalt s . mvId
-
-instance Pretty MetaVar where
-    prettyPrec _ = text . show
-
-instance Show MetaVar where
-   show (MetaVar mv _) = "_" ++ show mv
-
-instance HasSrcLoc MetaVar where
-  srcLoc = mvSrcLoc

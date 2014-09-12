@@ -5,7 +5,7 @@ module Term.Class where
 import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, MetaVar)
+import           Syntax.Internal                  (Name)
 import qualified Syntax.Internal                  as A
 import qualified PrettyPrint                      as PP
 import {-# SOURCE #-} qualified Term.Signature    as Sig
@@ -519,37 +519,29 @@ ignoreInvertible (Invertible injClauses) = map snd injClauses
 -- mapInvertible f (NotInvertible clauses) = NotInvertible $ map f clauses
 -- mapInvertible f (Invertible injClauses) = Invertible $ map (second f) injClauses
 
--- To A.Expr
+-- 'MetaVar'iables
 ------------------------------------------------------------------------
 
-internalToTerm
-  :: (IsTerm t) => t -> TermM A.Expr
-internalToTerm t0 = do
-  tView <- view t0
-  case tView of
-    Lam body -> do
-      n <- getAbsName_ body
-      A.Lam n <$> internalToTerm body
-    Pi dom cod -> do
-      mbCod <- strengthen_ 1 cod
-      case mbCod of
-        Nothing -> do
-          n <- getAbsName_ cod
-          A.Pi n <$> internalToTerm dom <*> internalToTerm cod
-        Just cod' -> do
-          A.Fun <$> internalToTerm dom <*> internalToTerm cod'
-    Equal type_ x y ->
-      A.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
-    Refl ->
-      return $ A.Refl A.noSrcLoc
-    Con dataCon args ->
-      A.Con dataCon <$> mapM internalToTerm args
-    Set ->
-      return $ A.Set A.noSrcLoc
-    App h args -> do
-      let h' = case h of
-            Var v -> A.TermVar (varIndex v) (varName v)
-            Def f -> A.Def f
-            J -> A.J A.noSrcLoc
-            Meta mv -> A.TermMeta mv
-      A.App h' <$> mapM (foldElim (\t -> A.Apply <$> internalToTerm t) (\n _ -> return $ A.Proj n)) args
+-- | 'MetaVar'iables.  Globally scoped.
+data MetaVar = MetaVar
+  { mvId     :: !Int
+  , mvSrcLoc :: !A.SrcLoc
+  } deriving (Generic)
+
+instance Eq MetaVar where
+  (==) = (==) `on` mvId
+
+instance Ord MetaVar where
+  compare = comparing mvId
+
+instance Hashable MetaVar where
+  hashWithSalt s = hashWithSalt s . mvId
+
+instance PP.Pretty MetaVar where
+    prettyPrec _ = PP.text . show
+
+instance Show MetaVar where
+   show (MetaVar mv _) = "_" ++ show mv
+
+instance A.HasSrcLoc MetaVar where
+  srcLoc = mvSrcLoc

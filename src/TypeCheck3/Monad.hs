@@ -52,7 +52,7 @@ import           System.IO                        (hPutStr, stderr)
 import           Prelude.Extended
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
-import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc, MetaVar)
+import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc)
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel

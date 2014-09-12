@@ -6,7 +6,7 @@ import           Prelude                          hiding (abs, pi)
 import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name, MetaVar)
+import           Syntax.Internal                  (Name)
 import qualified Syntax.Internal                  as A
 import           Term
 import           Term.Context                     (Ctx)

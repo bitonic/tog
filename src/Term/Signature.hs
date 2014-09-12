@@ -18,7 +18,6 @@ module Term.Signature
 
 import qualified Data.HashMap.Strict              as HMS
 
-import           Syntax.Internal                  (MetaVar)
 import qualified Syntax.Internal                  as A
 import           Term.Synonyms
 import           Term.Class
@@ -105,7 +104,7 @@ addMetaVar sig srcLoc type_ =
             , sMetasCount = sMetasCount sig + 1
             })
   where
-    mv = A.MetaVar (sMetasCount sig) srcLoc
+    mv = MetaVar (sMetasCount sig) srcLoc
 
 -- | Instantiates the given 'MetaVar' with the given body.  Fails if no
 -- type is present for the 'MetaVar'.

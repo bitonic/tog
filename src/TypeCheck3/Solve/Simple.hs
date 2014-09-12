@@ -11,7 +11,7 @@ import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Maybe        (runMaybeT)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
-import           Syntax.Internal                  (Name, MetaVar)
+import           Syntax.Internal                  (Name)
 
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
