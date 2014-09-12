@@ -1,4 +1,4 @@
-module Conf (Conf(..), writeConf, readConf) where
+module Conf (Conf(..), defaultConf, writeConf, readConf) where
 
 import           Control.Monad                    (unless)
 import           System.IO.Unsafe                 (unsafePerformIO)
@@ -9,7 +9,6 @@ import           Control.Concurrent.MVar          (MVar, newEmptyMVar, tryPutMVa
 
 data Conf = Conf
   { confTermType                :: String
-  , confSolver                  :: String
   , confQuiet                   :: Bool
   , confNoMetaVarsSummary       :: Bool
   , confMetaVarsReport          :: Bool
@@ -22,6 +21,9 @@ data Conf = Conf
   , confDisableSynEquality      :: Bool
   , confNormalizePrettyPrinted  :: Bool
   }
+
+defaultConf :: Conf
+defaultConf = Conf "S" False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
 confRef :: MVar Conf

@@ -258,7 +258,7 @@ genericTypeOfJ =
     ) -->
     ("p", ("x", v "A" 3) --> (app (Var (V (Named "P" 1))) . map Apply =<< sequence [v "x" 0, v "x" 0, r refl])) -->
     ("eq", join (equal <$> v "A" 4 <*> v "x" 3 <*> v "y" 2)) -->
-    (app (Var (V (Named "P" 2))) . map Apply =<< sequence [v "x" 4, v "y" 3, r refl])
+    (app (Var (V (Named "P" 2))) . map Apply =<< sequence [v "x" 4, v "y" 3, v "eq" 0])
   where
     v n ix = var $ V $ Named n ix
     r = return

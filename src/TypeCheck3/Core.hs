@@ -169,7 +169,7 @@ checkEqual x@(_, type_, t1, t2) = do
         t2Doc <- prettyTermTC t2
         return $
           "*** Core.checkEqual" $$
-          "typeDoc:" //> typeDoc $$
+          "type:" //> typeDoc $$
           "t1:" //> t1Doc $$
           "t2:" //> t2Doc
   debugBracket msg $ runCheckEqual [checkSynEq, etaExpand] compareTerms x
