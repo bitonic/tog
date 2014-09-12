@@ -23,7 +23,7 @@ data Conf = Conf
   , confNormalizePrettyPrinted  :: Bool
   }
 
-{-# PRAGMA NOINLINE #-}
+{-# NOINLINE confRef #-}
 confRef :: MVar Conf
 confRef = unsafePerformIO newEmptyMVar
 

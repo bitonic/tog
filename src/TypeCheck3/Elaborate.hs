@@ -68,7 +68,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         t <- conTC dataCon dataConArgs
         return (mvT, Conj (waitForUnifiedType' type' t : constrDataConArgs))
       A.App h elims -> do
-        elaborateApp ctx type_ h (reverse elims)
+        elaborateApp' ctx type_ h (reverse elims)
 
 fillArgsWithMetas :: IsTerm t => Ctx t -> Term t -> TC t s [Term t]
 fillArgsWithMetas ctx' type' = do
@@ -77,8 +77,8 @@ fillArgsWithMetas ctx' type' = do
     Pi dom cod -> do
       domName <- getAbsNameTC cod
       arg <- addMetaVarInCtx ctx' dom
-      let ctx'' = Ctx.Snoc ctx' (domName, arg)
-      (arg :) <$> fillArgsWithMetas ctx'' cod
+      cod' <- instantiateTC cod arg
+      (arg :) <$> fillArgsWithMetas ctx' cod'
     Set -> do
       return []
     _ -> do
@@ -130,6 +130,21 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
     h <- appTC J []
     return (h, typeOfJ)
 
+elaborateApp'
+  :: (IsTerm t)
+  => Ctx t -> Type t -> A.Head -> [A.Elim] -> TC t s (Term t, Constraint t)
+elaborateApp' ctx type_ h elims = do
+  let msg = do
+        ctxDoc <- prettyContextTC ctx
+        typeDoc <- prettyTermTC type_
+        return $
+          "*** elaborateApp" $$
+          "ctx:" //> ctxDoc $$
+          "typeDoc:" //> typeDoc $$
+          "head:" //> PP.pretty h $$
+          "elims:" //> PP.pretty elims
+  debugBracket msg $ elaborateApp ctx type_ h elims
+
 elaborateApp
   :: (IsTerm t)
   => Ctx t -> Type t -> A.Head -> [A.Elim] -> TC t s (Term t, Constraint t)
@@ -142,7 +157,7 @@ elaborateApp ctx type_ h (A.Apply arg : elims) = do
   -- TODO better name here
   cod <- addMetaVarInCtx (Ctx.Snoc ctx ("_", dom)) set
   typeF <- piTC dom cod
-  (f, constrF) <- elaborateApp ctx typeF h elims
+  (f, constrF) <- elaborateApp' ctx typeF h elims
   (arg', constrArg) <- elaborate ctx dom arg
   type' <- instantiateTC cod arg'
   t <- eliminateTC f [Apply arg']
@@ -153,7 +168,7 @@ elaborateApp ctx type_ h (A.Proj proj : elims) = do
   tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType
   typeRec <- appTC (Def tyCon) (map Apply tyConArgs)
-  (rec_, constrRec) <- elaborateApp ctx typeRec h elims
+  (rec_, constrRec) <- elaborateApp' ctx typeRec h elims
   type0 <- liftTermM $ Tel.substs projTypeTel projType tyConArgs
   Pi _ type1 <- whnfViewTC type0
   type' <- instantiateTC type1 rec_
