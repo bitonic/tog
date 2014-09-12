@@ -94,7 +94,7 @@ applyProjection proj h type_ = do
       return (h', endType')
     _ -> do
       doc <- prettyTermTC appliedProjType
-      error $ "impossible.applyProjection: " ++ render doc
+      fatalError $ "impossible.applyProjection: " ++ render doc
 
 matchTyCon
   :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
@@ -146,7 +146,7 @@ infer ctx t = do
         check ctx t2 type_
         return set
       _ -> do
-        error "impossible.infer: non-inferrable type."
+        fatalError "impossible.infer: non-inferrable type."
 
 inferHead
   :: (IsTerm t)

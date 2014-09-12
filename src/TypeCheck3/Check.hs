@@ -164,7 +164,7 @@ addProjections tyCon tyConPars self fields0 =
         endType <- (`piTC` fieldType) =<< ctxAppTC (def tyCon []) tyConPars
         addProjection field ix tyCon (Tel.tel tyConPars) endType
         (go fields' <=< liftTermM . Tel.instantiate fieldTypes') =<< appTC (Var self) [Proj field ix]
-      (_, _) -> error "impossible.addProjections: impossible: lengths do not match"
+      (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
 
 checkFunDef :: (IsTerm t) => Name -> [A.Clause] -> CheckM t ()
 checkFunDef fun synClauses = do
@@ -242,7 +242,7 @@ checkPattern funName synPat type_ = case synPat of
         Constant (Data _)     _ -> return ()
         Constant (Record _ _) _ -> checkError $ PatternMatchOnRecord synPat tyCon
         _                       -> do doc <- prettyDefinitionTC typeConDef
-                                      error $ "impossible.checkPattern " ++ render doc
+                                      fatalError $ "impossible.checkPattern " ++ render doc
       typeView <- whnfViewTC type_
       -- TODO this can be a soft match, like `matchTyCon'
       case typeView of

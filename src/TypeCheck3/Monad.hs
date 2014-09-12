@@ -14,6 +14,7 @@ module TypeCheck3.Monad
     -- * Operations
     -- ** Errors
   , typeError
+  , fatalError
   , assert
     -- ** Source location
   , atSrcLoc
@@ -37,14 +38,13 @@ module TypeCheck3.Monad
     -- ** State handling
   , mapTC
     -- * Debugging
-  , enableDebug
-  , disableDebug
   , debugBracket
   , debugBracket_
   , debug
   , debug_
   ) where
 
+import           Control.Exception.Base           (throwIO, catch, try, Exception)
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
@@ -69,12 +69,7 @@ import qualified Term.Telescope                   as Tel
 -- Moreover, it lets us suspend computations waiting on a 'MetaVar' to
 -- be instantiated, or on another suspended computation to be completed.
 -- See 'ProblemId' and related functions.
-newtype TC t s a = TC {unTC :: (TCEnv, TCState t s) -> IO (TCRes t s a)}
-  deriving (Functor)
-
-data TCRes t s a
-  = OK (TCState t s) a
-  | Error TCErr
+newtype TC t s a = TC {unTC :: (TCEnv, TCState t s) -> IO (TCState t s, a)}
   deriving (Functor)
 
 instance Applicative (TC t s) where
@@ -82,34 +77,31 @@ instance Applicative (TC t s) where
   (<*>) = ap
 
 instance Monad (TC t s) where
-  return x = TC $ \(_, ts) -> return $ OK ts x
+  return x = TC $ \(_, ts) -> return (ts, x)
 
   TC m >>= f =
-    TC $ \s@(loc, _) -> do
-      res <- m s
-      case res of
-        OK ts x   -> unTC (f x) (loc, ts)
-        Error err -> return $ Error err
+    TC $ \s@(te, _) -> do
+      (ts, x) <- m s
+      unTC (f x) (te, ts)
 
 catchTC
-  :: (IsTerm t)
-  => TC t s a -> TC t s (Either TCErr a)
+  :: TC t s a -> TC t s (Either PP.Doc a)
 catchTC m = TC $ \(te, ts) -> do
-  res <- unTC m (te, ts)
-  case res of
-    OK ts' x  -> return $ OK ts' $ Right x
-    Error err -> return $ OK ts  $ Left err
+  mbErr <- try $ unTC m (te, ts)
+  case mbErr of
+    Left (e :: TCErr) -> return (ts, Left (PP.pretty e))
+    Right (ts', x)    -> return (ts', Right x)
 
 -- | Takes a 'TCState' and a computation on a closed context and
 -- produces an error or a result with a new state.
 runTC :: (IsTerm t)
-      => TCState t s
+      => Bool -> TCState t s
       -> TC t s a -> IO (Either PP.Doc (a, TCState t s))
-runTC ts (TC m) = do
-  res <- m (initEnv, ts)
-  return $ case res of
-    OK ts' x  -> Right (x, ts')
-    Error err -> Left $ PP.pretty err
+runTC debug ts (TC m) = do
+  mbErr <- try $ m (initEnv{teDebug = if debug then Just initDebug else Nothing}, ts)
+  return $ case mbErr of
+    Left (e :: TCErr) -> Left $ PP.pretty e
+    Right (ts', x)    -> Right (x, ts')
 
 data TCEnv = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
@@ -149,6 +141,7 @@ tcState = tsState
 
 data TCErr
     = DocErr SrcLoc PP.Doc
+    deriving (Typeable)
 
 instance PP.Pretty TCErr where
   pretty (DocErr p s) =
@@ -157,6 +150,8 @@ instance PP.Pretty TCErr where
 
 instance Show TCErr where
   show = PP.render
+
+instance Exception TCErr
 
 -- TCReport
 ------------------------------------------------------------------------
@@ -179,23 +174,30 @@ tcReport ts = TCReport
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t s b
 typeError err = do
-  mbD <- teDebug <$> ask
-  case mbD of
-    Nothing -> do
-      return ()
-    Just d -> do
-      debug_ $
-        "** About to throw error" $$
-        "error:" //> err $$
-        "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
-  TC $ \(te, _) -> return $ Error $ DocErr (teCurrentSrcLoc te) err
+  mbDebug <- teDebug <$> ask
+  forM_ mbDebug $ \d ->
+    debug_ $
+      "** About to throw error" $$
+      "error:" //> err $$
+      "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
+  TC $ \(te, _) -> throwIO $ DocErr (teCurrentSrcLoc te) err
+
+fatalError :: String -> TC t s b
+fatalError s = do
+  mbDebug <- teDebug <$> ask
+  forM_ mbDebug $ \d ->
+    debug_ $
+      "** SHUTTING DOWN" $$
+      "error:" //> PP.text s $$
+      "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
+  error s
 
 assert :: (PP.Doc -> PP.Doc) -> TC t s a -> TC t s a
-assert msg (TC m) = TC $ \(te, ts) -> do
-  res <- m (te, ts)
-  case res of
-    Error (DocErr _ err) -> error $ PP.render $ msg err
-    OK ts' x             -> return $ OK ts' x
+assert msg m = do
+  mbErr <- catchTC m
+  case mbErr of
+    Left err -> fatalError $ PP.render $ msg err
+    Right x  -> return x
 
 -- SrcLoc
 ------------------------------------------------------------------------
@@ -210,7 +212,7 @@ atSrcLoc x (TC m) = TC $ \(te, ts) -> m (te{teCurrentSrcLoc = srcLoc x}, ts)
 liftTermM :: TermM a -> TC t s a
 liftTermM m = TC $ \(_, ts) -> do
   x <- m
-  return $ OK ts x
+  return $ (ts, x)
 
 -- Signature
 ------------------------------------------------------------------------
@@ -257,10 +259,10 @@ addClauses
 addClauses f clauses = do
   def' <- getDefinition f
   let ext (Constant Postulate a) = return $ Function a clauses
-      ext (Function _ _)         = error $ "TC.addClause: clause `" ++ show f ++ "' already added."
-      ext (Constant k _)         = error $ "TC.addClause: constant `" ++ show k ++ "'"
-      ext DataCon{}              = error $ "TC.addClause: constructor"
-      ext Projection{}           = error $ "TC.addClause: projection"
+      ext (Function _ _)         = fatalError $ "TC.addClause: clause `" ++ show f ++ "' already added."
+      ext (Constant k _)         = fatalError $ "TC.addClause: constant `" ++ show k ++ "'"
+      ext DataCon{}              = fatalError $ "TC.addClause: constructor"
+      ext Projection{}           = fatalError $ "TC.addClause: projection"
   addDefinition f =<< ext def'
 
 addMetaVar :: (IsTerm t) => Closed (Type t) -> TC t s MetaVar
@@ -306,16 +308,6 @@ getMetaVarBody mv = do
 _ERROR_INDENT :: Int
 _ERROR_INDENT = 2
 
-enableDebug :: TC t s a -> TC t s a
-enableDebug (TC m) = TC $ \(te, ts) ->
-  let te' = case teDebug te of
-              Just _  -> te
-              Nothing -> te{teDebug = Just initDebug}
-  in m (te', ts)
-
-disableDebug :: TC t s a -> TC t s a
-disableDebug (TC m) = TC $ \(te, ts) -> m (te{teDebug = Nothing}, ts)
-
 debugBracket :: TC t s PP.Doc -> TC t s a -> TC t s a
 debugBracket docM m = do
   doc <- assertDoc docM
@@ -344,7 +336,7 @@ debug docM = do
         let s  = PP.renderPretty 100 doc
         let pad = replicate (dDepth d * _ERROR_INDENT) ' '
         hPutStr stderr $ unlines $ map (pad ++) $ lines s
-        return $ OK ts ()
+        return (ts, ())
 
 debug_ :: PP.Doc -> TC t s ()
 debug_ doc = debug (return doc)
@@ -359,26 +351,24 @@ instance State.MonadState s (TC t s) where
 
 mapTC :: L.Lens' s s' -> TC t s' a -> TC t s a
 mapTC l (TC m) = TC $ \(te, ts) -> do
-  res <- m (te, L.view l <$> ts)
-  return $ case res of
-    OK ts'' x -> OK ((\s -> L.set l s (tsState ts)) <$> ts'') x
-    Error err -> Error err
+  (ts'', x) <- m (te, L.view l <$> ts)
+  return ((\s -> L.set l s (tsState ts)) <$> ts'', x)
 
 -- Utils
 ------------------------------------------------------------------------
 
 modify :: (TCState t s -> (TCState t s, a)) -> TC t s a
 modify f = TC $ \(_, ts) ->
-  let (ts', x) = f ts in return $ OK ts' x
+  let (ts', x) = f ts in return (ts', x)
 
 modify_ :: (TCState t s -> TCState t s) -> TC t s ()
 modify_ f = modify $ \ts -> (f ts, ())
 
 get :: TC t s (TCState t s)
-get = TC $ \(_, ts) -> return $ OK ts ts
+get = TC $ \(_, ts) -> return (ts, ts)
 
 ask :: TC t s (TCEnv)
-ask = TC $ \(te, ts) -> return $ OK ts te
+ask = TC $ \(te, ts) -> return (ts, te)
 
 local :: TCEnv -> TC t s a -> TC t s a
 local te (TC m) = TC $ \(_, ts) -> m (te, ts)

@@ -72,7 +72,7 @@ checkProgram' _ decls0 ret = do
       return ts
     goDecls ts (decl : decls) = do
       quiet <- confQuiet <$> lift readConf
-      debug <- confDebug <$> lift readConf
+      cdebug <- confDebug <$> lift readConf
       lift $ unless quiet $ do
         putStrLn $ render decl
         let separate = case decl of
@@ -85,8 +85,7 @@ checkProgram' _ decls0 ret = do
               _ ->
                 not $ null decls
         when separate $ putStrLn ""
-      let debug' = if (not quiet && debug) then enableDebug else id
-      ((), ts') <- ExceptT $ runTC ts $ debug' $ checkDecl decl
+      ((), ts') <- ExceptT $ runTC (not quiet && cdebug) ts $ checkDecl decl
       goDecls ts' decls
 
     -- report :: TCState' t -> IO ()

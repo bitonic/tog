@@ -82,7 +82,7 @@ fillArgsWithMetas ctx' type' = do
     Set -> do
       return []
     _ -> do
-      error "impossible.fillArgsWithMetas: bad type for tycon"
+      fatalError "impossible.fillArgsWithMetas: bad type for tycon"
 
 waitForUnifiedType
   :: IsTerm (Term t)
