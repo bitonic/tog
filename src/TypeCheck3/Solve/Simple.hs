@@ -10,6 +10,7 @@ import           Prelude                          hiding (any)
 
 import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Maybe        (runMaybeT)
+import           Control.Monad.Trans.Writer.Strict (WriterT, execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Syntax.Internal                  (Name)
@@ -20,6 +21,7 @@ import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
+import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), prettyConstraintTC)
@@ -42,7 +44,11 @@ data Constraint t
 
 simplify :: Constraint t -> Maybe (Constraint t)
 simplify (Conj [])    = Nothing
-simplify (Conj cs)    = msum $ map simplify cs
+simplify (Conj [c])   = simplify c
+simplify (Conj cs)    = msum $ map simplify $ concatMap flatten cs
+  where
+    flatten (Conj constrs) = concatMap flatten constrs
+    flatten c              = [c]
 simplify (c1 :>>: c2) = case simplify c1 of
                           Nothing  -> simplify c2
                           Just c1' -> Just (c1' :>>: c2)
@@ -58,10 +64,7 @@ instance Monoid (Constraint t) where
 
 constraint :: Common.Constraint t -> Constraint t
 constraint (Common.Unify ctx type_ t1 t2) = Unify ctx type_ t1 t2
-constraint (Common.Conj cs) = Conj $ map constraint $ concatMap flatten cs
-  where
-    flatten (Common.Conj constrs) = concatMap flatten constrs
-    flatten c                     = [c]
+constraint (Common.Conj cs) = Conj $ map constraint cs
 constraint (c1 Common.:>>: c2) = constraint c1 :>>: constraint c2
 
 initSolveState :: SolveState t
@@ -114,15 +117,16 @@ solve' (Unify ctx type_ t1 t2) = do
 solve' (UnifySpine ctx type_ mbH elims1 elims2) = do
   checkEqualSpine' ctx type_ mbH elims1 elims2
 
-prettySolveState :: (IsTerm t) => SolveState t -> TC t s PP.Doc
-prettySolveState (SolveState []) =
-  return "Done!"
-prettySolveState (SolveState cs) = do
-  let cs' = [(mvs, c') | (mvs, c) <- cs, Just c' <- [simplify c]]
-  docs <- forM cs' $ \(mvs, c) -> do
-    cDoc <- prettyConstraintTC c
-    return $ "Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
-  return $ PP.vcat docs
+prettySolveState
+  :: (IsTerm t) => Sig.Signature t -> Bool -> SolveState t -> TermM PP.Doc
+prettySolveState sig detailed (SolveState cs) = execWriterT $ go cs
+  where
+    go cs = do
+      tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
+      when detailed $ forM_ cs $ \(mvs, c) -> do
+        tell $ PP.line <> "------------------------------------------------------------------------"
+        cDoc <- lift $ prettyConstraint sig c
+        tell $ PP.line <> "** Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
 
 -- This is local stuff
 ----------------------
@@ -498,15 +502,15 @@ metaAssign ctx0 type0 mv elims0 t0 = do
                 mvT' <- eliminateTC mvT elims'
                 checkEqual (ctx, type_, mvT', t')
           Right inv -> do
+            debug $ do
+              invDoc <- prettyInvertMetaTC inv
+              return $
+                "** Could invert, now pruning" $$
+                "inversion:" //> invDoc
             t1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t
-            let msg' = do
-                  t1Doc <- prettyTermTC t1
-                  invDoc <- prettyInvertMetaTC inv
-                  return $
-                    "** Could invert" $$
-                    "inversion:" //> invDoc $$
-                    "pruned term:" //> t1Doc
-            debug msg'
+            debug $ do
+              t1Doc <- prettyTermTC t1
+              return $ "** Pruned term:" //> t1Doc
             t2 <- applyInvertMeta inv t1
             case t2 of
               TTOK t' -> do
@@ -629,35 +633,40 @@ compareTerms (ctx, type_, t1, t2) = do
 
 prettyConstraintTC
   :: (IsTerm t) => Constraint t -> TC t s PP.Doc
-prettyConstraintTC c = case c of
-  Unify ctx type_ t1 t2 -> do
-    ctxDoc <- prettyContextTC ctx
-    typeDoc <- prettyTermTC type_
-    t1Doc <- prettyTermTC t1
-    t2Doc <- prettyTermTC t2
-    return $ group $
-      ctxDoc <+> "|-" //
-      group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
-  c1 :>>: c2 -> do
-    c1Doc <- prettyConstraintTC c1
-    c2Doc <- prettyConstraintTC c2
-    return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
-  Conj cs -> do
-    csDoc <- mapM prettyConstraintTC cs
-    return $
-      "Conj" //> PP.list csDoc
-  UnifySpine ctx type_ mbH elims1 elims2 -> do
-    ctxDoc <- prettyContextTC ctx
-    typeDoc <- prettyTermTC type_
-    hDoc <- case mbH of
-      Nothing -> return "no head"
-      Just h  -> prettyTermTC h
-    elims1Doc <- prettyElimsTC elims1
-    elims2Doc <- prettyElimsTC elims2
-    return $
-      "UnifySpine" $$
-      "ctx:" //> ctxDoc $$
-      "type:" //> typeDoc $$
-      "h:" //> hDoc $$
-      "elims1:" //> elims1Doc $$
-      "elims2:" //> elims2Doc
+prettyConstraintTC c = withSignatureTermM $ \sig -> prettyConstraint sig c
+
+prettyConstraint
+  :: (IsTerm t) => Sig.Signature t -> Constraint t -> TermM PP.Doc
+prettyConstraint sig c0 = do
+  case fromMaybe c0 (simplify c0) of
+    Unify ctx type_ t1 t2 -> do
+      ctxDoc <- prettyContext sig ctx
+      typeDoc <- prettyTerm sig type_
+      t1Doc <- prettyTerm sig t1
+      t2Doc <- prettyTerm sig t2
+      return $ group $
+        ctxDoc <+> "|-" //
+        group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
+    c1 :>>: c2 -> do
+      c1Doc <- prettyConstraint sig c1
+      c2Doc <- prettyConstraint sig c2
+      return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+    Conj cs -> do
+      csDoc <- mapM (prettyConstraint sig) cs
+      return $
+        "Conj" //> PP.list csDoc
+    UnifySpine ctx type_ mbH elims1 elims2 -> do
+      ctxDoc <- prettyContext sig ctx
+      typeDoc <- prettyTerm sig type_
+      hDoc <- case mbH of
+        Nothing -> return "no head"
+        Just h  -> prettyTerm sig h
+      elims1Doc <- prettyElims sig elims1
+      elims2Doc <- prettyElims sig elims2
+      return $
+        "UnifySpine" $$
+        "ctx:" //> ctxDoc $$
+        "type:" //> typeDoc $$
+        "h:" //> hDoc $$
+        "elims1:" //> elims1Doc $$
+        "elims2:" //> elims2Doc

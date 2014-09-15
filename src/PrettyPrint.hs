@@ -19,7 +19,11 @@ module PrettyPrint
 import           Data.String                      (IsString(fromString))
 import qualified Text.PrettyPrint.Leijen          as PP
 import           Text.PrettyPrint.Leijen          hiding ((<$>), (<$$>), renderPretty, renderCompact, Pretty(..), list, parens, tupled)
+import           Data.Monoid                      (Monoid(..))
 
+instance Monoid PP.Doc where
+  mempty = PP.empty
+  mappend = (PP.<>)
 render :: Pretty a => a -> String
 render x = defaultShow 0 x ""
 

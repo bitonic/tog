@@ -32,16 +32,30 @@ pruneTerm
     -> Term t
     -> TC t s (Term t)
 pruneTerm vs t = do
+  let msg = do
+        tDoc <- prettyTermTC t
+        return $
+          "*** Pruning term" $$
+          "allowed vars:" <+> PP.pretty (Set.toList vs) $$
+          "term:" //> tDoc
+  debugBracket msg $ pruneTerm' vs t
+
+pruneTerm'
+    :: (IsTerm t)
+    => Set.Set Var                -- ^ allowed vars
+    -> Term t
+    -> TC t s (Term t)
+pruneTerm' vs t = do
   tView <- whnfViewTC t
   case tView of
     Lam body -> do
       name <- getAbsNameTC body
-      lamTC =<< pruneTerm (addVar name) body
+      lamTC =<< pruneTerm' (addVar name) body
     Pi domain codomain -> do
       name <- getAbsNameTC codomain
-      join $ piTC <$> pruneTerm vs domain <*> pruneTerm (addVar name) codomain
+      join $ piTC <$> pruneTerm' vs domain <*> pruneTerm' (addVar name) codomain
     Equal type_ x y -> do
-      join $ equalTC <$> pruneTerm vs type_ <*> pruneTerm vs x <*> pruneTerm vs y
+      join $ equalTC <$> pruneTerm' vs type_ <*> pruneTerm' vs x <*> pruneTerm' vs y
     App (Meta mv) elims -> do
       mbMvT <- prune vs mv elims
       case mbMvT of
@@ -54,9 +68,9 @@ pruneTerm vs t = do
     Refl ->
       return refl
     Con dataCon args ->
-      conTC dataCon =<< mapM (pruneTerm vs) args
+      conTC dataCon =<< mapM (pruneTerm' vs) args
   where
-    pruneElim (Apply t') = Apply <$> pruneTerm vs t'
+    pruneElim (Apply t') = Apply <$> pruneTerm' vs t'
     pruneElim (Proj n f) = return $ Proj n f
 
     addVar name = Set.insert (boundVar name) (Set.mapMonotonic (weakenVar_ 1) vs)
@@ -78,50 +92,66 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
   case mbKills of
     Just kills0 | or kills0 -> do
       let msg = do
+            mvTypeDoc <- prettyTermTC =<< getMetaVarType oldMv
             elimsDoc <- prettyElimsTC elims
             return $
               "*** prune" $$
+              "metavar type:" //> mvTypeDoc $$
               "metavar:" <+> PP.pretty oldMv $$
               "elims:" //> elimsDoc $$
               "to kill:" //> PP.pretty kills0 $$
               "allowed vars:" //> PP.pretty (Set.toList allowedVs)
-      debugBracket msg $ runMaybeT $ do
-        oldMvType <- lift $ getMetaVarType oldMv
-        (newMvTypeTel, newMvType, kills1) <- lift $ createNewMeta oldMvType kills0
-        guard $ any unNamed kills1
-        newMv <- lift $ addMetaVar =<< telPiTC newMvTypeTel newMvType
-        mvT <- lift $ killArgs newMv kills1
-        lift $ instantiateMetaVar oldMv mvT
-        return mvT
+      debugBracket msg $ do
+        oldMvType <- getMetaVarType oldMv
+        (newMvType, kills1) <- createNewMeta oldMvType kills0
+        debug_ $ "** New kills:" <+> PP.pretty (map unNamed kills1)
+        if any unNamed kills1
+          then do
+            debug_ "boohay"
+            newMv <- addMetaVar newMvType
+            mvT <- killArgs newMv kills1
+            instantiateMetaVar oldMv mvT
+            return $ Just mvT
+          else do
+            return Nothing
     _ -> do
       return Nothing
   where
-    -- We build a telescope with only the non-killed types in.  This
-    -- way, we can analyze the dependency between arguments and avoid
-    -- killing things that later arguments depend on.
+    -- We build a pi-type with the non-killed types in.  This way, we
+    -- can analyze the dependency between arguments and avoid killing
+    -- things that later arguments depend on.
     --
-    -- At the end of the telescope we put both the new metavariable and
-    -- the remaining type, so that this dependency check will be
-    -- performed on it as well.
+    -- At the end of the type we put both the new metavariable and the
+    -- remaining type, so that this dependency check will be performed
+    -- on it as well.
     createNewMeta
-      :: Type t -> [Bool] -> TC t s (Tel.Tel (Type t), Type t, [Named Bool])
+      :: Type t -> [Bool] -> TC t s (Type t, [Named Bool])
     createNewMeta type_ [] =
-      return (Tel.Empty, type_, [])
+      return (type_, [])
     createNewMeta type_ (kill : kills) = do
       typeView <- whnfViewTC type_
       case typeView of
         Pi domain codomain -> do
           name <- getAbsNameTC codomain
-          (tel, endType, kills') <- createNewMeta codomain kills
-          let notKilled = (Tel.Cons (name, domain) tel, endType, named name False : kills')
+          (type', kills') <- createNewMeta codomain kills
+          debug $ do
+            domDoc <- prettyTermTC domain
+            typeDoc <- prettyTermTC type'
+            return $
+              "** createNewMeta" $$
+              "kill:" <+> PP.pretty kill $$
+              "type:" //> domDoc $$
+              "strengthening:" //> typeDoc
+          let notKilled = do
+                type'' <- piTC domain type'
+                return (type'', named name False : kills')
           if not kill
-            then return notKilled
+            then notKilled
             else do
-              mbTel <- liftTermM $ Tel.strengthen_ 1 tel
-              mbEndType <- liftTermM $ strengthen_ 1 endType
-              return $ case (mbTel, mbEndType) of
-                (Just tel', Just endType') -> (tel', endType', named name True : kills')
-                _                          -> notKilled
+              mbType <- liftTermM . strengthen_ 1 =<< nfTC type'
+              case mbType of
+                (Just type'') -> return (type'', named name True : kills')
+                _             -> debug_ "** Couldn't strengthen" >> notKilled
         _ ->
           fatalError "impossible.createNewMeta: metavar type too short"
 prune _ _ _ = do

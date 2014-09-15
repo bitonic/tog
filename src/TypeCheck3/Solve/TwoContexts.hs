@@ -44,7 +44,11 @@ data Constraint t
 
 simplify :: Constraint t -> Maybe (Constraint t)
 simplify (Conj [])    = Nothing
-simplify (Conj cs)    = msum $ map simplify cs
+simplify (Conj [c])   = simplify c
+simplify (Conj cs)    = msum $ map simplify $ concatMap flatten cs
+  where
+    flatten (Conj constrs) = concatMap flatten constrs
+    flatten c              = [c]
 simplify (c1 :>>: c2) = case simplify c1 of
                           Nothing  -> simplify c2
                           Just c1' -> Just (c1' :>>: c2)
@@ -61,11 +65,7 @@ instance Monoid (Constraint t) where
 constraint :: Common.Constraint t -> Constraint t
 constraint (Common.Unify ctx type_ t1 t2) =
   Unify ctx type_ t1 ctx type_ t2
-constraint (Common.Conj cs) =
-  Conj $ map constraint $ concatMap flatten cs
-  where
-    flatten (Common.Conj constrs) = concatMap flatten constrs
-    flatten c                     = [c]
+constraint (Common.Conj cs) = Conj $ map constraint cs
 constraint (c1 Common.:>>: c2) =
   constraint c1 :>>: constraint c2
 
@@ -468,7 +468,6 @@ checkEqualSpine' ctx1 type1 mbH1 (elim1 : elims1) ctx2 type2 mbH2 (elim2 : elims
 checkEqualSpine' _ type1 _ elims1 _ type2 _ elims2 = do
   checkError $ SpineNotEqual type1 elims1 type2 elims2
 
-
 metaAssign
   :: (IsTerm t)
   => Ctx t -> Type t -> MetaVar -> [Elim (Term t)]
@@ -554,15 +553,15 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
                 mvT' <- eliminateTC mvT elims1'
                 done =<< checkEqual (ctx1, type1, mvT', ctx2, type2_0, t2')
           Right inv -> do
+            debug $ do
+              invDoc <- prettyInvertMetaTC inv
+              return $
+                "** Could invert, now pruning" $$
+                "inversion:" //> invDoc
             t2_1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t2
-            let msg' = do
-                  tDoc <- prettyTermTC t2_1
-                  invDoc <- prettyInvertMetaTC inv
-                  return $
-                    "** Could invert" $$
-                    "inversion:" //> invDoc $$
-                    "pruned term:" //> tDoc
-            debug msg'
+            debug $ do
+              t1Doc <- prettyTermTC t2_1
+              return $ "** Pruned term:" //> t1Doc
             t2_2 <- applyInvertMeta inv t2_1
             case t2_2 of
               TTOK t2' -> do
@@ -735,41 +734,42 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
 
 prettyConstraintTC
   :: (IsTerm t) => Constraint t -> TC t s PP.Doc
-prettyConstraintTC c = case c of
-  Unify ctx1 type1 t1 ctx2 type2 t2 -> do
-    ctx1Doc <- prettyContextTC ctx1
-    type1Doc <- prettyTermTC type1
-    t1Doc <- prettyTermTC t1
-    ctx2Doc <- prettyContextTC ctx2
-    type2Doc <- prettyTermTC type2
-    t2Doc <- prettyTermTC t2
-    return $ group $
-      group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
-      hang 2 "=" //
-      group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
-  c1 :>>: c2 -> do
-    c1Doc <- prettyConstraintTC c1
-    c2Doc <- prettyConstraintTC c2
-    return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
-  Conj cs -> do
-    csDoc <- mapM prettyConstraintTC cs
-    return $
-      "Conj" //> PP.list csDoc
-  UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
-    return "TODO UnifySpine"
-    -- ctxDoc <- prettyContextTC ctx
-    -- typeDoc <- prettyTermTC type_
-    -- hDoc <- case mbH of
-    --   Nothing -> return "no head"
-    --   Just h  -> prettyTermTC h
-    -- elims1Doc <- prettyElimsTC elims1
-    -- elims2Doc <- prettyElimsTC elims2
-    -- return $
-    --   "UnifySpine" $$
-    --   "ctx:" //> ctxDoc $$
-    --   "type:" //> typeDoc $$
-    --   "h:" //> hDoc $$
-    --   "elims1:" //> elims1Doc $$
-    --   "elims2:" //> elims2Doc
-  Check ctx type_ term -> do
-    return "TODO Check"
+prettyConstraintTC c0 = do
+  case fromMaybe c0 (simplify c0) of
+    Unify ctx1 type1 t1 ctx2 type2 t2 -> do
+      ctx1Doc <- prettyContextTC ctx1
+      type1Doc <- prettyTermTC type1
+      t1Doc <- prettyTermTC t1
+      ctx2Doc <- prettyContextTC ctx2
+      type2Doc <- prettyTermTC type2
+      t2Doc <- prettyTermTC t2
+      return $ group $
+        group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
+        hang 2 "=" //
+        group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
+    c1 :>>: c2 -> do
+      c1Doc <- prettyConstraintTC c1
+      c2Doc <- prettyConstraintTC c2
+      return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+    Conj cs -> do
+      csDoc <- mapM prettyConstraintTC cs
+      return $
+        "Conj" //> PP.list csDoc
+    UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
+      return "TODO UnifySpine"
+      -- ctxDoc <- prettyContextTC ctx
+      -- typeDoc <- prettyTermTC type_
+      -- hDoc <- case mbH of
+      --   Nothing -> return "no head"
+      --   Just h  -> prettyTermTC h
+      -- elims1Doc <- prettyElimsTC elims1
+      -- elims2Doc <- prettyElimsTC elims2
+      -- return $
+      --   "UnifySpine" $$
+      --   "ctx:" //> ctxDoc $$
+      --   "type:" //> typeDoc $$
+      --   "h:" //> hDoc $$
+      --   "elims1:" //> elims1Doc $$
+      --   "elims2:" //> elims2Doc
+    Check ctx type_ term -> do
+      return "TODO Check"

@@ -25,11 +25,9 @@ import           PrettyPrint                      (($$), (//>), render)
 import qualified PrettyPrint                      as PP
 
 data ElaborateState = ElaborateState
-  { _esAddedMetas :: ![MetaVar]
-  }
 
 initElaborateState :: ElaborateState
-initElaborateState = ElaborateState []
+initElaborateState = ElaborateState
 
 L.makeLenses ''ElaborateState
 
@@ -38,9 +36,7 @@ type ElabM t = TC t ElaborateState
 elaborate
   :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> ElabM t (Term t, Constraint t)
 elaborate ctx type_ synT = do
-  esAddedMetas .= []
   (t, c) <- elaborate' ctx type_ synT
-  garbageCollect c
   return (t, c)
 
 elaborate'
@@ -211,27 +207,4 @@ elaborateApp ctx type_ h (A.Proj proj : elims) = do
 fresh :: (IsTerm t) => Ctx t -> Type t -> ElabM t (Term t)
 fresh ctx type_ = do
   mv <- addMetaVar =<< ctxPiTC ctx type_
-  esAddedMetas %= (mv :)
   ctxAppTC (metaVar mv []) ctx
-
-garbageCollect :: (IsTerm t) => Constraint t -> ElabM t ()
-garbageCollect c = do
-  mvs1 <- uses esAddedMetas HS.fromList
-  mvs2 <- constraintMetas c
-  mapM_ unsafeRemoveMetaVar $ mvs1 `HS.difference` mvs2
-
-constraintMetas :: (IsTerm t) => Constraint t -> TC t s (HS.HashSet MetaVar)
-constraintMetas (Conj cs) = do
-  mconcat <$> mapM constraintMetas cs
-constraintMetas (c1 :>>: c2) = do
-  (<>) <$> constraintMetas c1 <*> constraintMetas c2
-constraintMetas (Unify ctx type_ t1 t2) = do
-  ctxMvs <- ctxMetas ctx
-  typeMvs <- metaVarsTC type_
-  t1Mvs <- metaVarsTC t1
-  t2Mvs <- metaVarsTC t2
-  return $ mconcat [ctxMvs, typeMvs, t1Mvs, t2Mvs]
-
-ctxMetas :: (IsTerm t) => Ctx t -> TC t s (HS.HashSet MetaVar)
-ctxMetas Ctx.Empty                 = return mempty
-ctxMetas (Ctx.Snoc ctx (_, type_)) = (<>) <$> ctxMetas ctx <*> metaVarsTC type_

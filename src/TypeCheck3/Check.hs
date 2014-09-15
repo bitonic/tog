@@ -1,6 +1,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Check (CheckState, initCheckState, checkDecl) where
+module TypeCheck3.Check
+  ( CheckState(..)
+  , csSolveState
+  , csElaborateState
+  , initCheckState
+  , checkDecl
+  ) where
 
 import           Prelude                          hiding (abs, pi)
 

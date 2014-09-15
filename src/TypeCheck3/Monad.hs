@@ -158,16 +158,16 @@ instance Exception TCErr
 ------------------------------------------------------------------------
 
 -- | A type useful to inspect what's going on.
-data TCReport t p = TCReport
+data TCReport t s = TCReport
   { trSignature        :: !(Sig.Signature t)
+  , trState            :: !s
   }
 
-tcReport :: (IsTerm t) => TCState t s -> TCReport t p
+tcReport :: (IsTerm t) => TCState t s -> TCReport t s
 tcReport ts = TCReport
-  { trSignature        = sig
+  { trSignature        = tsSignature ts
+  , trState            = tsState ts
   }
-  where
-    sig = tsSignature ts
 
 -- Errors
 ------------------------------------------------------------------------

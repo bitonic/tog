@@ -9,6 +9,7 @@ module TypeCheck3
 
 import           Prelude                          hiding (abs, pi)
 
+import           Control.Lens                     ((^.))
 import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Data.Proxy                       (Proxy(Proxy))
 import qualified Data.HashMap.Strict              as HMS
@@ -23,6 +24,7 @@ import           PrettyPrint                      ((<+>), render, (//>))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 import           TypeCheck3.Check
+import           TypeCheck3.Solve
 
 -- Type checking
 ------------------------------------------------------------------------
@@ -116,30 +118,11 @@ checkProgram' _ decls0 ret = do
                   Just mvBody0 -> prettyTerm sig mvBody0
                 putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
               putStrLn ""
-    --   when (not (tccNoProblemsSummary conf) || tccProblemsReport conf) $ do
-    --     drawLine
-    --     putStrLn $ "-- Solved problems: " ++ show (HS.size (trSolvedProblems tr))
-    --     putStrLn $ "-- Unsolved problems: " ++ show (Map.size (trUnsolvedProblems tr))
-    --     when (tccProblemsReport conf) $ do
-    --       drawLine
-    --       -- We want to display problems bound to metavars first (the
-    --       -- "roots").
-    --       let compareStates ps1 ps2 = case (ps1, ps2) of
-    --             (WaitingOn (WOAnyMeta _), WaitingOn (WOAnyMeta _)) -> EQ
-    --             (WaitingOn (WOAnyMeta _), _)                       -> LT
-    --             (_, WaitingOn (WOAnyMeta _))                       -> GT
-    --             (_, _)                                             -> EQ
-    --       let problems =
-    --             sortBy (compareStates `on` problemState . snd) $ Map.toList $ trUnsolvedProblems tr
-    --       forM_ problems $ \(pid, (Problem mbProb probState _ _)) -> do
-    --         probDoc <- case mbProb of
-    --           Nothing   -> return "Waiting to return."
-    --           Just prob -> prettyTypeCheckProblem sig prob
-    --         putStrLn $ render $
-    --           PP.pretty pid $$
-    --           PP.indent 2 (PP.pretty probState) $$
-    --           PP.indent 2 probDoc
-    --         putStrLn ""
+      noProblemsSummary <- confNoProblemsSummary <$> readConf
+      problemsReport <- confProblemsReport <$> readConf
+      when (not noProblemsSummary || problemsReport) $  do
+        drawLine
+        putStrLn . render =<< prettySolveState sig problemsReport (trState tr ^. csSolveState)
       drawLine
 
     drawLine =
