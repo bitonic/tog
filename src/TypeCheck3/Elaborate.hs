@@ -4,6 +4,7 @@ module TypeCheck3.Elaborate
   ( elaborate
   , ElaborateState
   , initElaborateState
+  , ElabM
   ) where
 
 import           Prelude                          hiding (mapM_)
@@ -30,15 +31,14 @@ L.makeLenses ''ElaborateState
 
 type ElabM t = TC t ElaborateState
 
+-- | Pre: In @elaborate Γ τ t@, @Γ ⊢ τ : U@.
+--
+--   Post: If @(t′, constrs) <- elaborate Γ τ t@, @Γ t′ : τ@, and if
+--   @constr@ is solved, then @t@ is well typed and @t@ and @t′@ are
+--   equivalent (clarify equivalent).
 elaborate
   :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> ElabM t (Term t, Constraint t)
-elaborate ctx type_ synT = do
-  (t, c) <- elaborate' ctx type_ synT
-  return (t, c)
-
-elaborate'
-  :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> ElabM t (Term t, Constraint t)
-elaborate' ctx type_ absT = atSrcLoc absT $ do
+elaborate ctx type_ absT = atSrcLoc absT $ do
   let msg = do
         typeDoc <- prettyTermTC type_
         let absTDoc = PP.pretty absT
@@ -53,25 +53,25 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
       A.Set _ -> do
         return (mvT, waitForUnifiedType' set set)
       A.Pi name synDom synCod -> do
-        (dom, constrDom) <- elaborate' ctx set synDom
-        (cod, constrCod) <- elaborate' (Ctx.Snoc ctx (name, dom)) set synCod
+        (dom, constrDom) <- elaborate ctx set synDom
+        (cod, constrCod) <- elaborate (Ctx.Snoc ctx (name, dom)) set synCod
         t <- piTC dom cod
         return (mvT, Conj [waitForUnifiedType' set t, constrDom, constrCod])
       A.Fun synDom synCod -> do
-        elaborate' ctx type_ (A.Pi "_" synDom synCod)
+        elaborate ctx type_ (A.Pi "_" synDom synCod)
       A.Meta _ ->
         return (mvT, Conj [])
       A.Equal synType synT1 synT2 -> do
-        (type', constrType) <- elaborate' ctx set synType
-        (t1, constrT1) <- elaborate' ctx type' synT1
-        (t2, constrT2) <- elaborate' ctx type' synT2
+        (type', constrType) <- elaborate ctx set synType
+        (t1, constrT1) <- elaborate ctx type' synT1
+        (t2, constrT2) <- elaborate ctx type' synT2
         t <- equalTC type' t1 t2
         return (mvT, Conj [waitForUnifiedType' set t, constrType, constrT1, constrT2])
       A.Lam name synBody -> do
         dom <- fresh ctx set
         let ctx' = Ctx.Snoc ctx (name, dom)
         cod <- fresh ctx' set
-        (body, constrBody) <- elaborate' ctx' cod synBody
+        (body, constrBody) <- elaborate ctx' cod synBody
         type' <- piTC dom cod
         t <- lamTC body
         return (mvT, Conj [waitForUnifiedType' type' t, constrBody])
@@ -92,7 +92,9 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
       A.App h elims -> do
         elaborateApp' ctx type_ h (reverse elims)
 
-fillArgsWithMetas :: IsTerm t => Ctx t -> Term t -> ElabM t [Term t]
+-- | Takes a telescope in the form of a Pi-type and replaces all it's
+-- elements with metavariables.
+fillArgsWithMetas :: IsTerm t => Ctx t -> Type t -> ElabM t [Term t]
 fillArgsWithMetas ctx' type' = do
   typeView <- whnfViewTC type'
   case typeView of
@@ -105,6 +107,10 @@ fillArgsWithMetas ctx' type' = do
     _ -> do
       fatalError "impossible.fillArgsWithMetas: bad type for tycon"
 
+-- | Pre: In @waitForUnifiedType Γ τ σ t u@, we have
+--   @Γ ⊢ τ : U@, @Γ ⊢ σ : U@, @Γ ⊢ t : τ@, @Γ ⊢ u : τ@.
+--
+--   Waits for τ and σ to be unified, then unifies t and u.
 waitForUnifiedType
   :: IsTerm (Term t)
   => Ctx t
@@ -126,7 +132,7 @@ elaborateDataConArgs _ _ [] =
   return ([], [])
 elaborateDataConArgs ctx type_ (synArg : synArgs) = do
   Pi dom cod <- whnfViewTC type_
-  (arg, constrArg) <- elaborate' ctx dom synArg
+  (arg, constrArg) <- elaborate ctx dom synArg
   cod' <- instantiateTC cod arg
   (args, constrArgs) <- elaborateDataConArgs ctx cod' synArgs
   return (arg : args, constrArg : constrArgs)
@@ -179,7 +185,7 @@ elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
   cod <- fresh (Ctx.Snoc ctx ("_", dom)) set
   typeF <- piTC dom cod
   (f, constrF) <- elaborateApp' ctx typeF h elims
-  (arg', constrArg) <- elaborate' ctx dom arg
+  (arg', constrArg) <- elaborate ctx dom arg
   type' <- instantiateTC cod arg'
   t <- eliminateTC f [Apply arg']
   mvT <- fresh ctx type_
@@ -197,7 +203,7 @@ elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   mvT <- fresh ctx type_
   return (mvT, Conj [waitForUnifiedType ctx type_ type' mvT t, constrRec])
 
--- Garbage collection
+-- Utils
 ------------------------------------------------------------------------
 
 fresh :: (IsTerm t) => Ctx t -> Type t -> ElabM t (Term t)

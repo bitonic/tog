@@ -16,7 +16,7 @@ import qualified Prelude
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
-import qualified Term.Class                       as Term
+import qualified Term.Types                       as Term
 import           Term.Synonyms
 import           Term.TermM
 

@@ -10,7 +10,7 @@ import           Data.Monoid                      (Monoid, mappend, mempty, (<>)
 import qualified Data.Set                         as Set
 
 import qualified Term.Signature                   as Sig
-import           Term.Class
+import           Term.Types
 import           Term.TermM
 
 -- Free variables

@@ -23,7 +23,7 @@ import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import qualified Term.Context                     as Ctx
 import           Term.TermM
-import qualified Term.Class                       as Term
+import qualified Term.Types                       as Term
 import           Term.Synonyms
 
 -- Tel

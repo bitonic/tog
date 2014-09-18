@@ -1,6 +1,71 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Term.Class where
+module Term.Types
+  ( -- * Var
+    Var(..)
+  , varIndex
+  , varName
+  , boundVar
+  , weakenVar
+  , weakenVar_
+  , strengthenVar
+  , strengthenVar_
+    -- * Named
+  , named
+  , Named(..)
+    -- * MetaVars
+  , MetaVar(..)
+    -- * Terms
+  , TermView(..)
+  , Head(..)
+  , Elim(..)
+  , Field(..)
+  , mapElim
+  , mapElimM
+  , foldElim
+  , elimEq
+  , elimsEq
+    -- ** Metavars
+  , metaVars
+    -- * Term typeclass
+  , IsTerm(..)
+  , weaken_
+  , strengthen_
+  , subst
+  , getAbsName_
+  , eliminate
+    -- ** Blocked
+  , Blocked(..)
+  , BlockedHead(..)
+  , ignoreBlocking
+  , blockedEq
+    -- ** Utilities
+  , var
+  , lam
+  , pi
+  , equal
+  , app
+  , metaVar
+  , def
+  , con
+    -- * TermTraverse
+  , TermTraverse(..)
+    -- * Definition
+  , Definition(..)
+  , ConstantKind(..)
+  , ClauseBody
+  , Clause(..)
+  , Pattern(..)
+  , patternBindings
+  , patternsBindings
+  , instantiateClauseBody
+  , Invertible(..)
+  , TermHead(..)
+  , ignoreInvertible
+  , definitionToNameInfo
+  ) where
+
+import           Prelude                          hiding (pi)
 
 import qualified Data.HashSet                     as HS
 
@@ -30,9 +95,6 @@ instance PP.Pretty Var where
 
 instance Show Var where
   show = PP.render
-
-elimZeroVar :: Var -> a
-elimZeroVar = error "elimZeroVar"
 
 boundVar :: Name -> Var
 boundVar n = V $ named n 0

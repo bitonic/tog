@@ -3,7 +3,7 @@ module Term.Utils where
 import           Prelude                          hiding (pi)
 
 import           Prelude.Extended
-import           Term.Class
+import           Term.Types
 import           Term.TermM
 import qualified Term.Signature                   as Sig
 

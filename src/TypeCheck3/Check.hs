@@ -1,273 +1,287 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Check
-  ( CheckState(..)
-  , csSolveState
-  , csElaborateState
-  , initCheckState
-  , checkDecl
-  , checkExpr
-  , inferExpr
-  ) where
-
-import           Prelude                          hiding (abs, pi)
-
-import qualified Control.Lens                     as L
+module TypeCheck3.Check (check, checkEqual) where
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
-import qualified Syntax.Internal                  as A
 import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           PrettyPrint                      (($$), (//>), render)
-import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
-import           TypeCheck3.Core
 import           TypeCheck3.Common
-import           TypeCheck3.Elaborate
-import           TypeCheck3.Solve
 
--- Decls
-------------------------------------------------------------------------
-
-data CheckState t = CheckState
-  { _csSolveState     :: !(SolveState t)
-  , _csElaborateState :: !ElaborateState
-  }
-
-L.makeLenses ''CheckState
-
-initCheckState :: CheckState t
-initCheckState = CheckState initSolveState initElaborateState
-
-type CheckM t = TC t (CheckState t)
-
-checkDecl :: (IsTerm t) => A.Decl -> CheckM t ()
-checkDecl decl = do
-  debugBracket_ ("*** checkDecl" $$ PP.pretty decl) $ atSrcLoc decl $ do
-    case decl of
-      A.TypeSig sig      -> checkTypeSig sig
-      A.DataDef d xs cs  -> checkData d xs cs
-      A.RecDef d xs c fs -> checkRec d xs c fs
-      A.FunDef f clauses -> checkFunDef f clauses
-
-inferExpr
+check
   :: (IsTerm t)
-  => Ctx t -> A.Expr -> CheckM t (Term t, Type t)
-inferExpr ctx synT = do
-  type_ <- addMetaVarInCtx ctx set
-  t <- checkExpr ctx synT type_
-  return (t, type_)
-
-checkExpr
-  :: (IsTerm t)
-  => Ctx t -> A.Expr -> Type t -> CheckM t (Term t)
-checkExpr ctx synT type_ = do
-  debugBracket_ "*** checkExpr" $ do
-    (t, constr) <- mapTC csElaborateState $ elaborate ctx type_ synT
-    debug $ do
-      constrDoc <- prettyConstraintTC constr
-      return $ "** Constraint:" //> constrDoc
-    mapTC csSolveState $ solve constr
-    check ctx t type_
-    return t
-
-checkTypeSig :: (IsTerm t) => A.TypeSig -> CheckM t ()
-checkTypeSig (A.Sig name absType) = do
-    type_ <- checkExpr Ctx.Empty absType set
-    addConstant name Postulate type_
-
-checkData
-    :: (IsTerm t)
-    => Name
-    -- ^ Name of the tycon.
-    -> [Name]
-    -- ^ Names of parameters to the tycon.
-    -> [A.TypeSig]
-    -- ^ Types for the data constructors.
-    -> CheckM t ()
-checkData tyCon tyConPars dataCons = do
-    tyConType <- definitionType =<< getDefinition tyCon
-    addConstant tyCon (Data []) tyConType
-    (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
-    checkEqual (tyConPars', set, endType, set)
-    appliedTyConType <- ctxAppTC (def tyCon []) tyConPars'
-    mapM_ (checkConstr tyCon tyConPars' appliedTyConType) dataCons
-
-checkConstr
-    :: (IsTerm t)
-    => Name
-    -- ^ Name of the tycon.
-    -> Ctx (Type t)
-    -- ^ Ctx with the parameters of the tycon.
-    -> Type t
-    -- ^ Tycon applied to the parameters.
-    -> A.TypeSig
-    -- ^ Data constructor.
-    -> CheckM t ()
-checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
-  atSrcLoc dataCon $ do
-    dataConType <- checkExpr tyConPars synDataConType set
-    (vs, endType) <- unrollPi dataConType
-    appliedTyConType' <- liftTermM $ Ctx.weaken_ vs appliedTyConType
-    let ctx = tyConPars Ctx.++ vs
-    checkEqual (ctx, set, appliedTyConType', endType)
-    addDataCon dataCon tyCon (Ctx.length vs) (Tel.tel tyConPars) dataConType
-
-checkRec
-    :: (IsTerm t)
-    => Name
-    -- ^ Name of the tycon.
-    -> [Name]
-    -- ^ Name of the parameters to the tycon.
-    -> Name
-    -- ^ Name of the data constructor.
-    -> [A.TypeSig]
-    -- ^ Fields of the record.
-    -> CheckM t ()
-checkRec tyCon tyConPars dataCon fields = do
-    tyConType <- definitionType =<< getDefinition tyCon
-    addConstant tyCon (Record dataCon []) tyConType
-    (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
-    checkEqual (tyConPars', set, endType, set)
-    fieldsTel <- checkFields tyConPars' fields
-    appliedTyConType <- ctxAppTC (def tyCon []) tyConPars'
-    fieldsTel' <- liftTermM $ Tel.weaken_ 1 fieldsTel
-    addProjections
-      tyCon tyConPars' (boundVar "_") (map A.typeSigName fields)
-      fieldsTel'
-    let fieldsCtx = Tel.unTel fieldsTel
-    appliedTyConType' <- liftTermM $ Ctx.weaken_ fieldsCtx appliedTyConType
-    addDataCon dataCon tyCon (length fields) (Tel.tel tyConPars') =<< ctxPiTC fieldsCtx appliedTyConType'
-
-checkFields
-    :: forall t. (IsTerm t)
-    => Ctx t -> [A.TypeSig] -> CheckM t (Tel.Tel (Type t))
-checkFields ctx0 = go Ctx.Empty
-  where
-    go :: Ctx.Ctx (Type t) -> [A.TypeSig] -> CheckM t (Tel.Tel (Type t))
-    go ctx [] =
-        return $ Tel.tel ctx
-    go ctx (A.Sig field synFieldType : fields) = do
-        fieldType <- checkExpr (ctx0 Ctx.++ ctx) synFieldType set
-        ctx' <- extendContext ctx (field, fieldType)
-        go ctx' fields
-
-addProjections
-    :: (IsTerm t)
-    => Name
-    -- ^ Type constructor.
-    -> Ctx (Type t)
-    -- ^ A context with the parameters to the type constructor.
-    -> Var
-    -- ^ Variable referring to the value of type record type itself,
-    -- which is the last argument of each projection ("self").  Note
-    -- that this variable will have all the context above in scope.
-    -> [Name]
-    -- ^ Names of the remaining fields.
-    -> Tel.Tel (Type t)
-    -- ^ Telescope holding the types of the next fields, scoped
-    -- over the types of the previous fields and the self variable.
-    -> CheckM t ()
-addProjections tyCon tyConPars self fields0 =
-    go $ zip fields0 $ map Field [0,1..]
-  where
-    go fields fieldTypes = case (fields, fieldTypes) of
-      ([], Tel.Empty) ->
-        return ()
-      ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
-        endType <- (`piTC` fieldType) =<< ctxAppTC (def tyCon []) tyConPars
-        addProjection field ix tyCon (Tel.tel tyConPars) endType
-        (go fields' <=< liftTermM . Tel.instantiate fieldTypes') =<< appTC (Var self) [Proj field ix]
-      (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
-
-checkFunDef :: (IsTerm t) => Name -> [A.Clause] -> CheckM t ()
-checkFunDef fun synClauses = do
-    funType <- definitionType =<< getDefinition fun
-    clauses <- mapM (checkClause fun funType) synClauses
-    inv <- checkInvertibility clauses
-    addClauses fun inv
-
-checkClause
-  :: (IsTerm t)
-  => Name -> Closed (Type t)
-  -> A.Clause
-  -> CheckM t (Closed (Clause t))
-checkClause fun funType (A.Clause synPats synClauseBody) = do
-  (ctx, pats, _, clauseType) <- checkPatterns fun synPats funType
+  => Ctx t -> Term t -> Type t -> TC t s ()
+check ctx t type_ = do
   let msg = do
-        ctxDoc <- prettyContextTC ctx
-        return $ "*** checkClause" $$
-                 "context:" //> ctxDoc
+        tDoc <- prettyTermTC t
+        typeDoc <- prettyTermTC type_
+        return $
+          "*** Core.check" $$
+          "t:" //> tDoc $$
+          "type:" //> typeDoc
   debugBracket msg $ do
-    clauseBody <- checkExpr ctx synClauseBody clauseType
-    -- This is an optimization: we want to remove as many MetaVars
-    -- as possible so that we'll avoid recomputing things.
-    -- TODO generalize this to everything which adds a term.
-    clauseBody' <- withSignatureTermM $ \sig -> instantiateMetaVars sig clauseBody
-    return $ Clause pats clauseBody'
+    tView <- whnfViewTC t
+    case tView of
+      Con dataCon args -> do
+        DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
+        tyConArgs <- matchTyCon tyCon type_
+        appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
+        checkConArgs ctx args appliedDataConType
+      Refl -> do
+        typeView <- whnfViewTC type_
+        case typeView of
+          Equal type' t1 t2 -> do
+            checkEqual (ctx, type', t1, t2)
+          _ -> do
+            checkError $ ExpectingEqual type_
+      Lam body -> do
+        (dom, cod) <- matchPi type_
+        name <- getAbsNameTC body
+        ctx' <- extendContext ctx (name, dom)
+        check ctx' body cod
+      _ -> do
+        type' <- infer ctx t
+        checkEqual (ctx, set, type', type_)
 
-checkPatterns
+checkConArgs
+  :: (IsTerm t)
+  => Ctx t -> [Term t] -> Type t -> TC t s ()
+checkConArgs _ [] _ = do
+  return ()
+checkConArgs ctx (arg : args) type_ = do
+  (dom, cod) <- matchPi type_
+  check ctx arg dom
+  cod' <- liftTermM $ instantiate cod arg
+  checkConArgs ctx args cod'
+
+checkSpine
+  :: (IsTerm t)
+  => Ctx t -> Term t -> [Elim t] -> Type t -> TC t s (Type t)
+checkSpine _ _ [] type_ =
+  return (type_)
+checkSpine ctx h (el : els) type_ = case el of
+  Proj proj _ -> do
+    (h', type') <- applyProjection proj h type_
+    checkSpine ctx h' els type'
+  Apply arg -> do
+    (dom, cod) <- matchPi type_
+    check ctx arg dom
+    cod' <- instantiateTC cod arg
+    h' <- eliminateTC h [Apply arg]
+    checkSpine ctx h' els cod'
+
+applyProjection
   :: (IsTerm t)
   => Name
-  -> [A.Pattern]
+  -- ^ Name of the projection
+  -> Term t
+  -- ^ Head
   -> Type t
-  -- ^ Type of the clause that has the given 'A.Pattern's in front.
-  -> CheckM t (Ctx (Type t), [Pattern], [Term t], Type t)
-  -- ^ A context into the internal variables, list of internal patterns,
-  -- a list of terms produced by their bindings, and the type of the
-  -- clause body (scoped over the pattern variables).
-checkPatterns _ [] type_ =
-    return (Ctx.Empty, [], [], type_)
-checkPatterns funName (synPat : synPats) type0 = atSrcLoc synPat $ do
-  -- TODO this can be a soft match, like `matchPi'.  I just need to
-  -- carry the context around.
-  typeView <- whnfViewTC type0
+  -- ^ Type of the head
+  -> TC t s (Term t, Type t)
+applyProjection proj h type_ = do
+  Projection projIx tyCon projTypeTel projType <- getDefinition proj
+  h' <- eliminateTC h [Proj proj projIx]
+  tyConArgs <- matchTyCon tyCon type_
+  appliedProjType <- liftTermM $ Tel.substs projTypeTel projType tyConArgs
+  appliedProjTypeView <- whnfViewTC appliedProjType
+  case appliedProjTypeView of
+    Pi _ endType -> do
+      endType' <- instantiateTC endType h
+      return (h', endType')
+    _ -> do
+      doc <- prettyTermTC appliedProjType
+      fatalError $ "impossible.applyProjection: " ++ render doc
+
+matchTyCon
+  :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
+matchTyCon tyCon type_ = do
+  typeView <- whnfViewTC type_
+  case typeView of
+    App (Def tyCon') elims | tyCon' == tyCon -> do
+      let Just tyConArgs = mapM isApply elims
+      return tyConArgs
+    _ -> do
+      checkError $ ExpectingTyCon tyCon type_
+
+matchPi
+  :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
+matchPi type_ = do
+  typeView <- whnfViewTC type_
   case typeView of
     Pi dom cod -> do
-      (ctx, pat, patVar) <- checkPattern funName synPat dom
-      cod'  <- liftTermM $ Ctx.weaken 1 ctx cod
-      cod'' <- instantiateTC cod' patVar
-      (ctx', pats, patsVars, bodyType) <- checkPatterns funName synPats cod''
-      patVar' <- liftTermM $ Ctx.weaken_ ctx' patVar
-      return (ctx Ctx.++ ctx', pat : pats, patVar' : patsVars, bodyType)
+      return (dom, cod)
     _ -> do
-      checkError $ ExpectingPi type0
+      checkError $ ExpectingPi type_
 
-checkPattern
-    :: (IsTerm t)
-    => Name
-    -> A.Pattern
-    -> Type t
-    -- ^ Type of the matched thing.
-    -> CheckM t (Ctx (Type t), Pattern, Term t)
-    -- ^ The context, the internal 'Pattern', and a 'Term' containing
-    -- the term produced by it.
-checkPattern funName synPat type_ = case synPat of
-    A.VarP name -> do
-      v <- varTC $ boundVar name
-      return (Ctx.singleton name type_, VarP, v)
-    A.WildP _ -> do
-      v <- varTC $ boundVar "_"
-      return (Ctx.singleton "_" type_, VarP, v)
-    A.ConP dataCon synPats -> do
-      DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
-      typeConDef <- getDefinition tyCon
-      case typeConDef of
-        Constant (Data _)     _ -> return ()
-        Constant (Record _ _) _ -> checkError $ PatternMatchOnRecord synPat tyCon
-        _                       -> do doc <- prettyDefinitionTC typeConDef
-                                      fatalError $ "impossible.checkPattern " ++ render doc
+infer
+  :: (IsTerm t)
+  => Ctx t -> Term t -> TC t s (Type t)
+infer ctx t = do
+  let msg = do
+        tDoc <- prettyTermTC t
+        return $
+          "** infer:" //> tDoc
+  debugBracket msg $ do
+    tView <- whnfViewTC t
+    case tView of
+      Set ->
+        return set
+      Pi dom cod -> do
+        check ctx dom set
+        name <- getAbsNameTC cod
+        ctx' <- extendContext ctx (name, dom)
+        check ctx' cod set
+        return set
+      App h elims -> do
+        type_ <- inferHead ctx h
+        h' <- appTC h []
+        checkSpine ctx h' elims type_
+      Equal type_ t1 t2 -> do
+        check ctx type_ set
+        check ctx t1 type_
+        check ctx t2 type_
+        return set
+      _ -> do
+        fatalError "impossible.infer: non-inferrable type."
+
+inferHead
+  :: (IsTerm t)
+  => Ctx t -> Head -> TC t s (Type t)
+inferHead ctx h = case h of
+  Var v    -> liftTermM $ Ctx.getVar v ctx
+  Def name -> definitionType =<< getDefinition name
+  J        -> return typeOfJ
+  Meta mv  -> getMetaVarType mv
+
+type CheckEqual t = (Ctx t, Type t, Term t, Term t)
+
+checkEqual
+  :: (IsTerm t)
+  => CheckEqual t -> TC t s ()
+checkEqual x@(_, type_, t1, t2) = do
+  let msg = do
+        typeDoc <- prettyTermTC type_
+        t1Doc <- prettyTermTC t1
+        t2Doc <- prettyTermTC t2
+        return $
+          "*** Core.checkEqual" $$
+          "type:" //> typeDoc $$
+          "t1:" //> t1Doc $$
+          "t2:" //> t2Doc
+  debugBracket msg $ runCheckEqual [checkSynEq, etaExpand] compareTerms x
+  where
+    runCheckEqual [] finally x' = do
+      finally x'
+    runCheckEqual (action : actions) finally x' = do
+      mbX <- action x'
+      forM_ mbX $ runCheckEqual actions finally
+
+checkSynEq :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
+checkSynEq (ctx, type_, t1, t2) = do
+  -- Optimization: try with a simple syntactic check first.
+  t1' <- ignoreBlockingTC =<< whnfTC t1
+  t2' <- ignoreBlockingTC =<< whnfTC t2
+  -- TODO add option to skip this check
+  eq <- termEqTC t1' t2'
+  return $ if eq
+    then Nothing
+    else Just (ctx, type_, t1', t2')
+
+etaExpand :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
+etaExpand (ctx, type_, t1, t2) = do
+  f <- expand
+  t1' <- f t1
+  t2' <- f t2
+  return $ Just (ctx, type_, t1', t2')
+  where
+    expand = do
       typeView <- whnfViewTC type_
-      -- TODO this can be a soft match, like `matchTyCon'
       case typeView of
-        App (Def tyCon') tyConArgs0 | tyCon == tyCon' -> do
-          let Just tyConArgs = mapM isApply tyConArgs0
-          dataConTypeNoPars <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
-          (ctx, pats, patsVars, _) <- checkPatterns funName synPats dataConTypeNoPars
-          t <- conTC dataCon patsVars
-          return (ctx, ConP dataCon pats, t)
-        _ -> do
-          checkError $ ExpectingTyCon tyCon type_
+        App (Def tyCon) _ -> do
+          tyConDef <- getDefinition tyCon
+          case tyConDef of
+            Constant (Record dataCon projs) _ -> return $ \t -> do
+              tView <- whnfViewTC t
+              case tView of
+                Con _ _ -> return t
+                _       -> do
+                  ts <- mapM (\(n, ix) -> eliminateTC t [Proj n ix]) projs
+                  conTC dataCon ts
+            _ ->
+              return return
+        Pi _ codomain -> return $ \t -> do
+          name <- getAbsNameTC codomain
+          v <- varTC $ boundVar name
+          tView <- whnfViewTC t
+          case tView of
+            Lam _ -> return t
+            _     -> do t' <- liftTermM $ weaken_ 1 t
+                        t'' <- lamTC =<< eliminateTC t' [Apply v]
+                        return t''
+        _ ->
+          return return
+
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t s ()
+compareTerms (ctx, type_, t1, t2) = do
+  typeView <- whnfViewTC type_
+  t1View <- whnfViewTC t1
+  t2View <- whnfViewTC t2
+  case (typeView, t1View, t2View) of
+    -- Note that here we rely on canonical terms to have canonical
+    -- types, and on the terms to be eta-expanded.
+    (Pi dom cod, Lam body1, Lam body2) -> do
+      -- TODO there is a bit of duplication between here and expansion.
+      name <- getAbsNameTC body1
+      ctx' <- extendContext ctx (name, dom)
+      checkEqual (ctx', cod, body1, body2)
+    (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
+      checkEqual (ctx, set, dom1, dom2)
+      cod1' <- instantiateTC cod1 dom1
+      cod2' <- instantiateTC cod2 dom1
+      checkEqual (ctx, set, cod1', cod2')
+    (Set, Equal type1' l1 r1, Equal type2' l2 r2) -> do
+      checkEqual (ctx, set, type1', type2')
+      checkEqual (ctx, type1', l1, l2)
+      checkEqual (ctx, type1', r1, r2)
+    (Equal _ _ _, Refl, Refl) -> do
+      return ()
+    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2)
+      | dataCon == dataCon' -> do
+        let Just tyConPars = mapM isApply tyConPars0
+        DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
+        appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+        checkEqualSpine ctx appliedDataConType Nothing (map Apply dataConArgs1) (map Apply dataConArgs2)
+    (Set, Set, Set) -> do
+      return ()
+    (_, App h elims1, App h'' elims2) | h == h'' -> do
+      hType <- inferHead ctx h
+      h' <- appTC h []
+      checkEqualSpine ctx hType (Just h') elims1 elims2
+    (_, _, _) -> do
+     checkError $ TermsNotEqual type_ t1 type_ t2
+
+checkEqualSpine
+  :: (IsTerm t)
+  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC t s ()
+checkEqualSpine _ _ _ [] [] = do
+  return ()
+checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+  case (elim1, elim2) of
+    (Apply arg1, Apply arg2) -> do
+      (dom, cod) <- matchPi type_
+      checkEqual (ctx, dom, arg1, arg2)
+      cod' <- liftTermM $ instantiate cod arg1
+      mbH' <- traverse (`eliminateTC` [Apply arg1]) mbH
+      checkEqualSpine ctx cod' mbH' elims1 elims2
+    (Proj proj projIx, Proj proj' projIx') | proj == proj' && projIx == projIx' -> do
+      let Just h = mbH
+      (h', type') <- applyProjection proj h type_
+      checkEqualSpine ctx type' (Just h') elims1 elims2
+    _ ->
+      checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
+checkEqualSpine _ type_ _ elims1 elims2 = do
+  checkError $ SpineNotEqual type_ elims1 type_ elims2

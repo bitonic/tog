@@ -25,7 +25,7 @@ import qualified Term.Telescope                   as Tel
 import qualified Term.Signature                   as Sig
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), prettyConstraintTC)
-import qualified TypeCheck3.Core                  as Core
+import qualified TypeCheck3.Check                 as Check
 import           TypeCheck3.Monad
 import           TypeCheck3.Solve.Common
 
@@ -263,7 +263,7 @@ coreCheckOrPostpone ctx type_ term ret = do
           "type:" //> typeDoc $$
           "term:" //> termDoc
   debugBracket msg $ do
-    mbErr <- catchTC $ Core.check ctx term type_
+    mbErr <- catchTC $ Check.check ctx term type_
     case mbErr of
       Left _err -> do
         mvs1 <- metaVarsTC type_

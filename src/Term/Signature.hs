@@ -24,7 +24,7 @@ import qualified Data.Map.Strict                  as Map
 
 import qualified Syntax.Internal                  as A
 import           Term.Synonyms
-import           Term.Class
+import           Term.Types
 import           PrettyPrint                      (render)
 
 -- | A 'Signature' stores every globally scoped thing.  That is,

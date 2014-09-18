@@ -1,5 +1,5 @@
 module Term
-  ( module Term.Class
+  ( module Term.Types
   , module Term.Synonyms
   , module Term.TermM
   , module Term.Pretty
@@ -8,7 +8,7 @@ module Term
   , module Term.Nf
   ) where
 
-import Term.Class
+import Term.Types
 import Term.Synonyms
 import Term.TermM
 import Term.Pretty

@@ -10,7 +10,7 @@ import           Control.Monad                    ((<=<))
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import           Term.TermM
-import           Term.Class
+import           Term.Types
 
 class Nf t where
   nf' :: (IsTerm f) => Sig.Signature f -> t f -> TermM (t f)

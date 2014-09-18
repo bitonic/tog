@@ -16,7 +16,7 @@ import           Prelude.Extended                 hiding ((<>))
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>), (<>))
 import qualified PrettyPrint                      as PP
 import qualified Syntax.Internal                  as A
-import           Term.Class
+import           Term.Types
 import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
 import           Term.Synonyms

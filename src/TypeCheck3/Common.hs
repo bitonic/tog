@@ -137,6 +137,7 @@ ctxLam :: IsTerm t => Ctx (Type t) -> Term t -> TermM (Term t)
 ctxLam Ctx.Empty        t = return t
 ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx =<< lam t
 
+-- | Useful just for debugging.
 extendContext
   :: (IsTerm t)
   => Ctx (Type t) -> (Name, Type t) -> TC t s (Ctx (Type t))
