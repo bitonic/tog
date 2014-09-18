@@ -1,6 +1,9 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Internal.Scope
-    ( checkScope
+    ( scopeCheckProgram
+    , scopeCheckExpr
+    , Scope(..)
+    , NameInfo(..)
     ) where
 
 import Control.Arrow ((***), (&&&), first)
@@ -146,9 +149,15 @@ checkHiding e = case e of
       (n, bs, stop) <- telHiding bs
       return (n + length xs, C.Bind xs e : bs, stop)
 
-checkScope :: C.Program -> Either PP.Doc Program
-checkScope (C.Prog _ ds) =
+scopeCheckProgram :: C.Program -> Either PP.Doc Program
+scopeCheckProgram (C.Prog _ ds) =
   case flip runReaderT initScope (unCheck (checkDecls ds return)) of
+    Left err -> Left $ PP.text $ show err
+    Right x  -> Right x
+
+scopeCheckExpr :: Scope -> C.Expr -> Either PP.Doc Expr
+scopeCheckExpr s e =
+  case flip runReaderT s (unCheck (checkExpr e)) of
     Left err -> Left $ PP.text $ show err
     Right x  -> Right x
 

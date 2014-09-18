@@ -8,10 +8,7 @@ module TypeCheck3.Elaborate
 
 import           Prelude                          hiding (mapM_)
 
-import           Data.Foldable                    (mapM_)
 import qualified Control.Lens                     as L
-import           Control.Lens                     ((.=), (%=), uses)
-import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
@@ -21,7 +18,7 @@ import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
-import           PrettyPrint                      (($$), (//>), render)
+import           PrettyPrint                      (($$), (//>))
 import qualified PrettyPrint                      as PP
 
 data ElaborateState = ElaborateState
@@ -84,7 +81,7 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         type' <- equalTC eqType t1 t1
         return (mvT, waitForUnifiedType' type' refl)
       A.Con dataCon synArgs -> do
-        DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon
+        DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
         tyConType <- definitionType =<< getDefinition tyCon
         tyConArgs <- fillArgsWithMetas ctx tyConType
         appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
@@ -100,7 +97,6 @@ fillArgsWithMetas ctx' type' = do
   typeView <- whnfViewTC type'
   case typeView of
     Pi dom cod -> do
-      domName <- getAbsNameTC cod
       arg <- fresh ctx' dom
       cod' <- instantiateTC cod arg
       (arg :) <$> fillArgsWithMetas ctx' cod'
@@ -121,7 +117,7 @@ waitForUnifiedType
   -> Term t
   -- ^ ..with this term.
   -> Constraint t
-waitForUnifiedType ctx type_ type' mvT t =
+waitForUnifiedType ctx type_ type' mvT t = do
   Unify ctx set type' type_ :>>: Unify ctx type_ mvT t
 
 elaborateDataConArgs
@@ -173,11 +169,11 @@ elaborateApp' ctx type_ h elims = do
 elaborateApp
   :: (IsTerm t)
   => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraint t)
-elaborateApp ctx type_ h [] = do
+elaborateApp ctx type_ h [] = atSrcLoc h $ do
   (t, hType) <- inferHead ctx h
   mvT <- fresh ctx type_
   return (mvT, waitForUnifiedType ctx type_ hType mvT t)
-elaborateApp ctx type_ h (A.Apply arg : elims) = do
+elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
   dom <- fresh ctx set
   -- TODO better name here
   cod <- fresh (Ctx.Snoc ctx ("_", dom)) set
@@ -188,7 +184,7 @@ elaborateApp ctx type_ h (A.Apply arg : elims) = do
   t <- eliminateTC f [Apply arg']
   mvT <- fresh ctx type_
   return (mvT, Conj [waitForUnifiedType ctx type_ type' mvT t, constrF, constrArg])
-elaborateApp ctx type_ h (A.Proj proj : elims) = do
+elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
   tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType

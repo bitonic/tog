@@ -15,9 +15,12 @@ module Term.Signature
     , unsafeRemoveMetaVar
     , metaVarsTypes
     , metaVarsBodies
+      -- * Utils
+    , toScope
     ) where
 
 import qualified Data.HashMap.Strict              as HMS
+import qualified Data.Map.Strict                  as Map
 
 import qualified Syntax.Internal                  as A
 import           Term.Synonyms
@@ -57,7 +60,7 @@ addDefinition_ sig name def' = addDefinition sig name def'
 addDefinition :: Signature t -> A.Name -> Closed (Definition t) -> Signature t
 addDefinition sig defName def' = case (defName, def') of
     (name, Projection projIx tyCon _ _) -> addProjection name tyCon projIx
-    (name, DataCon tyCon _ _)           -> addDataCon name tyCon
+    (name, DataCon tyCon _ _ _)         -> addDataCon name tyCon
     _                                   -> sig'
   where
     sig' = sig{sDefinitions = HMS.insert defName def' (sDefinitions sig)}
@@ -130,3 +133,8 @@ metaVarsTypes = sMetasTypes
 -- | Gets the bodies for the instantiated 'MetaVar's.
 metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (Closed (Term t))
 metaVarsBodies = sMetasBodies
+
+toScope :: Signature t -> A.Scope
+toScope = A.Scope . Map.fromList . map f . HMS.toList . sDefinitions
+  where
+    f (n, def') = (A.nameString n, definitionToNameInfo n def')

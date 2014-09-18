@@ -29,8 +29,8 @@ prettyTerm sig = prettyPrecTerm sig 0
 
 prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t -> TermM PP.Doc
 prettyPrecTerm sig p t0 = do
-  normalize <- confNormalizePrettyPrinted <$> readConf
-  t <- if normalize then nf sig t0 else return t0
+  dontNormalize <- confDontNormalizePP <$> readConf
+  t <- if dontNormalize then return t0 else nf sig t0
   synT <- internalToTerm t
   return $ PP.prettyPrec p synT
 
@@ -55,7 +55,7 @@ prettyDefinition sig (Constant (Record dataCon fields) type_) = do
            "constructor" <+> PP.pretty dataCon $$
            "field" $$>
            PP.vcat (map (PP.pretty . fst) fields)
-prettyDefinition sig (DataCon tyCon pars type_) = do
+prettyDefinition sig (DataCon tyCon _ pars type_) = do
   typeDoc <- prettyTelWithTerm sig pars type_
   return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
 prettyDefinition sig (Projection _ tyCon pars type_) = do

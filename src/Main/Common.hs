@@ -4,22 +4,26 @@ module Main.Common (checkFile) where
 import           Control.Monad.Trans.Class        (lift)
 import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT,)
 
-import           Syntax.Internal                  (checkScope)
+import           Syntax.Internal                  (scopeCheckProgram)
 import           Syntax.Raw                       (parseProgram)
 import           Term                             (IsTerm)
+import           Term.Impl                        (Simple)
 import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3                       (checkProgram, TCState')
 
 checkFile
   :: FilePath
-  -> (forall t. (IsTerm t) => TCState' t -> IO a)
-  -> IO (Either PP.Doc a)
-checkFile file ret = runExceptT $ do
+  -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a)
+  -> IO a
+checkFile file ret = do
+  mbErr <- runExceptT $ do
     s   <- lift $ readFile file
     raw <- ExceptT $ return $ showError "Parse" $ parseProgram s
-    int <- ExceptT $ return $ showError "Scope" $ checkScope raw
-    ExceptT $ fmap (showError "Type") $ checkProgram int ret
+    ExceptT $ return $ showError "Scope" $ scopeCheckProgram raw
+  case mbErr of
+    Left err  -> ret (Left err :: Either PP.Doc (TCState' Simple))
+    Right int -> checkProgram int $ \ts -> ret (showError "Type" ts)
   where
     showError :: String -> Either PP.Doc b -> Either PP.Doc b
     showError errType =

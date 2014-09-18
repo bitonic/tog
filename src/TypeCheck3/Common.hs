@@ -231,7 +231,7 @@ isApply Proj{}    = Nothing
 
 definitionType :: (IsTerm t) => Closed (Definition t) -> TC t s (Closed (Type t))
 definitionType (Constant _ type_)         = return type_
-definitionType (DataCon _ tel type_)      = telPiTC tel type_
+definitionType (DataCon _ _ tel type_)    = telPiTC tel type_
 definitionType (Projection _ _ tel type_) = telPiTC tel type_
 definitionType (Function type_ _)         = return type_
 
@@ -244,8 +244,8 @@ isRecordType tyCon = withSignature $ \sig ->
 isRecordConstr :: (IsTerm t) => Name -> TC t s Bool
 isRecordConstr dataCon = join $ withSignature $ \sig ->
   case Sig.getDefinition sig dataCon of
-    DataCon tyCon _ _ -> isRecordType tyCon
-    _                 -> return False
+    DataCon tyCon _ _ _ -> isRecordType tyCon
+    _                   -> return False
 
 getAbsNameTC
   :: (IsTerm t) => Abs (Term t) -> TC t s Name

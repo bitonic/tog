@@ -29,7 +29,7 @@ instance Nf Clause where
 
 instance Nf Definition where
   nf' sig (Constant kind t)                   = Constant kind <$> nf sig t
-  nf' sig (DataCon tyCon pars type_)          = DataCon tyCon <$> nf' sig pars <*> nf sig type_
+  nf' sig (DataCon tyCon args pars type_)     = DataCon tyCon args <$> nf' sig pars <*> nf sig type_
   nf' sig (Projection field tyCon pars type_) = Projection field tyCon <$> nf' sig pars <*> nf sig type_
   nf' sig (Function type_ clauses)            = Function <$> nf sig type_ <*> nfInvertible clauses
     where

@@ -2,15 +2,12 @@
 module TypeCheck3.Monad
   ( -- * Monad definition
     TC
-  , TCState
+  , TCState(..)
   , tcState
   , TCErr(..)
   , initTCState
   , runTC
   , catchTC
-    -- * Report
-  , TCReport(..)
-  , tcReport
     -- * Operations
     -- ** Errors
   , typeError
@@ -45,7 +42,7 @@ module TypeCheck3.Monad
   , debug_
   ) where
 
-import           Control.Exception.Base           (throwIO, catch, try, Exception)
+import           Control.Exception.Base           (throwIO, try, Exception)
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
@@ -98,8 +95,8 @@ catchTC m = TC $ \(te, ts) -> do
 runTC :: (IsTerm t)
       => Bool -> TCState t s
       -> TC t s a -> IO (Either PP.Doc (a, TCState t s))
-runTC debug ts (TC m) = do
-  mbErr <- try $ m (initEnv{teDebug = if debug then Just initDebug else Nothing}, ts)
+runTC debug' ts (TC m) = do
+  mbErr <- try $ m (initEnv{teDebug = if debug' then Just initDebug else Nothing}, ts)
   return $ case mbErr of
     Left (e :: TCErr) -> Left $ PP.pretty e
     Right (ts', x)    -> Right (x, ts')
@@ -153,21 +150,6 @@ instance Show TCErr where
   show = PP.render
 
 instance Exception TCErr
-
--- TCReport
-------------------------------------------------------------------------
-
--- | A type useful to inspect what's going on.
-data TCReport t s = TCReport
-  { trSignature        :: !(Sig.Signature t)
-  , trState            :: !s
-  }
-
-tcReport :: (IsTerm t) => TCState t s -> TCReport t s
-tcReport ts = TCReport
-  { trSignature        = tsSignature ts
-  , trState            = tsState ts
-  }
 
 -- Errors
 ------------------------------------------------------------------------
@@ -247,8 +229,8 @@ addConstant x k a = addDefinition x (Constant k a)
 
 addDataCon
     :: (IsTerm t)
-    => Name -> Name -> Tel.Tel (Type t) -> Type t -> TC t s ()
-addDataCon c d tel t = addDefinition c (DataCon d tel t)
+    => Name -> Name -> Int -> Tel.Tel (Type t) -> Type t -> TC t s ()
+addDataCon c d args tel t = addDefinition c (DataCon d args tel t)
 
 addProjection
     :: (IsTerm t)

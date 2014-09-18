@@ -9,7 +9,7 @@ import qualified Data.Set                         as Set
 import           Syntax.Internal                  (Name)
 
 import           Prelude.Extended
-import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
+import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Context                     (Ctx)
@@ -17,7 +17,6 @@ import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common
-import qualified TypeCheck3.Core                  as Core
 import           TypeCheck3.Monad
 
 -- Unification stuff which is common amongst the solvers.
@@ -277,7 +276,7 @@ invertMeta elims0 = case mapM isApply elims0 of
             -- the variable on the right with projected terms inside the
             -- body of the metavariable.
             Con dataCon recArgs -> do
-              DataCon tyCon _ _ <- getDefinition dataCon
+              DataCon tyCon _ _ _ <- getDefinition dataCon
               tyConDef <- getDefinition tyCon
               case tyConDef of
                 Constant (Record _ fields) _ -> do
@@ -440,7 +439,7 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
       Just t' <- lift $ liftTermM $ strengthen_ 1 =<< app h (init elims)
       return t'
     Con dataCon args -> do
-      DataCon tyCon _ _ <- lift $ getDefinition dataCon
+      DataCon tyCon _ _ _ <- lift $ getDefinition dataCon
       Constant (Record _ fields) _ <- lift $ getDefinition tyCon
       guard $ length args == length fields
       (t : ts) <- sequence (zipWith isRightProjection fields args)
@@ -490,7 +489,7 @@ instantiateDataCon
 instantiateDataCon mv dataCon = do
   mvType <- getMetaVarType mv
   (ctxMvArgs, endType') <- unrollPi mvType
-  DataCon tyCon dataConTypeTel dataConType <- getDefinition dataCon
+  DataCon tyCon _ dataConTypeTel dataConType <- getDefinition dataCon
   -- We know that the metavariable must have the right type (we have
   -- typechecked the arguments already).
   App (Def tyCon') tyConArgs0 <- whnfViewTC endType'

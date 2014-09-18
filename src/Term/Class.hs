@@ -278,9 +278,6 @@ blockedEq blockedX blockedY = case (blockedX, blockedY) of
   (_, _) ->
     return False
 
--- mapBlockingM :: (t v -> TermM (t' v)) -> Blocked t v -> TermM (Blocked t' v)
--- mapBlockingM = undefined
-
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
 eliminate :: (IsTerm t) => Sig.Signature t -> t -> [Elim t] -> TermM t
@@ -300,95 +297,6 @@ eliminate sig t elims = do
         app h (es1 ++ es2)
     (_, _) ->
         error $ "eliminate: Bad elimination"
-
--- termEq'
---   :: (IsTerm t1, IsTerm t2)
---   => t1 v -> t2 v -> TermM Bool
--- termEq' t1 t2 = do
---   tView1 <- view t1
---   tView2 <- view t2
---   case (tView1, tView2) of
---     (Lam body1, Lam body2) ->
---       termEq' body1 body2
---     (Pi domain1 codomain1, Pi domain2 codomain2) ->
---       (&&) <$> termEq' domain1 domain2 <*> termEq' codomain1 codomain2
---     (Equal type1 x1 y1, Equal type2 x2 y2) ->
---       (&&) <$> ((&&) <$> termEq' type1 type2 <*> termEq' x1 x2)
---            <*> termEq' y1 y2
---     (App h1 els1, App h2 els2) ->
---       (h1 == h2 &&) <$> elimsEq els1 els2
---     (Set, Set) ->
---       return True
---     (Con dataCon1 args1, Con dataCon2 args2) | dataCon1 == dataCon2 ->
---       argsEq args1 args2
---     (Refl, Refl) ->
---       return True
---     (_, _) -> do
---       return False
---   where
---     elimsEq []           []           = return True
---     elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
---     elimsEq _            _            = return False
-
---     elimEq (Apply t1')  (Apply t2')  = termEq' t1' t2'
---     elimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
---     elimEq _            _            = return False
-
---     argsEq []             []             = return True
---     argsEq (arg1 : args1) (arg2 : args2) = (&&) <$> termEq' arg1 arg2 <*> argsEq args1 args2
---     argsEq _              _              = return False
-
--- definitionEq'
---   :: (IsTerm t1, IsTerm t2)
---   => Definition t1 v -> Definition t2 v -> TermM Bool
--- definitionEq' def1 def2 = case (def1, def2) of
---   (Constant ck1 type1, Constant ck2 type2) ->
---     (ck1 == ck2 &&) <$> termEq' type1 type2
---   (DataCon dataCon1 type1, DataCon dataCon2 type2) ->
---     (dataCon1 == dataCon2 &&) <$> telEq' type1 type2
---   (Projection f1 n1 type1, Projection f2 n2 type2) ->
---     ((f1 == f2 && n1 == n2) &&) <$> telEq' type1 type2
---   (Function type1 body1, Function type2 body2) -> do
---     (&&) <$> termEq' type1 type2 <*> invertibleEq' body1 body2
---   (_, _) -> do
---     return False
-
--- telEq'
---   :: (IsTerm t1, IsTerm t2)
---   => Tel.IdTel t1 v -> Tel.IdTel t2 v -> TermM Bool
--- telEq' (Tel.Empty (Tel.Id t1)) (Tel.Empty (Tel.Id t2)) =
---   termEq' t1 t2
--- telEq' (Tel.Cons (_, type1) tel1) (Tel.Cons (_, type2) tel2) =
---   (&&) <$> termEq' type1 type2 <*> telEq' tel1 tel2
--- telEq' _ _ =
---   return False
-
--- invertibleEq'
---   :: forall t1 t2 v. (IsTerm t1, IsTerm t2)
---   => Invertible t1 v -> Invertible t2 v -> TermM Bool
--- invertibleEq' clauses01 clauses02 =
---   case (clauses01, clauses02) of
---     (NotInvertible clauses1, NotInvertible clauses2) ->
---       clausesEq' (map ((),) clauses1) (map ((), ) clauses2)
---     (Invertible clauses1, Invertible clauses2) ->
---       clausesEq' clauses1 clauses2
---     (_, _) ->
---       return False
---   where
---     clausesEq' :: Eq a => [(a, Clause t1 v)] -> [(a, Clause t2 v)] -> TermM Bool
---     clausesEq' [] [] =
---       return True
---     clausesEq' ((x1, Clause pats1 body1) : clauses1) ((x2, Clause pats2 body2) : clauses2)
---       | pats1 == pats2 && x1 == x2 =
---         (&&) <$> clauseBodyEq' body1 body2 <*> clausesEq' clauses1 clauses2
---     clausesEq' _ _ =
---       return False
-
---     clauseBodyEq' :: ClauseBody t1 v' -> ClauseBody t2 v' -> TermM Bool
---     clauseBodyEq' (CBNil t1) (CBNil t2) =
---       termEq' t1 t2
---     clauseBodyEq' (CBArg body1) (CBArg body2) = clauseBodyEq' body1 body2
---     clauseBodyEq' _ _ = return False
 
 -- Term utils
 -------------
@@ -472,9 +380,10 @@ instantiateClauseBody body args = substs (zip [0..] $ reverse args) body
 
 data Definition t
     = Constant ConstantKind (Type t)
-    | DataCon Name (Tel.Tel (Type t)) (Type t)
-    -- ^ Data type name, telescope ranging over the parameters of the
-    -- type constructor ending with the type of the constructor.
+    | DataCon Name Int (Tel.Tel (Type t)) (Type t)
+    -- ^ Data type name, number of arguments, telescope ranging over the
+    -- parameters of the type constructor ending with the type of the
+    -- constructor.
     | Projection Field Name (Tel.Tel (Type t)) (Type t)
     -- ^ Field number, record type name, telescope ranging over the
     -- parameters of the type constructor ending with the type of the
@@ -518,6 +427,12 @@ ignoreInvertible (Invertible injClauses) = map snd injClauses
 --               -> Invertible t v -> Invertible t' v'
 -- mapInvertible f (NotInvertible clauses) = NotInvertible $ map f clauses
 -- mapInvertible f (Invertible injClauses) = Invertible $ map (second f) injClauses
+
+definitionToNameInfo :: A.Name -> Definition t -> A.NameInfo
+definitionToNameInfo n (Constant _ _)       = A.DefName n 0
+definitionToNameInfo n (DataCon _ args _ _) = A.ConName n 0 args
+definitionToNameInfo n (Projection _ _ _ _) = A.ProjName n 0
+definitionToNameInfo n (Function _ _)       = A.DefName n 0
 
 -- 'MetaVar'iables
 ------------------------------------------------------------------------

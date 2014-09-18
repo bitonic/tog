@@ -10,7 +10,7 @@ import           Prelude                          hiding (any)
 
 import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Maybe        (runMaybeT)
-import           Control.Monad.Trans.Writer.Strict (WriterT, execWriterT, tell)
+import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Syntax.Internal                  (Name)
@@ -119,7 +119,7 @@ solve' (UnifySpine ctx type_ mbH elims1 elims2) = do
 
 prettySolveState
   :: (IsTerm t) => Sig.Signature t -> Bool -> SolveState t -> TermM PP.Doc
-prettySolveState sig detailed (SolveState cs) = execWriterT $ go cs
+prettySolveState sig detailed (SolveState cs0) = execWriterT $ go cs0
   where
     go cs = do
       tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
@@ -571,7 +571,7 @@ etaExpandVar
   -> TC t s (Tel.Tel t, t -> TermM t)
 etaExpandVar tyCon type_ tel = do
   Constant (Record dataCon projs) _ <- getDefinition tyCon
-  DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+  DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
   App (Def _) tyConPars0 <- whnfViewTC type_
   let Just tyConPars = mapM isApply tyConPars0
   appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
@@ -616,9 +616,9 @@ compareTerms (ctx, type_, t1, t2) = do
       checkEqualApplySpine ctx equalType_ [type1', l1, r1] [type2', l2, r2]
     (Equal _ _ _, Refl, Refl) -> do
       return []
-    ( App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
+    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
        let Just tyConPars = mapM isApply tyConPars0
-       DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+       DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
        appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
        checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
     (Set, Set, Set) -> do

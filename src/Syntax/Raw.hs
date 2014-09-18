@@ -6,6 +6,7 @@ module Syntax.Raw
   , module Syntax.Raw.Print
     -- * Parsing
   , parseProgram
+  , parseExpr
   ) where
 
 import           Data.Maybe                       (isJust, fromJust, isNothing, fromJust)
@@ -14,13 +15,19 @@ import           Syntax.Raw.Abs
 import           Syntax.Raw.ErrM                  (Err(Bad, Ok))
 import           Syntax.Raw.Layout                (sToken, layoutOpen, layoutClose, layoutSep, layoutWords, layoutStopWords, topLayout)
 import           Syntax.Raw.Lex
-import           Syntax.Raw.Par                   (myLexer, pProgram)
+import           Syntax.Raw.Par                   (myLexer, pProgram, pExpr)
 import           Syntax.Raw.Print
 import qualified PrettyPrint                      as PP
 
 parseProgram :: String -> Either PP.Doc Program
 parseProgram s =
   case pProgram (resolveLayout (myLexer s)) of
+    Bad err -> Left $ PP.text err
+    Ok p    -> Right p
+
+parseExpr :: String -> Either PP.Doc Expr
+parseExpr s =
+  case pExpr (resolveLayout (myLexer s)) of
     Bad err -> Left $ PP.text err
     Ok p    -> Right p
 

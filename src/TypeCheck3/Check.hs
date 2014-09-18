@@ -6,6 +6,8 @@ module TypeCheck3.Check
   , csElaborateState
   , initCheckState
   , checkDecl
+  , checkExpr
+  , inferExpr
   ) where
 
 import           Prelude                          hiding (abs, pi)
@@ -51,11 +53,19 @@ checkDecl decl = do
       A.RecDef d xs c fs -> checkRec d xs c fs
       A.FunDef f clauses -> checkFunDef f clauses
 
-elaborateAndCheck
+inferExpr
+  :: (IsTerm t)
+  => Ctx t -> A.Expr -> CheckM t (Term t, Type t)
+inferExpr ctx synT = do
+  type_ <- addMetaVarInCtx ctx set
+  t <- checkExpr ctx synT type_
+  return (t, type_)
+
+checkExpr
   :: (IsTerm t)
   => Ctx t -> A.Expr -> Type t -> CheckM t (Term t)
-elaborateAndCheck ctx synT type_ = do
-  debugBracket_ "*** elaborateAndCheck" $ do
+checkExpr ctx synT type_ = do
+  debugBracket_ "*** checkExpr" $ do
     (t, constr) <- mapTC csElaborateState $ elaborate ctx type_ synT
     debug $ do
       constrDoc <- prettyConstraintTC constr
@@ -66,7 +76,7 @@ elaborateAndCheck ctx synT type_ = do
 
 checkTypeSig :: (IsTerm t) => A.TypeSig -> CheckM t ()
 checkTypeSig (A.Sig name absType) = do
-    type_ <- elaborateAndCheck Ctx.Empty absType set
+    type_ <- checkExpr Ctx.Empty absType set
     addConstant name Postulate type_
 
 checkData
@@ -99,12 +109,12 @@ checkConstr
     -> CheckM t ()
 checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
   atSrcLoc dataCon $ do
-    dataConType <- elaborateAndCheck tyConPars synDataConType set
+    dataConType <- checkExpr tyConPars synDataConType set
     (vs, endType) <- unrollPi dataConType
     appliedTyConType' <- liftTermM $ Ctx.weaken_ vs appliedTyConType
     let ctx = tyConPars Ctx.++ vs
     checkEqual (ctx, set, appliedTyConType', endType)
-    addDataCon dataCon tyCon (Tel.tel tyConPars) dataConType
+    addDataCon dataCon tyCon (Ctx.length vs) (Tel.tel tyConPars) dataConType
 
 checkRec
     :: (IsTerm t)
@@ -130,7 +140,7 @@ checkRec tyCon tyConPars dataCon fields = do
       fieldsTel'
     let fieldsCtx = Tel.unTel fieldsTel
     appliedTyConType' <- liftTermM $ Ctx.weaken_ fieldsCtx appliedTyConType
-    addDataCon dataCon tyCon (Tel.tel tyConPars') =<< ctxPiTC fieldsCtx appliedTyConType'
+    addDataCon dataCon tyCon (length fields) (Tel.tel tyConPars') =<< ctxPiTC fieldsCtx appliedTyConType'
 
 checkFields
     :: forall t. (IsTerm t)
@@ -141,7 +151,7 @@ checkFields ctx0 = go Ctx.Empty
     go ctx [] =
         return $ Tel.tel ctx
     go ctx (A.Sig field synFieldType : fields) = do
-        fieldType <- elaborateAndCheck (ctx0 Ctx.++ ctx) synFieldType set
+        fieldType <- checkExpr (ctx0 Ctx.++ ctx) synFieldType set
         ctx' <- extendContext ctx (field, fieldType)
         go ctx' fields
 
@@ -192,7 +202,7 @@ checkClause fun funType (A.Clause synPats synClauseBody) = do
         return $ "*** checkClause" $$
                  "context:" //> ctxDoc
   debugBracket msg $ do
-    clauseBody <- elaborateAndCheck ctx synClauseBody clauseType
+    clauseBody <- checkExpr ctx synClauseBody clauseType
     -- This is an optimization: we want to remove as many MetaVars
     -- as possible so that we'll avoid recomputing things.
     -- TODO generalize this to everything which adds a term.
@@ -243,7 +253,7 @@ checkPattern funName synPat type_ = case synPat of
       v <- varTC $ boundVar "_"
       return (Ctx.singleton "_" type_, VarP, v)
     A.ConP dataCon synPats -> do
-      DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon
+      DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
       typeConDef <- getDefinition tyCon
       case typeConDef of
         Constant (Data _)     _ -> return ()

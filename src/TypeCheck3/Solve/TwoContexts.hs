@@ -3,12 +3,14 @@ module TypeCheck3.Solve.TwoContexts
   ( SolveState
   , initSolveState
   , solve
+  , prettySolveState
   ) where
 
 import           Prelude                          hiding (any)
 
 import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Maybe        (runMaybeT)
+import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Syntax.Internal                  (Name)
@@ -20,6 +22,7 @@ import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
+import qualified Term.Signature                   as Sig
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), prettyConstraintTC)
 import qualified TypeCheck3.Core                  as Core
@@ -120,6 +123,17 @@ solve' (UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2) = do
   checkEqualSpine' ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2
 solve' (Check ctx type_ term) = do
   coreCheckOrPostpone ctx type_ term $ return []
+
+prettySolveState
+  :: (IsTerm t) => Sig.Signature t -> Bool -> SolveState t -> TermM PP.Doc
+prettySolveState sig detailed (SolveState cs0) = execWriterT $ go cs0
+  where
+    go cs = do
+      tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
+      when detailed $ forM_ cs $ \(mvs, c) -> do
+        tell $ PP.line <> "------------------------------------------------------------------------"
+        cDoc <- lift $ prettyConstraint sig c
+        tell $ PP.line <> "** Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
 
 -- This is local stuff
 ----------------------
@@ -251,7 +265,7 @@ coreCheckOrPostpone ctx type_ term ret = do
   debugBracket msg $ do
     mbErr <- catchTC $ Core.check ctx term type_
     case mbErr of
-      Left err -> do
+      Left _err -> do
         mvs1 <- metaVarsTC type_
         mvs2 <- metaVarsTC term
         let mvs = mvs1 <> mvs2
@@ -719,7 +733,7 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
       ) | dataCon == dataCon' -> do
        let Just tyConPars1 = mapM isApply tyConPars10
        let Just tyConPars2 = mapM isApply tyConPars20
-       DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+       DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
        appliedDataConType1 <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars1
        appliedDataConType2 <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars2
        checkEqualApplySpine ctx1 appliedDataConType1 dataConArgs1 ctx2 appliedDataConType2 dataConArgs2
@@ -734,36 +748,40 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
 
 prettyConstraintTC
   :: (IsTerm t) => Constraint t -> TC t s PP.Doc
-prettyConstraintTC c0 = do
+prettyConstraintTC c = withSignatureTermM $ \sig -> prettyConstraint sig c
+
+prettyConstraint
+  :: (IsTerm t) => Sig.Signature t -> Constraint t -> TermM PP.Doc
+prettyConstraint sig c0 = do
   case fromMaybe c0 (simplify c0) of
     Unify ctx1 type1 t1 ctx2 type2 t2 -> do
-      ctx1Doc <- prettyContextTC ctx1
-      type1Doc <- prettyTermTC type1
-      t1Doc <- prettyTermTC t1
-      ctx2Doc <- prettyContextTC ctx2
-      type2Doc <- prettyTermTC type2
-      t2Doc <- prettyTermTC t2
+      ctx1Doc <- prettyContext sig ctx1
+      type1Doc <- prettyTerm sig type1
+      t1Doc <- prettyTerm sig t1
+      ctx2Doc <- prettyContext sig ctx2
+      type2Doc <- prettyTerm sig type2
+      t2Doc <- prettyTerm sig t2
       return $ group $
         group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
         hang 2 "=" //
         group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
     c1 :>>: c2 -> do
-      c1Doc <- prettyConstraintTC c1
-      c2Doc <- prettyConstraintTC c2
+      c1Doc <- prettyConstraint sig c1
+      c2Doc <- prettyConstraint sig c2
       return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
     Conj cs -> do
-      csDoc <- mapM prettyConstraintTC cs
+      csDoc <- mapM (prettyConstraint sig) cs
       return $
         "Conj" //> PP.list csDoc
     UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
       return "TODO UnifySpine"
-      -- ctxDoc <- prettyContextTC ctx
-      -- typeDoc <- prettyTermTC type_
+      -- ctxDoc <- prettyContext sig ctx
+      -- typeDoc <- prettyTerm sig type_
       -- hDoc <- case mbH of
       --   Nothing -> return "no head"
-      --   Just h  -> prettyTermTC h
-      -- elims1Doc <- prettyElimsTC elims1
-      -- elims2Doc <- prettyElimsTC elims2
+      --   Just h  -> prettyTerm sig h
+      -- elims1Doc <- prettyElims sig elims1
+      -- elims2Doc <- prettyElims sig elims2
       -- return $
       --   "UnifySpine" $$
       --   "ctx:" //> ctxDoc $$

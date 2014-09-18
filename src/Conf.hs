@@ -19,7 +19,7 @@ data Conf = Conf
   , confCheckMetaVarConsistency :: Bool
   , confFastGetAbsName          :: Bool
   , confDisableSynEquality      :: Bool
-  , confNormalizePrettyPrinted  :: Bool
+  , confDontNormalizePP         :: Bool
   }
 
 defaultConf :: Conf

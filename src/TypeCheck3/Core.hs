@@ -26,7 +26,7 @@ check ctx t type_ = do
     tView <- whnfViewTC t
     case tView of
       Con dataCon args -> do
-        DataCon tyCon tyConParsTel dataConType <- getDefinition dataCon
+        DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
         tyConArgs <- matchTyCon tyCon type_
         appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
         checkConArgs ctx args appliedDataConType
@@ -252,7 +252,7 @@ compareTerms (ctx, type_, t1, t2) = do
     (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2)
       | dataCon == dataCon' -> do
         let Just tyConPars = mapM isApply tyConPars0
-        DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
+        DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
         appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
         checkEqualSpine ctx appliedDataConType Nothing (map Apply dataConArgs1) (map Apply dataConArgs2)
     (Set, Set, Set) -> do

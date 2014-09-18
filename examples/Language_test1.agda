@@ -11,7 +11,7 @@
 -- writing). I'm not entirely sure if the code is correct: 2.5G heap
 -- doesn't seem to suffice to typecheck this code. /NAD
 
-module Language_test where
+module Language_test1 where
 
 ------------------------------------------------------------------------
 -- Prelude
@@ -21,9 +21,6 @@ open import Prelude
 subst : {A : Set} {x y : A} (P : A -> Set) ->
         x == y -> P x -> P y
 subst P = J (\ x y _ -> P x -> P y) (\ x p -> p)
-
-Empty : Set
-Empty = (A : Set) -> A
 
 record Unit : Set
 record Unit where
@@ -63,11 +60,13 @@ Eq : (A : Set) -> A -> A -> Set
 Eq _ x y = x == y
 
 zero' : (s : Unit -> U) -> Eq (El (s tt) -> U) (\ g -> s tt) (\g -> s tt)
-zero' _ = refl
 
-Alpha : Unit -> U
-raw-category : Sigma ((\ _ -> set) == (\ _ -> set))
-                     (\eq -> (\ g -> el (subst (\ f -> El (f g)) eq g)) == (\g -> el g))
+-- zero' : (s : Unit -> U) -> Eq (El (s tt) -> U) (\ g -> s tt) (\g -> s tt)
+-- zero' _ = refl
 
-Alpha = _
-raw-category = pair (zero' Alpha) refl
+-- Alpha : Unit -> U
+-- raw-category : Sigma ((\ _ -> set) == (\ _ -> set))
+--                      (\eq -> (\ g -> el (subst (\ f -> El (f g)) eq g)) == (\g -> el g))
+
+-- Alpha = _
+-- raw-category = pair (zero' Alpha) refl
