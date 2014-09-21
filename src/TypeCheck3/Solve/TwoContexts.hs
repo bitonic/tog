@@ -173,7 +173,7 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           "y:" //> yDoc
   debugBracket msg $ do
     runCheckEqual
-      [checkSynEq, etaExpand, checkMetaVars]
+      [checkSynEq, etaExpandMetaVars, etaExpand, checkMetaVars]
       compareTerms
       (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0)
   where
@@ -199,6 +199,19 @@ checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
     if eq
       then done []
       else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
+
+etaExpandMetaVars
+  :: (IsTerm t)
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
+etaExpandMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
+  -- Try to eta-expand the metavariable first.  We do this before
+  -- expanding the terms because if we expand the terms first we might
+  -- "lose" some metavariables.  Consider the case where we have `α :
+  -- Unit'.  This would get expanded to `tt : Unit', but then we don't
+  -- instantiate `α' to `tt'.
+  t1' <- fromMaybe t1 <$> etaExpandMetaVar type1 t1
+  t2' <- fromMaybe t2 <$> etaExpandMetaVar type2 t2
+  keepGoing (ctx1, type1, t1', ctx2, type2, t2')
 
 etaExpand
   :: (IsTerm t)
@@ -500,95 +513,79 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
           "elims:" //> elimsDoc $$
           "to term:" //> tDoc
   debugBracket msg $ do
-    -- Try to eta-expand the metavariable first.  If you can, eta-expand
-    -- and restart the equality.  Otherwise, try to assign.
-    (_, mvEndType) <- unrollPi mvType
-    mbRecordDataCon <- runMaybeT $ do
-      App (Def tyCon) _ <- lift $ whnfViewTC mvEndType
-      Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
-      return dataCon
-    case mbRecordDataCon of
-      Just dataCon -> do
-        let msg' = "*** Eta-expanding metavar " <+> PP.pretty mv <+>
-                   "with datacon" <+> PP.pretty dataCon
-        debugBracket_ msg' $ do
-          mvT <- instantiateDataCon mv dataCon
-          mvT' <- eliminateTC mvT elims1_0
-          Done <$> checkEqual (ctx1_0, type1_0, mvT', ctx2_0, type2_0, t2_0)
-      Nothing -> do
-        (ctx1, elims1, ctx2, sub) <- etaExpandVars ctx1_0 elims1_0 ctx2_0
-        -- TODO this check could be more precise
-        let ctxChanged = Ctx.length ctx1 == Ctx.length ctx1_0
+    (ctx1, elims1, ctx2, sub) <- etaExpandVars ctx1_0 elims1_0 ctx2_0
+    -- TODO this check could be more precise
+    let ctxChanged = Ctx.length ctx1 == Ctx.length ctx1_0
+    debug $ do
+      if ctxChanged
+      then return "** No change in context"
+      else do
+        ctx1Doc <- prettyContextTC ctx1
+        ctx2Doc <- prettyContextTC ctx2
+        return $
+          "** New contexts:" $$
+          "left:" //> ctx1Doc $$
+          "right:" //> ctx2Doc
+    type1 <- liftTermM $ sub type1_0
+    t2 <- liftTermM $ sub t2_0
+    when ctxChanged $ debug $ do
+      type1Doc <- prettyTermTC type1
+      t2Doc <- prettyTermTC t2
+      return $
+        "** Type and term after eta-expanding vars:" $$
+        "type:" //> type1Doc $$
+        "term:" //> t2Doc
+    -- See if we can invert the metavariable
+    ttInv <- invertMeta elims1
+    let invOrMvs = case ttInv of
+          TTOK inv       -> Right inv
+          TTMetaVars mvs -> Left $ HS.insert mv mvs
+          -- TODO here we should also wait on metavars on the right that
+          -- could simplify the problem.
+          TTFail ()      -> Left $ HS.singleton mv
+    case invOrMvs of
+      Left mvs -> do
+        debug_ $ "** Couldn't invert"
+        -- If we can't invert, try to prune the variables not
+        -- present on the right from the eliminators.
+        t2' <- nfTC t2
+        -- TODO should we really prune allowing all variables here?  Or
+        -- only the rigid ones?
+        fvs <- fvAll <$> freeVarsTC t2'
+        elims1' <- mapM nf'TC elims1
+        mbMvT <- prune fvs mv elims1'
+        -- If we managed to prune them, restart the equality.
+        -- Otherwise, wait on the metavariables.
+        case mbMvT of
+          Nothing -> do
+            mvT <- metaVarTC mv elims1'
+            done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2')]
+          Just mvT -> do
+            mvT' <- eliminateTC mvT elims1'
+            done =<< checkEqual (ctx1, type1, mvT', ctx2, type2_0, t2')
+      Right inv -> do
         debug $ do
-          if ctxChanged
-          then return "** No change in context"
-          else do
-            ctx1Doc <- prettyContextTC ctx1
-            ctx2Doc <- prettyContextTC ctx2
-            return $
-              "** New contexts:" $$
-              "left:" //> ctx1Doc $$
-              "right:" //> ctx2Doc
-        type1 <- liftTermM $ sub type1_0
-        t2 <- liftTermM $ sub t2_0
-        when ctxChanged $ debug $ do
-          type1Doc <- prettyTermTC type1
-          t2Doc <- prettyTermTC t2
+          invDoc <- prettyInvertMetaTC inv
           return $
-            "** Type and term after eta-expanding vars:" $$
-            "type:" //> type1Doc $$
-            "term:" //> t2Doc
-        -- See if we can invert the metavariable
-        ttInv <- invertMeta elims1
-        let invOrMvs = case ttInv of
-              TTOK inv       -> Right inv
-              TTMetaVars mvs -> Left $ HS.insert mv mvs
-              -- TODO here we should also wait on metavars on the right that
-              -- could simplify the problem.
-              TTFail ()      -> Left $ HS.singleton mv
-        case invOrMvs of
-          Left mvs -> do
-            debug_ $ "** Couldn't invert"
-            -- If we can't invert, try to prune the variables not
-            -- present on the right from the eliminators.
-            t2' <- nfTC t2
-            -- TODO should we really prune allowing all variables here?  Or
-            -- only the rigid ones?
-            fvs <- fvAll <$> freeVarsTC t2'
-            elims1' <- mapM nf'TC elims1
-            mbMvT <- prune fvs mv elims1'
-            -- If we managed to prune them, restart the equality.
-            -- Otherwise, wait on the metavariables.
-            case mbMvT of
-              Nothing -> do
-                mvT <- metaVarTC mv elims1'
-                done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2')]
-              Just mvT -> do
-                mvT' <- eliminateTC mvT elims1'
-                done =<< checkEqual (ctx1, type1, mvT', ctx2, type2_0, t2')
-          Right inv -> do
-            debug $ do
-              invDoc <- prettyInvertMetaTC inv
-              return $
-                "** Could invert, now pruning" $$
-                "inversion:" //> invDoc
-            t2_1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t2
-            debug $ do
-              t1Doc <- prettyTermTC t2_1
-              return $ "** Pruned term:" //> t1Doc
-            t2_2 <- applyInvertMeta inv t2_1
-            case t2_2 of
-              TTOK t2' -> do
-                mvs <- metaVarsTC t2'
-                when (mv `HS.member` mvs) $
-                  checkError $ OccursCheckFailed mv t2'
-                Done <$> checkedInstantiateMetaVar mv t2'
-              TTMetaVars mvs -> do
-                debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
-                mvT <- metaVarTC mv elims1
-                done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2)]
-              TTFail v ->
-                checkError $ FreeVariableInEquatedTerm mv elims1 t2 v
+            "** Could invert, now pruning" $$
+            "inversion:" //> invDoc
+        t2_1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t2
+        debug $ do
+          t1Doc <- prettyTermTC t2_1
+          return $ "** Pruned term:" //> t1Doc
+        t2_2 <- applyInvertMeta inv t2_1
+        case t2_2 of
+          TTOK t2' -> do
+            mvs <- metaVarsTC t2'
+            when (mv `HS.member` mvs) $
+              checkError $ OccursCheckFailed mv t2'
+            Done <$> checkedInstantiateMetaVar mv t2'
+          TTMetaVars mvs -> do
+            debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
+            mvT <- metaVarTC mv elims1
+            done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2)]
+          TTFail v ->
+            checkError $ FreeVariableInEquatedTerm mv elims1 t2 v
 
 -- | Eliminates projected variables by eta-expansion, thus modifying the
 -- context.

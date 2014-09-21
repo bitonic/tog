@@ -47,6 +47,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
           "type:" //> typeDoc $$
           "t:" //> absTDoc
   debugBracket msg $ do
+    -- Don't create this here, it might not be necessary.
     mvT <- fresh ctx type_
     let waitForUnifiedType' type' t = waitForUnifiedType ctx type_ type' mvT t
     case absT of

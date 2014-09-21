@@ -16,6 +16,7 @@ executable tc
                      , containers >= 0.5
                      , hashable >= 1.2
                      , hashtables >= 1.1
+                     , haskeline >= 0.7
                      , lens >= 4.4
                      , mtl >= 2.1
                      , optparse-applicative >= 0.10
@@ -23,7 +24,6 @@ executable tc
                      , transformers-compat >= 0.3
                      , unordered-containers >= 0.2
                      , wl-pprint >= 1.1
-                     , haskeline >= 0.7
 
   hs-source-dirs:      src, bnfc
   default-language:    Haskell2010

@@ -106,7 +106,6 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
         debug_ $ "** New kills:" <+> PP.pretty (map unNamed kills1)
         if any unNamed kills1
           then do
-            debug_ "boohay"
             newMv <- addMetaVar newMvType
             mvT <- killArgs newMv kills1
             instantiateMetaVar oldMv mvT
@@ -169,7 +168,7 @@ shouldKill vs t = runMaybeT $ do
       mzero
     Con dataCon args -> do
       guard =<< lift (isRecordConstr dataCon)
-      and <$> mapM (MaybeT . shouldKill vs) args
+      or <$> mapM (MaybeT . shouldKill vs) args
     App (Def f) _ -> do
       neutr <- not <$> lift (isNeutral f =<< withSignature id)
       if neutr then mzero else fallback
@@ -461,6 +460,24 @@ killArgs newMv kills = do
                    ]
   body <- metaVarTC newMv . map Apply =<< mapM varTC vs
   foldl' (\body' _ -> lamTC =<< body') (return body) kills
+
+etaExpandMetaVar :: (IsTerm t) => Type t -> Term t -> TC t s (Maybe (Term t))
+etaExpandMetaVar type_ t = do
+  mbRecordDataCon <- runMaybeT $ do
+    App (Meta mv) elims <- lift $ whnfViewTC t
+    App (Def tyCon) _ <- lift $ whnfViewTC type_
+    Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
+    return (mv, elims, dataCon)
+  case mbRecordDataCon of
+    Just (mv, elims, dataCon) -> do
+      let msg' = "*** Eta-expanding metavar " <+> PP.pretty mv <+>
+                 "with datacon" <+> PP.pretty dataCon
+      debugBracket_ msg' $ do
+        mvT <- instantiateDataCon mv dataCon
+        mvT' <- eliminateTC mvT elims
+        return $ Just mvT'
+    Nothing -> do
+      return Nothing
 
 -- Non-metas stuff
 ------------------------------------------------------------------------
