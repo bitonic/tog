@@ -7,7 +7,7 @@ module TypeCheck3.Elaborate
   , ElabM
   ) where
 
-import           Prelude                          hiding (mapM_)
+import           Prelude                          hiding (mapM_, pi)
 
 import qualified Control.Lens                     as L
 
@@ -40,7 +40,7 @@ elaborate
   :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> ElabM t (Term t, Constraint t)
 elaborate ctx type_ absT = atSrcLoc absT $ do
   let msg = do
-        typeDoc <- prettyTermTC type_
+        typeDoc <- prettyTermM type_
         let absTDoc = PP.pretty absT
         return $
           "*** elaborate" $$
@@ -56,7 +56,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
       A.Pi name synDom synCod -> do
         (dom, constrDom) <- elaborate ctx set synDom
         (cod, constrCod) <- elaborate (Ctx.Snoc ctx (name, dom)) set synCod
-        t <- piTC dom cod
+        t <- pi dom cod
         return (mvT, Conj [waitForUnifiedType' set t, constrDom, constrCod])
       A.Fun synDom synCod -> do
         elaborate ctx type_ (A.Pi "_" synDom synCod)
@@ -66,29 +66,29 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         (type', constrType) <- elaborate ctx set synType
         (t1, constrT1) <- elaborate ctx type' synT1
         (t2, constrT2) <- elaborate ctx type' synT2
-        t <- equalTC type' t1 t2
+        t <- equal type' t1 t2
         return (mvT, Conj [waitForUnifiedType' set t, constrType, constrT1, constrT2])
       A.Lam name synBody -> do
         dom <- fresh ctx set
         let ctx' = Ctx.Snoc ctx (name, dom)
         cod <- fresh ctx' set
         (body, constrBody) <- elaborate ctx' cod synBody
-        type' <- piTC dom cod
-        t <- lamTC body
+        type' <- pi dom cod
+        t <- lam body
         return (mvT, Conj [waitForUnifiedType' type' t, constrBody])
       A.Refl _ -> do
         eqType <- fresh ctx set
         t1 <- fresh ctx eqType
-        type' <- equalTC eqType t1 t1
+        type' <- equal eqType t1 t1
         return (mvT, waitForUnifiedType' type' refl)
       A.Con dataCon synArgs -> do
         DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
         tyConType <- definitionType =<< getDefinition tyCon
         tyConArgs <- fillArgsWithMetas ctx tyConType
-        appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
+        appliedDataConType <-  Tel.substs tyConParsTel dataConType tyConArgs
         (dataConArgs, constrDataConArgs) <- elaborateDataConArgs ctx appliedDataConType synArgs
-        type' <- appTC (Def tyCon) $ map Apply tyConArgs
-        t <- conTC dataCon dataConArgs
+        type' <- app (Def tyCon) $ map Apply tyConArgs
+        t <- con dataCon dataConArgs
         return (mvT, Conj (waitForUnifiedType' type' t : constrDataConArgs))
       A.App h elims -> do
         elaborateApp' ctx type_ h (reverse elims)
@@ -97,11 +97,11 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
 -- elements with metavariables.
 fillArgsWithMetas :: IsTerm t => Ctx t -> Type t -> ElabM t [Term t]
 fillArgsWithMetas ctx' type' = do
-  typeView <- whnfViewTC type'
+  typeView <- whnfView type'
   case typeView of
     Pi dom cod -> do
       arg <- fresh ctx' dom
-      cod' <- instantiateTC cod arg
+      cod' <- instantiate cod arg
       (arg :) <$> fillArgsWithMetas ctx' cod'
     Set -> do
       return []
@@ -132,9 +132,9 @@ elaborateDataConArgs
 elaborateDataConArgs _ _ [] =
   return ([], [])
 elaborateDataConArgs ctx type_ (synArg : synArgs) = do
-  Pi dom cod <- whnfViewTC type_
+  Pi dom cod <- whnfView type_
   (arg, constrArg) <- elaborate ctx dom synArg
-  cod' <- instantiateTC cod arg
+  cod' <- instantiate cod arg
   (args, constrArgs) <- elaborateDataConArgs ctx cod' synArgs
   return (arg : args, constrArg : constrArgs)
 
@@ -143,19 +143,19 @@ inferHead
   => Ctx t -> A.Head -> ElabM t (Term t, Type t)
 inferHead ctx synH = atSrcLoc synH $ case synH of
   A.Var name -> do
-    mbV <- liftTermM $ Ctx.lookupName name ctx
+    mbV <-  Ctx.lookupName name ctx
     case mbV of
       Nothing -> do
         checkError $ NameNotInScope name
       Just (v, type_) -> do
-        h <- appTC (Var v) []
+        h <- app (Var v) []
         return (h, type_)
   A.Def name -> do
     type_ <- definitionType =<< getDefinition name
-    h <- appTC (Def name) []
+    h <- app (Def name) []
     return (h, type_)
   A.J{} -> do
-    h <- appTC J []
+    h <- app J []
     return (h, typeOfJ)
 
 elaborateApp'
@@ -163,8 +163,8 @@ elaborateApp'
   => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraint t)
 elaborateApp' ctx type_ h elims = do
   let msg = do
-        ctxDoc <- prettyContextTC ctx
-        typeDoc <- prettyTermTC type_
+        ctxDoc <- prettyM ctx
+        typeDoc <- prettyTermM type_
         return $
           "*** elaborateApp" $$
           "ctx:" //> ctxDoc $$
@@ -184,23 +184,23 @@ elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
   dom <- fresh ctx set
   -- TODO better name here
   cod <- fresh (Ctx.Snoc ctx ("_", dom)) set
-  typeF <- piTC dom cod
+  typeF <- pi dom cod
   (f, constrF) <- elaborateApp' ctx typeF h elims
   (arg', constrArg) <- elaborate ctx dom arg
-  type' <- instantiateTC cod arg'
-  t <- eliminateTC f [Apply arg']
+  type' <- instantiate cod arg'
+  t <- eliminate f [Apply arg']
   mvT <- fresh ctx type_
   return (mvT, Conj [waitForUnifiedType ctx type_ type' mvT t, constrF, constrArg])
 elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
   tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType
-  typeRec <- appTC (Def tyCon) (map Apply tyConArgs)
+  typeRec <- app (Def tyCon) (map Apply tyConArgs)
   (rec_, constrRec) <- elaborateApp' ctx typeRec h elims
-  type0 <- liftTermM $ Tel.substs projTypeTel projType tyConArgs
-  Pi _ type1 <- whnfViewTC type0
-  type' <- instantiateTC type1 rec_
-  t <- eliminateTC rec_ [Proj proj projIx]
+  type0 <- Tel.substs projTypeTel projType tyConArgs
+  Pi _ type1 <- whnfView type0
+  type' <- instantiate type1 rec_
+  t <- eliminate rec_ [Proj proj projIx]
   mvT <- fresh ctx type_
   return (mvT, Conj [waitForUnifiedType ctx type_ type' mvT t, constrRec])
 
@@ -209,5 +209,5 @@ elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
 
 fresh :: (IsTerm t) => Ctx t -> Type t -> ElabM t (Term t)
 fresh ctx type_ = do
-  mv <- addMetaVar =<< ctxPiTC ctx type_
-  ctxAppTC (metaVar mv []) ctx
+  mv <- addMetaVar =<< ctxPi ctx type_
+  ctxApp (metaVar mv []) ctx

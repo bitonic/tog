@@ -1,14 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Pretty
-  ( prettyTerm
-  , prettyElim
-  , prettyElims
-  , prettyDefinition
-  , prettyClause
-  , prettyTelWithTerm
-  , prettyTel
-  , prettyContext
+  ( prettyTermM
+  , PrettyM(prettyM)
+  , prettyListM
   ) where
 
 import           Conf
@@ -21,87 +16,88 @@ import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
 import           Term.Synonyms
 import qualified Term.Telescope                   as Tel
-import           Term.TermM
+import           Term.MonadTerm
 import           Term.Utils
 
-prettyTerm :: (IsTerm t) => Sig.Signature t -> t -> TermM PP.Doc
-prettyTerm sig = prettyPrecTerm sig 0
+prettyTermM :: (IsTerm t, MonadTerm t m) => t -> m PP.Doc
+prettyTermM = prettyPrecTerm 0
 
-prettyPrecTerm :: (IsTerm t) => Sig.Signature t -> Int -> t -> TermM PP.Doc
-prettyPrecTerm sig p t0 = do
-  dontNormalize <- confDontNormalizePP <$> readConf
-  t <- if dontNormalize then return t0 else nf sig t0
+prettyPrecTerm :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc
+prettyPrecTerm p t = do
   synT <- internalToTerm t
   return $ PP.prettyPrec p synT
 
-prettyElim :: (IsTerm t) => Sig.Signature t -> Elim t -> TermM PP.Doc
-prettyElim _   (Proj n _) = return $ PP.pretty $ A.Proj n
-prettyElim sig (Apply t)  = PP.pretty . A.Apply <$> (internalToTerm =<< instantiateMetaVars sig t)
+class PrettyM f where
+  prettyM :: (IsTerm t, MonadTerm t m) => f t -> m PP.Doc
 
-prettyElims :: (IsTerm t) => Sig.Signature t -> [Elim t] -> TermM PP.Doc
-prettyElims sig elims =
-  PP.list <$> mapM (prettyElim sig) elims
+instance PrettyM Elim where
+  prettyM (Proj n _) = return $ PP.pretty $ A.Proj n
+  prettyM (Apply t)  = PP.pretty . A.Apply <$> internalToTerm t
 
-prettyDefinition :: (IsTerm t) => Sig.Signature t -> Closed (Definition t) -> TermM PP.Doc
-prettyDefinition sig (Constant Postulate type_) =
-  prettyTerm sig type_
-prettyDefinition sig (Constant (Data dataCons) type_) = do
-  typeDoc <- prettyTerm sig type_
-  return $ "data" <+> typeDoc <+> "where" $$>
-           PP.vcat (map PP.pretty dataCons)
-prettyDefinition sig (Constant (Record dataCon fields) type_) = do
-  typeDoc <- prettyTerm sig type_
-  return $ "record" <+> typeDoc <+> "where" $$>
-           "constructor" <+> PP.pretty dataCon $$
-           "field" $$>
-           PP.vcat (map (PP.pretty . fst) fields)
-prettyDefinition sig (DataCon tyCon _ pars type_) = do
-  typeDoc <- prettyTelWithTerm sig pars type_
-  return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
-prettyDefinition sig (Projection _ tyCon pars type_) = do
-  typeDoc <- prettyTelWithTerm sig pars type_
-  return $ "projection" <+> PP.pretty tyCon $$> typeDoc
-prettyDefinition sig (Function type_ clauses) = do
-  typeDoc <- prettyTerm sig type_
-  clausesDoc <- mapM (prettyClause sig) $ ignoreInvertible clauses
-  return $ typeDoc $$ PP.vcat clausesDoc
+-- prettyListM :: (IsTerm t) => Sig.Signature t -> [Elim t] -> TermM PP.Doc
+-- prettyListM elims =
+--   PP.list <$> mapM (prettyElim sig) elims
 
-prettyClause :: (IsTerm t) => Sig.Signature t -> Closed (Clause t) -> TermM PP.Doc
-prettyClause sig (Clause pats body) = do
-  bodyDoc <- prettyTerm sig body
-  return $ PP.group $
-    PP.hsep (map PP.pretty pats ++ ["="]) //> bodyDoc
+instance PrettyM Definition where
+  prettyM (Constant Postulate type_) =
+    prettyTermM type_
+  prettyM (Constant (Data dataCons) type_) = do
+    typeDoc <- prettyTermM type_
+    return $ "data" <+> typeDoc <+> "where" $$>
+             PP.vcat (map PP.pretty dataCons)
+  prettyM (Constant (Record dataCon fields) type_) = do
+    typeDoc <- prettyTermM type_
+    return $ "record" <+> typeDoc <+> "where" $$>
+             "constructor" <+> PP.pretty dataCon $$
+             "field" $$>
+             PP.vcat (map (PP.pretty . fst) fields)
+  prettyM (DataCon tyCon _ pars type_) = do
+    typeDoc <- prettyTelWithTerm pars type_
+    return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
+  prettyM (Projection _ tyCon pars type_) = do
+    typeDoc <- prettyTelWithTerm pars type_
+    return $ "projection" <+> PP.pretty tyCon $$> typeDoc
+  prettyM (Function type_ clauses) = do
+    typeDoc <- prettyTermM type_
+    clausesDoc <- mapM prettyM $ ignoreInvertible clauses
+    return $ typeDoc $$ PP.vcat clausesDoc
 
-prettyTel
-  :: (IsTerm t)
-  => Sig.Signature t -> Tel.Tel t -> TermM PP.Doc
-prettyTel sig tel00 = fmap PP.group $ case tel00 of
-  Tel.Empty -> do
-    return "[]"
-  Tel.Cons (n0, type0) tel0 -> do
-    type0Doc <- prettyTerm sig type0
-    tel0Doc <- go tel0
-    return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc <> PP.linebreak <> tel0Doc
-  where
-    go Tel.Empty = do
-      return "]"
-    go (Tel.Cons (n, type_) tel) = do
-      typeDoc <- prettyTerm sig type_
-      telDoc <- go tel
-      return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <> PP.linebreak <> telDoc
+instance PrettyM Clause where
+  prettyM (Clause pats body) = do
+    bodyDoc <- prettyTermM body
+    return $ PP.group $
+      PP.hsep (map PP.pretty pats ++ ["="]) //> bodyDoc
+
+instance PrettyM Tel.Tel where
+  prettyM tel00 = fmap PP.group $ case tel00 of
+    Tel.Empty -> do
+      return "[]"
+    Tel.Cons (n0, type0) tel0 -> do
+      type0Doc <- prettyTermM type0
+      tel0Doc <- go tel0
+      return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc <> PP.linebreak <> tel0Doc
+    where
+      go Tel.Empty = do
+        return "]"
+      go (Tel.Cons (n, type_) tel) = do
+        typeDoc <- prettyTermM type_
+        telDoc <- go tel
+        return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <> PP.linebreak <> telDoc
 
 prettyTelWithTerm
-  :: (IsTerm t)
-  => Sig.Signature t -> Tel.Tel t -> t -> TermM PP.Doc
-prettyTelWithTerm sig Tel.Empty t =
-  prettyTerm sig t
-prettyTelWithTerm sig tel t =
-  (</>) <$> prettyTel sig tel <*> prettyTerm sig t
+  :: (IsTerm t, MonadTerm t m)
+  => Tel.Tel t -> t -> m PP.Doc
+prettyTelWithTerm Tel.Empty t =
+  prettyTermM t
+prettyTelWithTerm tel t =
+  (</>) <$> prettyM tel <*> prettyTermM t
 
-prettyContext
-  :: (IsTerm t)
-  => Sig.Signature t -> Ctx.Ctx t -> TermM PP.Doc
-prettyContext sig = prettyTel sig . Tel.tel
+instance PrettyM Ctx.Ctx where
+  prettyM = prettyM . Tel.tel
+
+prettyListM
+  :: (IsTerm t, PrettyM f, MonadTerm t m) => [f t] -> m PP.Doc
+prettyListM x = PP.list <$> mapM prettyM x
 
 -- Instances
 ------------------------------------------------------------------------
@@ -115,14 +111,14 @@ prettyApp :: PP.Pretty a => Int -> PP.Doc -> [a] -> PP.Doc
 prettyApp _ h []   = h
 prettyApp p h args = PP.condParens (p > 3) $ h </> PP.fillSep (map (PP.prettyPrec 4) args)
 
-
-
 -- To A.Expr
 ------------------------------------------------------------------------
 
 internalToTerm
-  :: (IsTerm t) => t -> TermM A.Expr
+  :: (IsTerm t, MonadTerm t m) => t -> m A.Expr
 internalToTerm t0 = do
+  dontNormalize <- confDontNormalizePP <$> readConf
+  t <- if dontNormalize then return t0 else nf t0
   tView <- view t0
   case tView of
     Lam body -> do

@@ -6,7 +6,9 @@ import           Data.Typeable                    (Typeable)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term
+import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
+import           Prelude.Extended
 
 -- Base terms
 ------------------------------------------------------------------------
@@ -22,23 +24,23 @@ instance IsTerm GraphReduce where
   termEq t1 t2 = genericTermEq t1 t2
 
   strengthen = genericStrengthen
-  getAbsName = genericGetAbsName
+  getAbsName' = genericGetAbsName
 
-  whnf sig t = do
-    blockedT <- genericWhnf sig t
-    tView <- readIORef . unGR =<< ignoreBlocking blockedT
-    writeIORef (unGR t) (tView)
+  whnf t = do
+    blockedT <- genericWhnf t
+    tView <- liftIO . readIORef . unGR =<< ignoreBlocking blockedT
+    liftIO $ writeIORef (unGR t) (tView)
     return $ blockedT
 
-  nf sig t = do
-    t' <- genericNf sig t
-    tView <- readIORef $ unGR t'
-    writeIORef (unGR t) (tView)
+  nf t = do
+    t' <- genericNf t
+    tView <- liftIO $ readIORef $ unGR t'
+    liftIO $ writeIORef (unGR t) (tView)
     return t
 
-  view = readIORef . unGR
+  view = liftIO . readIORef . unGR
 
-  unview tView = GR <$> newIORef tView
+  unview tView = GR <$> liftIO (newIORef tView)
 
   set = setGR
   refl = reflGR
@@ -57,4 +59,4 @@ reflGR = unsafePerformIO $ GR <$> newIORef Refl
 
 {-# NOINLINE typeOfJGR #-}
 typeOfJGR :: GraphReduce
-typeOfJGR = unsafePerformIO genericTypeOfJ
+typeOfJGR = unsafePerformIO $ monadTermIO Sig.empty genericTypeOfJ

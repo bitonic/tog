@@ -3,6 +3,7 @@ module Conf (Conf(..), defaultConf, writeConf, readConf) where
 import           Control.Monad                    (unless)
 import           System.IO.Unsafe                 (unsafePerformIO)
 import           Control.Concurrent.MVar          (MVar, newEmptyMVar, tryPutMVar, tryReadMVar)
+import           Control.Monad.IO.Class           (MonadIO, liftIO)
 
 -- Configuration
 ------------------------------------------------------------------------
@@ -29,14 +30,14 @@ defaultConf = Conf "S" False False False False False False False False False Fal
 confRef :: MVar Conf
 confRef = unsafePerformIO newEmptyMVar
 
-writeConf :: Conf -> IO ()
+writeConf :: (MonadIO m) => Conf -> m ()
 writeConf conf = do
-  ok <- tryPutMVar confRef conf
+  ok <- liftIO $ tryPutMVar confRef conf
   unless ok $ error "writeConf: already written."
 
-readConf :: IO Conf
+readConf :: (MonadIO m) => m Conf
 readConf = do
-  mbConf <- tryReadMVar confRef
+  mbConf <- liftIO $ tryReadMVar confRef
   case mbConf of
     Nothing   -> error "readConf: conf not written"
     Just conf -> return conf

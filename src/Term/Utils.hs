@@ -4,33 +4,34 @@ import           Prelude                          hiding (pi)
 
 import           Prelude.Extended
 import           Term.Types
-import           Term.TermM
+import           Term.MonadTerm
 import qualified Term.Signature                   as Sig
 
 instantiateMetaVars
-  :: forall t. (IsTerm t)
-  => Sig.Signature t -> t -> TermM t
-instantiateMetaVars sig t = do
+  :: forall t m. (IsTerm t, MonadTerm t m)
+  => t -> m t
+instantiateMetaVars t = do
   tView <- view t
+  sig <- askSignature
   case tView of
     Lam abs' ->
       lam abs'
     Pi dom cod ->
-      join $ pi <$> go dom <*> go cod
+      join $ pi <$> instantiateMetaVars dom <*> instantiateMetaVars cod
     Equal type_ x y ->
-      join $ equal <$> go type_ <*> go x <*> go y
+      join $ equal <$> instantiateMetaVars type_
+                   <*> instantiateMetaVars x
+                   <*> instantiateMetaVars y
     Refl ->
       return refl
     Con dataCon ts ->
-      con dataCon =<< mapM go ts
+      con dataCon =<< mapM instantiateMetaVars ts
     Set ->
       return set
     App (Meta mv) els | Just t' <- Sig.getMetaVarBody sig mv -> do
-      instantiateMetaVars sig =<< eliminate sig t' els
+      instantiateMetaVars =<< eliminate t' els
     App h els ->
       app h =<< mapM goElim els
   where
-    go t' = instantiateMetaVars sig t'
-
     goElim (Proj n field) = return $ Proj n field
-    goElim (Apply t')     = Apply <$> go t'
+    goElim (Apply t')     = Apply <$> instantiateMetaVars t'

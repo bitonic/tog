@@ -32,6 +32,7 @@ module Term.Types
   , weaken_
   , strengthen_
   , subst
+  , getAbsName
   , getAbsName_
   , eliminate
     -- ** Blocked
@@ -69,14 +70,14 @@ import           Prelude                          hiding (pi)
 
 import qualified Data.HashSet                     as HS
 
+import           Conf
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import qualified Syntax.Internal                  as A
 import qualified PrettyPrint                      as PP
-import {-# SOURCE #-} qualified Term.Signature    as Sig
 import {-# SOURCE #-} qualified Term.Telescope    as Tel
 import           Term.Synonyms
-import           Term.TermM
+import           Term.MonadTerm
 
 -- Var
 ------------------------------------------------------------------------
@@ -184,12 +185,12 @@ foldElim :: (t -> a) -> (Name -> Field -> a) -> Elim t -> a
 foldElim f _ (Apply t)  = f t
 foldElim _ g (Proj n f) = g n f
 
-elimEq :: (IsTerm t) => Elim t -> Elim t -> TermM Bool
+elimEq :: (IsTerm t, MonadTerm t m) => Elim t -> Elim t -> m Bool
 elimEq (Apply t1)   (Apply t2)   = termEq t1 t2
 elimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
 elimEq _            _            = return False
 
-elimsEq :: (IsTerm t) => [Elim t] -> [Elim t] -> TermM Bool
+elimsEq :: (IsTerm t, MonadTerm t m) => [Elim t] -> [Elim t] -> m Bool
 elimsEq []           []           = return True
 elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
 elimsEq _            _            = return False
@@ -215,19 +216,19 @@ instance (Hashable t) => Hashable (TermView t)
 -- MetaVars
 -----------
 
-metaVars :: (IsTerm t) => Sig.Signature t -> Term t -> TermM (HS.HashSet MetaVar)
-metaVars sig t = do
-  tView <- whnfView sig t
+metaVars :: (IsTerm t, MonadTerm t m) => Term t -> m (HS.HashSet MetaVar)
+metaVars t = do
+  tView <- whnfView t
   case tView of
-    Lam body           -> metaVars sig body
-    Pi domain codomain -> (<>) <$> metaVars sig domain <*> metaVars sig codomain
-    Equal type_ x y    -> mconcat <$> mapM (metaVars sig) [type_, x, y]
+    Lam body           -> metaVars body
+    Pi domain codomain -> (<>) <$> metaVars domain <*> metaVars codomain
+    Equal type_ x y    -> mconcat <$> mapM metaVars [type_, x, y]
     App h elims        -> (<>) <$> metaVarsHead h <*> (mconcat <$> mapM metaVarsElim elims)
     Set                -> return mempty
     Refl               -> return mempty
-    Con _ elims        -> mconcat <$> mapM (metaVars sig) elims
+    Con _ elims        -> mconcat <$> mapM metaVars elims
   where
-    metaVarsElim (Apply t') = metaVars sig t'
+    metaVarsElim (Apply t') = metaVars t'
     metaVarsElim (Proj _ _) = return mempty
 
     metaVarsHead (Meta mv) = return $ HS.singleton mv
@@ -237,62 +238,68 @@ metaVars sig t = do
 ---------
 
 class (Typeable t, Show t) => IsTerm t where
-    termEq :: t -> t -> TermM Bool
-    default termEq :: Eq t => t -> t -> TermM Bool
+    termEq :: MonadTerm t m => t -> t -> m Bool
+    default termEq :: (MonadTerm t m, Eq t) => t -> t -> m Bool
     termEq t1 t2 = return $ t1 == t2
 
     -- Abstraction related
     --------------------------------------------------------------------
     weaken
-      :: Int
+      :: (MonadTerm t m)
+      => Int
       -- ^ Weaken starting from this index..
       -> Int
       -- ^ ..by this much.
       -> t
-      -> TermM t
+      -> m t
 
     strengthen
-      :: Int -> Int -> Abs t -> TermM (Maybe t)
+      :: MonadTerm t m => Int -> Int -> Abs t -> m (Maybe t)
 
-    substs :: [(Int, t)] -> t -> TermM t
+    substs :: MonadTerm t m => [(Int, t)] -> t -> m t
 
-    instantiate :: (IsTerm t) => Abs t -> t -> TermM t
+    instantiate :: (MonadTerm t m, IsTerm t) => Abs t -> t -> m t
     instantiate t arg = do
       arg' <- weaken_ 1 arg
       t' <- subst 0 arg' t
       Just t'' <- strengthen_ 1 t'
       return t''
 
-    getAbsName :: Abs t -> TermM (Maybe Name)
+    getAbsName' :: MonadTerm t m => Abs t -> m (Maybe Name)
 
     -- Evaluation
     --------------------------------------------------------------------
-    whnf :: Sig.Signature t -> t -> TermM (Blocked t)
-    nf   :: Sig.Signature t -> t -> TermM t
+    whnf :: MonadTerm t m => t -> m (Blocked t)
+    nf   :: MonadTerm t m => t -> m t
 
     -- View / Unview
     --------------------------------------------------------------------
-    view   :: t -> TermM (TermView t)
+    view   :: MonadTerm t m => t -> m (TermView t)
 
-    whnfView :: Sig.Signature t -> t -> TermM (TermView t)
-    whnfView sig t = (view <=< ignoreBlocking <=< whnf sig) t
+    whnfView :: MonadTerm t m => t -> m (TermView t)
+    whnfView t = (view <=< ignoreBlocking <=< whnf) t
 
-    unview :: TermView t -> TermM t
+    unview :: MonadTerm t m => TermView t -> m t
 
     set     :: Closed t
     refl    :: Closed t
     typeOfJ :: Closed t
 
-weaken_ :: (IsTerm t) => Int -> t -> TermM t
+weaken_ :: (IsTerm t, MonadTerm t m) => Int -> t -> m t
 weaken_ n t = weaken 0 n t
 
-strengthen_ :: (IsTerm t) => Int -> t -> TermM (Maybe t)
+strengthen_ :: (IsTerm t, MonadTerm t m) => Int -> t -> m (Maybe t)
 strengthen_ = strengthen 0
 
-subst :: (IsTerm t) => Int -> t -> t -> TermM t
+subst :: (IsTerm t, MonadTerm t m) => Int -> t -> t -> m t
 subst ix arg = substs [(ix, arg)]
 
-getAbsName_ :: (IsTerm t) => Abs t -> TermM Name
+getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
+getAbsName t = do
+  skip <- confFastGetAbsName <$> readConf
+  if skip then return (Just "_") else getAbsName' t
+
+getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
 
 data Blocked t
@@ -319,7 +326,7 @@ data BlockedHead
 instance PP.Pretty BlockedHead where
   pretty = PP.text . show
 
-ignoreBlocking :: (IsTerm t) => Blocked t -> TermM t
+ignoreBlocking :: (IsTerm t, MonadTerm t m) => Blocked t -> m t
 ignoreBlocking (NotBlocked t)           = return t
 ignoreBlocking (MetaVarHead mv es)      = metaVar mv es
 ignoreBlocking (BlockedOn _ bh es) =
@@ -329,7 +336,7 @@ ignoreBlocking (BlockedOn _ bh es) =
   in app h es
 
 blockedEq
-  :: (IsTerm t) => Blocked t -> Blocked t -> TermM Bool
+  :: (IsTerm t, MonadTerm t m) => Blocked t -> Blocked t -> m Bool
 blockedEq blockedX blockedY = case (blockedX, blockedY) of
   (NotBlocked x, NotBlocked y) ->
     termEq x y
@@ -342,19 +349,19 @@ blockedEq blockedX blockedY = case (blockedX, blockedY) of
 
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
-eliminate :: (IsTerm t) => Sig.Signature t -> t -> [Elim t] -> TermM t
-eliminate sig t elims = do
-  tView <- whnfView sig t
+eliminate :: (IsTerm t, MonadTerm t m) => t -> [Elim t] -> m t
+eliminate t elims = do
+  tView <- whnfView t
   case (tView, elims) of
     (_, []) ->
         return t
     (Con _c args, Proj _ field : es) ->
         if unField field >= length args
         then error "eliminate: Bad elimination"
-        else eliminate sig (args !! unField field) es
+        else eliminate (args !! unField field) es
     (Lam body, Apply argument : es) -> do
         body' <- instantiate body argument
-        eliminate sig body' es
+        eliminate body' es
     (App h es1, es2) ->
         app h (es1 ++ es2)
     (_, _) ->
@@ -363,28 +370,28 @@ eliminate sig t elims = do
 -- Term utils
 -------------
 
-var :: (IsTerm t) => Var -> TermM t
+var :: (IsTerm t, MonadTerm t m) => Var -> m t
 var v = app (Var v) []
 
-lam :: (IsTerm t) => Abs t -> TermM t
+lam :: (IsTerm t, MonadTerm t m) => Abs t -> m t
 lam body = unview $ Lam body
 
-pi :: (IsTerm t) => t -> Abs t -> TermM t
+pi :: (IsTerm t, MonadTerm t m) => t -> Abs t -> m t
 pi domain codomain = unview $ Pi domain codomain
 
-equal :: (IsTerm t) => t -> t -> t -> TermM t
+equal :: (IsTerm t, MonadTerm t m) => t -> t -> t -> m t
 equal type_ x y = unview $ Equal type_ x y
 
-app :: (IsTerm t) => Head -> [Elim t] -> TermM t
+app :: (IsTerm t, MonadTerm t m) => Head -> [Elim t] -> m t
 app h elims = unview $ App h elims
 
-metaVar :: (IsTerm t) => MetaVar -> [Elim t] -> TermM t
+metaVar :: (IsTerm t, MonadTerm t m) => MetaVar -> [Elim t] -> m t
 metaVar mv = unview . App (Meta mv)
 
-def :: (IsTerm t) => Name -> [Elim t] -> TermM t
+def :: (IsTerm t, MonadTerm t m) => Name -> [Elim t] -> m t
 def f = unview . App (Def f)
 
-con :: (IsTerm t) => Name -> [t] -> TermM t
+con :: (IsTerm t, MonadTerm t m) => Name -> [t] -> m t
 con c args = unview (Con c args)
 
 -- TermTraverse
@@ -434,7 +441,7 @@ patternBindings (ConP _ pats) = patternsBindings pats
 patternsBindings :: [Pattern] -> Int
 patternsBindings = sum . map patternBindings
 
-instantiateClauseBody :: (IsTerm t) => ClauseBody t -> [t] -> TermM t
+instantiateClauseBody :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [t] -> m t
 instantiateClauseBody body args = substs (zip [0..] $ reverse args) body
 
 -- Definition

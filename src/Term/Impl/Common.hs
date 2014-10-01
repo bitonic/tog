@@ -25,7 +25,7 @@ import qualified Term.Signature                   as Sig
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
 substEliminate
-  :: (IsTerm t) => t -> [Elim t] -> TermM t
+  :: (IsTerm t, MonadTerm t m) => t -> [Elim t] -> m t
 substEliminate t elims = do
   tView <- view t
   case (tView, elims) of
@@ -44,7 +44,7 @@ substEliminate t elims = do
         error $ "substEliminate: Bad elimination"
 
 genericSubstsView
-  :: forall t. (IsTerm t) => [(Int, t)] -> TermView t -> TermM t
+  :: forall t m. (IsTerm t, MonadTerm t m) => [(Int, t)] -> TermView t -> m t
 genericSubstsView [] tView = do
   unview tView
 genericSubstsView args tView = do
@@ -78,7 +78,7 @@ genericSubstsView args tView = do
       substs args' t'
 
 genericSubsts
-  :: (IsTerm t) => [(Int, t)] -> t -> TermM t
+  :: (IsTerm t, MonadTerm t m) => [(Int, t)] -> t -> m t
 genericSubsts [] t = do
   return t
 genericSubsts args t = do
@@ -86,19 +86,20 @@ genericSubsts args t = do
   genericSubstsView args tView
 
 genericWhnf
-  :: (IsTerm t) => Sig.Signature t -> t -> TermM (Blocked t)
-genericWhnf sig t = do
+  :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
+genericWhnf t = do
   tView <- view t
+  sig <- askSignature
   case tView of
     App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv -> do
-      whnf sig =<< eliminate sig t' es
+      whnf =<< eliminate t' es
     App (Def defName) es | Function _ cs <- Sig.getDefinition sig defName -> do
-      mbT <- whnfFun sig defName es $ ignoreInvertible cs
+      mbT <- whnfFun defName es $ ignoreInvertible cs
       case mbT of
         Just t' -> return t'
         Nothing -> return $ NotBlocked t
     App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
-      refl'' <- whnf sig refl'
+      refl'' <- whnf refl'
       case refl'' of
         MetaVarHead mv _ ->
           return $ BlockedOn (HS.singleton mv) BlockedOnJ es0
@@ -107,7 +108,7 @@ genericWhnf sig t = do
         NotBlocked refl''' -> do
           reflView <- view refl'''
           case reflView of
-            Refl -> whnf sig =<< eliminate sig p (x : es)
+            Refl -> whnf =<< eliminate p (x : es)
             _    -> return $ NotBlocked t
     App (Meta mv) elims ->
       return $ MetaVarHead mv elims
@@ -115,63 +116,61 @@ genericWhnf sig t = do
       return $ NotBlocked t
 
 whnfFun
-  :: (IsTerm t)
-  => Sig.Signature t
-  -> Name -> [Elim t] -> [Closed (Clause t)]
-  -> TermM (Maybe (Blocked t))
-whnfFun _ _ _ [] = do
+  :: (IsTerm t, MonadTerm t m)
+  => Name -> [Elim t] -> [Closed (Clause t)]
+  -> m (Maybe (Blocked t))
+whnfFun _ _ [] = do
   return Nothing
-whnfFun sig funName es (Clause patterns body : clauses) = runMaybeT $ do
-  matched <- lift $ matchClause sig es patterns
+whnfFun funName es (Clause patterns body : clauses) = runMaybeT $ do
+  matched <- lift $ matchClause es patterns
   case matched of
     TTMetaVars mvs ->
       return $ BlockedOn mvs (BlockedOnFunction funName) es
     TTFail () ->
-      MaybeT $ whnfFun sig funName es clauses
+      MaybeT $ whnfFun funName es clauses
     TTOK (args, leftoverEs) -> lift $ do
       body' <- instantiateClauseBody body args
-      whnf sig =<< eliminate sig body' leftoverEs
+      whnf =<< eliminate body' leftoverEs
 
 matchClause
-  :: (IsTerm t)
-  => Sig.Signature t
-  -> [Elim t] -> [Pattern]
-  -> TermM (TermTraverse () ([t], [Elim t]))
-matchClause _ es [] =
+  :: (IsTerm t, MonadTerm t m)
+  => [Elim t] -> [Pattern]
+  -> m (TermTraverse () ([t], [Elim t]))
+matchClause es [] =
   return $ pure ([], es)
-matchClause sig (Apply arg : es) (VarP : patterns) = do
-  matched <- matchClause sig es patterns
+matchClause (Apply arg : es) (VarP : patterns) = do
+  matched <- matchClause es patterns
   return $ (\(args, leftoverEs) -> (arg : args, leftoverEs)) <$> matched
-matchClause sig (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
-  blockedArg <- whnf sig arg
+matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
+  blockedArg <- whnf arg
   case blockedArg of
     MetaVarHead mv _ -> do
-      matched <- matchClause sig es patterns
+      matched <- matchClause es patterns
       return $ TTMetaVars (HS.singleton mv) <*> matched
     BlockedOn mvs _ _ -> do
-      matched <- matchClause sig es patterns
+      matched <- matchClause es patterns
       return $ TTMetaVars mvs <*> matched
     NotBlocked t -> do
       tView <- view t
       case tView of
         Con dataCon' dataConArgs | dataCon == dataCon' ->
-          matchClause sig (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
+          matchClause (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
         _ ->
           return $ TTFail ()
-matchClause _ _ _ =
+matchClause _ _ =
   return $ TTFail ()
 
 genericGetAbsName
-  :: forall t.
-     (IsTerm t)
-  => Abs t -> TermM (Maybe Name)
+  :: forall t m.
+     (IsTerm t, MonadTerm t m)
+  => Abs t -> m (Maybe Name)
 genericGetAbsName =
   go $ \v -> if varIndex v == 0 then Just (varName v) else Nothing
   where
     lift' :: (Var -> Maybe Name) -> Var -> Maybe Name
     lift' f v = f =<< strengthenVar_ 1 v
 
-    go :: (Var -> Maybe Name) -> t -> TermM (Maybe Name)
+    go :: (Var -> Maybe Name) -> t -> m (Maybe Name)
     go f t = do
       tView <- view t
       case tView of
@@ -189,11 +188,11 @@ genericGetAbsName =
             mapM (foldElim (go f) (\_ _ -> return Nothing)) els
 
 genericStrengthen
-  :: (IsTerm t) => Int -> Int -> Abs t -> TermM (Maybe t)
+  :: (IsTerm t, MonadTerm t m) => Int -> Int -> Abs t -> m (Maybe t)
 genericStrengthen from0 by = runMaybeT . go from0
   where
-    go :: (IsTerm t)
-       => Int -> t -> MaybeT TermM t
+    go :: (IsTerm t, MonadTerm t m)
+       => Int -> t -> MaybeT m t
     go from t = do
       tView <- lift $ view t
       case tView of
@@ -221,24 +220,24 @@ genericStrengthen from0 by = runMaybeT . go from0
           els' <- mapM (mapElimM (go from)) els
           lift $ app h' els'
 
-genericNf :: forall t . (IsTerm t) => Sig.Signature t -> t -> TermM t
-genericNf sig t = do
-  tView <- whnfView sig t
+genericNf :: forall t m. (IsTerm t, MonadTerm t m) => t -> m t
+genericNf t = do
+  tView <- whnfView t
   case tView of
     Lam body ->
-      lam =<< nf sig body
+      lam =<< nf body
     Pi domain codomain ->
-      join $ pi <$> nf sig domain <*> nf sig codomain
+      join $ pi <$> nf domain <*> nf codomain
     Equal type_ x y ->
-      join $ equal <$> nf sig type_ <*> nf sig x <*> nf sig y
+      join $ equal <$> nf type_ <*> nf x <*> nf y
     Refl ->
       return refl
     Con dataCon args ->
-      join $ con dataCon <$> mapM (nf sig) args
+      join $ con dataCon <$> mapM nf args
     Set ->
       return set
     App h elims ->
-      join $ app h <$> mapM (nf' sig) elims
+      join $ app h <$> mapM nf' elims
 
 -- (A : Set) ->
 -- (x : A) ->
@@ -247,7 +246,7 @@ genericNf sig t = do
 -- (p : (x : A) -> P x x refl) ->
 -- (eq : _==_ A x y) ->
 -- P x y eq
-genericTypeOfJ :: forall t. (IsTerm t) => TermM (Closed (Type t))
+genericTypeOfJ :: forall t m. (IsTerm t, MonadTerm t m) => m (Closed (Type t))
 genericTypeOfJ =
     ("A", r set) -->
     ("x", v "A" 0) -->
@@ -264,18 +263,18 @@ genericTypeOfJ =
     r = return
 
     infixr 9 -->
-    (-->) :: (Name, TermM t) -> TermM t -> TermM t
+    (-->) :: (Name, m t) -> m t -> m t
     (_, type_) --> t = join $ pi <$> type_ <*> t
 
 genericTermEq
-  :: (IsTerm t)
-  => t -> t -> TermM Bool
+  :: (IsTerm t, MonadTerm t m)
+  => t -> t -> m Bool
 genericTermEq t1 t2 = do
   join $ genericTermViewEq <$> view t1 <*> view t2
 
 genericTermViewEq
-  :: (IsTerm t)
-  => TermView t -> TermView t -> TermM Bool
+  :: (IsTerm t, MonadTerm t m)
+  => TermView t -> TermView t -> m Bool
 genericTermViewEq tView1 tView2 = do
   case (tView1, tView2) of
     (Lam body1, Lam body2) ->
@@ -301,8 +300,8 @@ genericTermViewEq tView1 tView2 = do
     argsEq _              _              = return False
 
 genericWeaken
-  :: (IsTerm t)
-  => Int -> Int -> t -> TermM t
+  :: (IsTerm t, MonadTerm t m)
+  => Int -> Int -> t -> m t
 genericWeaken from by t = do
   tView <- view t
   case tView of

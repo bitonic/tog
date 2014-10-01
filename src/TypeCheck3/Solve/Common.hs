@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module TypeCheck3.Solve.Common where
 
-import           Prelude                          hiding (any)
+import           Prelude                          hiding (any, pi)
 
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
@@ -32,7 +32,7 @@ pruneTerm
     -> TC t s (Term t)
 pruneTerm vs t = do
   let msg = do
-        tDoc <- prettyTermTC t
+        tDoc <- prettyTermM t
         return $
           "*** Pruning term" $$
           "allowed vars:" <+> PP.pretty (Set.toList vs) $$
@@ -45,29 +45,29 @@ pruneTerm'
     -> Term t
     -> TC t s (Term t)
 pruneTerm' vs t = do
-  tView <- whnfViewTC t
+  tView <- whnfView t
   case tView of
     Lam body -> do
-      name <- getAbsNameTC body
-      lamTC =<< pruneTerm' (addVar name) body
+      name <- getAbsName_ body
+      lam =<< pruneTerm' (addVar name) body
     Pi domain codomain -> do
-      name <- getAbsNameTC codomain
-      join $ piTC <$> pruneTerm' vs domain <*> pruneTerm' (addVar name) codomain
+      name <- getAbsName_ codomain
+      join $ pi <$> pruneTerm' vs domain <*> pruneTerm' (addVar name) codomain
     Equal type_ x y -> do
-      join $ equalTC <$> pruneTerm' vs type_ <*> pruneTerm' vs x <*> pruneTerm' vs y
+      join $ equal <$> pruneTerm' vs type_ <*> pruneTerm' vs x <*> pruneTerm' vs y
     App (Meta mv) elims -> do
       mbMvT <- prune vs mv elims
       case mbMvT of
-        Nothing  -> metaVarTC mv elims
-        Just mvT -> eliminateTC mvT elims
+        Nothing  -> metaVar mv elims
+        Just mvT -> eliminate mvT elims
     App h elims -> do
-      appTC h =<< mapM pruneElim elims
+      app h =<< mapM pruneElim elims
     Set ->
       return set
     Refl ->
       return refl
     Con dataCon args ->
-      conTC dataCon =<< mapM (pruneTerm' vs) args
+      con dataCon =<< mapM (pruneTerm' vs) args
   where
     pruneElim (Apply t') = Apply <$> pruneTerm' vs t'
     pruneElim (Proj n f) = return $ Proj n f
@@ -91,8 +91,8 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
   case mbKills of
     Just kills0 | or kills0 -> do
       let msg = do
-            mvTypeDoc <- prettyTermTC =<< getMetaVarType oldMv
-            elimsDoc <- prettyElimsTC elims
+            mvTypeDoc <- prettyTermM =<< getMetaVarType oldMv
+            elimsDoc <- prettyListM elims
             return $
               "*** prune" $$
               "metavar type:" //> mvTypeDoc $$
@@ -127,26 +127,26 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
     createNewMeta type_ [] =
       return (type_, [])
     createNewMeta type_ (kill : kills) = do
-      typeView <- whnfViewTC type_
+      typeView <- whnfView type_
       case typeView of
         Pi domain codomain -> do
-          name <- getAbsNameTC codomain
+          name <- getAbsName_ codomain
           (type', kills') <- createNewMeta codomain kills
           debug $ do
-            domDoc <- prettyTermTC domain
-            typeDoc <- prettyTermTC type'
+            domDoc <- prettyTermM domain
+            typeDoc <- prettyTermM type'
             return $
               "** createNewMeta" $$
               "kill:" <+> PP.pretty kill $$
               "type:" //> domDoc $$
               "strengthening:" //> typeDoc
           let notKilled = do
-                type'' <- piTC domain type'
+                type'' <- pi domain type'
                 return (type'', named name False : kills')
           if not kill
             then notKilled
             else do
-              mbType <- liftTermM . strengthen_ 1 =<< nfTC type'
+              mbType <- strengthen_ 1 =<< nf type'
               case mbType of
                 (Just type'') -> return (type'', named name True : kills')
                 _             -> debug_ "** Couldn't strengthen" >> notKilled
@@ -162,7 +162,7 @@ shouldKill
   :: (IsTerm t)
   => Set.Set Var -> Term t -> TC t s (Maybe Bool)
 shouldKill vs t = runMaybeT $ do
-  tView <- lift $ whnfViewTC t
+  tView <- lift $ whnfView t
   case tView of
     Lam _ ->
       mzero
@@ -170,13 +170,13 @@ shouldKill vs t = runMaybeT $ do
       guard =<< lift (isRecordConstr dataCon)
       or <$> mapM (MaybeT . shouldKill vs) args
     App (Def f) _ -> do
-      neutr <- not <$> lift (isNeutral f =<< withSignature id)
+      neutr <- not <$> lift (isNeutral f =<< askSignature)
       if neutr then mzero else fallback
     _ ->
       fallback
   where
-    fallback = lift $ withSignatureTermM $ \sig -> do
-      fvs <- freeVars sig t
+    fallback = lift $ do
+      fvs <- freeVars t
       return $ not (fvRigid fvs `Set.isSubsetOf` vs)
 
     -- | Check whether a term @Def f es@ could be reduced, if its arguments
@@ -208,7 +208,7 @@ prettyInvertMetaTC
   :: (IsTerm t) => InvertMeta t -> TC t s PP.Doc
 prettyInvertMetaTC (InvertMeta ts vs) = do
   ts' <- forM ts $ \(v, t) -> do
-    tDoc <- prettyTermTC t
+    tDoc <- prettyTermM t
     return $ PP.pretty (v, tDoc)
   return $ PP.list ts' $$ PP.pretty vs
 
@@ -238,7 +238,7 @@ invertMeta elims0 = case mapM isApply elims0 of
     -- metavariable.
     go :: [Term t] -> [Var] -> TC t s (TermTraverse () (InvertMeta t))
     go args vs = do
-      res <- checkArgs . zip args =<< mapM varTC vs
+      res <- checkArgs . zip args =<< mapM var vs
       return $ case res of
         TTFail ()      -> TTFail ()
         TTMetaVars mvs -> TTMetaVars mvs
@@ -262,12 +262,12 @@ invertMeta elims0 = case mapM isApply elims0 of
       -- ^ Term inside (corresponding bound variable)
       -> TC t s (TermTraverse () [(Var, Term t)])
     checkArg arg v = do
-      blockedArg <- whnfTC arg
+      blockedArg <- whnf arg
       case blockedArg of
         -- If the argument is a variable, we are simply going to replace
         -- it with the corresponding variable in the body of the meta.
         NotBlocked t -> do
-          tView <- whnfViewTC t
+          tView <- whnfView t
           case tView of
             App (Var v0) [] ->
               return $ pure [(v0, v)]
@@ -280,7 +280,7 @@ invertMeta elims0 = case mapM isApply elims0 of
               case tyConDef of
                 Constant (Record _ fields) _ -> do
                   recArgs' <- forM (zip recArgs fields) $ \(recArg, (n, f)) ->
-                    (recArg, ) <$> eliminateTC v [Proj n f]
+                    (recArg, ) <$> eliminate v [Proj n f]
                   checkArgs recArgs'
                 _ ->
                   return $ TTFail ()
@@ -321,7 +321,7 @@ applyInvertMeta (InvertMeta sub vsNum) t = do
 -- | Wraps the given term 'n' times.
 lambdaAbstract :: (IsTerm t) => Int -> Term t -> TC t s (Term t)
 lambdaAbstract n t | n <= 0 = return t
-lambdaAbstract n t = (lamTC <=< lambdaAbstract (n - 1)) t
+lambdaAbstract n t = (lam <=< lambdaAbstract (n - 1)) t
 
 applyInvertMetaSubst
   :: forall t s.
@@ -340,33 +340,33 @@ applyInvertMetaSubst sub t0 =
           -> (Var -> TC t s (Either Var (Term t)))
     lift' f v0 = case strengthenVar_ 1 v0 of
       Nothing ->
-        Right <$> varTC v0
+        Right <$> var v0
       Just v -> do
         e <- f v
         case e of
           Left v' -> return $ Left v'
-          Right t -> Right <$> (liftTermM (weaken_ 1 t))
+          Right t -> Right <$> weaken_ 1 t
 
     go :: (Var -> TC t s (Either Var (Term t))) -> Term t -> TC t s (TermTraverse Var t)
     go invert t = do
-      tView <- whnfViewTC t
+      tView <- whnfView t
       case tView of
         Lam body -> do
-          traverse lamTC =<< go (lift' invert) body
+          traverse lam =<< go (lift' invert) body
         Pi dom cod -> do
           dom' <- go invert dom
           cod' <- go (lift' invert) cod
-          sequenceA $ piTC <$> dom' <*> cod'
+          sequenceA $ pi <$> dom' <*> cod'
         Equal type_ x y -> do
           type' <- go invert type_
           x' <- go invert x
           y' <- go invert y
-          sequenceA $ equalTC <$> type' <*> x' <*> y'
+          sequenceA $ equal <$> type' <*> x' <*> y'
         Refl ->
           return $ pure refl
         Con dataCon args -> do
           args' <- mapM (go invert) args
-          sequenceA $ conTC dataCon <$> sequenceA args'
+          sequenceA $ con dataCon <$> sequenceA args'
         Set ->
           return $ pure set
         App h elims -> do
@@ -381,18 +381,18 @@ applyInvertMetaSubst sub t0 =
               return $ TTMetaVars $ HS.singleton mv
             (Var v, _) -> do
               inv <- invert v
-              sequenceA $ eliminateTC <$> either TTFail pure inv <*> resElims
+              sequenceA $ eliminate <$> either TTFail pure inv <*> resElims
             (Def f, _) ->
-              sequenceA $ appTC (Def f) <$> resElims
+              sequenceA $ app (Def f) <$> resElims
             (J, _) ->
-              sequenceA $ appTC J <$> resElims
+              sequenceA $ app J <$> resElims
             (Meta mv, _) ->
-              sequenceA $ appTC (Meta mv) <$> resElims
+              sequenceA $ app (Meta mv) <$> resElims
 
 isProjectedVar :: (IsTerm t) => Elim t -> MaybeT (TC t s) (Var, Name)
 isProjectedVar elim = do
   Apply t <- return elim
-  App (Var v) vElims <- lift $ whnfViewTC t
+  App (Var v) vElims <- lift $ whnfView t
   projName : _ <- forM vElims $ \vElim -> do
     Proj projName _ <- return vElim
     return projName
@@ -427,45 +427,45 @@ etaContractElim (Proj n f) = return $ Proj n f
 
 etaContract :: (IsTerm t) => t -> TC t s t
 etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
-  t0View <- lift $ whnfViewTC t0
+  t0View <- lift $ whnfView t0
   case t0View of
     -- TODO it should be possible to do it also for constructors
     Lam body -> do
-      App h elims@(_:_) <- lift $ whnfViewTC =<< etaContract body
+      App h elims@(_:_) <- lift $ whnfView =<< etaContract body
       Apply t <- return $ last elims
-      App (Var v) [] <- lift $ whnfViewTC t
+      App (Var v) [] <- lift $ whnfView t
       guard $ varIndex v == 0
-      Just t' <- lift $ liftTermM $ strengthen_ 1 =<< app h (init elims)
+      Just t' <- lift $ strengthen_ 1 =<< app h (init elims)
       return t'
     Con dataCon args -> do
       DataCon tyCon _ _ _ <- lift $ getDefinition dataCon
       Constant (Record _ fields) _ <- lift $ getDefinition tyCon
       guard $ length args == length fields
       (t : ts) <- sequence (zipWith isRightProjection fields args)
-      guard =<< (and <$> lift (liftTermM (mapM (termEq t) ts)))
+      guard =<< (and <$> lift (mapM (termEq t) ts))
       return t
     _ ->
       mzero
   where
     isRightProjection (n, f) t = do
-      App h elims@(_ : _) <- lift $ whnfViewTC =<< etaContract t
+      App h elims@(_ : _) <- lift $ whnfView =<< etaContract t
       Proj n' f' <- return $ last elims
       guard $ n == n' && f == f'
-      lift $ nfTC =<< appTC h (init elims)
+      lift $ nf =<< app h (init elims)
 
 killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (Closed (Term t))
 killArgs newMv kills = do
   let vs = reverse [ V (Named n ix)
                    | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
                    ]
-  body <- metaVarTC newMv . map Apply =<< mapM varTC vs
-  foldl' (\body' _ -> lamTC =<< body') (return body) kills
+  body <- metaVar newMv . map Apply =<< mapM var vs
+  foldl' (\body' _ -> lam =<< body') (return body) kills
 
 etaExpandMetaVar :: (IsTerm t) => Type t -> Term t -> TC t s (Maybe (Term t))
 etaExpandMetaVar type_ t = do
   mbRecordDataCon <- runMaybeT $ do
-    App (Meta mv) elims <- lift $ whnfViewTC t
-    App (Def tyCon) _ <- lift $ whnfViewTC type_
+    App (Meta mv) elims <- lift $ whnfView t
+    App (Def tyCon) _ <- lift $ whnfView type_
     Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
     return (mv, elims, dataCon)
   case mbRecordDataCon of
@@ -474,7 +474,7 @@ etaExpandMetaVar type_ t = do
                  "with datacon" <+> PP.pretty dataCon
       debugBracket_ msg' $ do
         mvT <- instantiateDataCon mv dataCon
-        mvT' <- eliminateTC mvT elims
+        mvT' <- eliminate mvT elims
         return $ Just mvT'
     Nothing -> do
       return Nothing
@@ -489,8 +489,8 @@ intersectVars :: (IsTerm t) => [Elim t] -> [Elim t] -> TC t s (Maybe [Named Bool
 intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
   where
     areVars (Apply t1) (Apply t2) = do
-      t1View <- lift $ whnfViewTC t1
-      t2View <- lift $ whnfViewTC t2
+      t1View <- lift $ whnfView t1
+      t2View <- lift $ whnfView t2
       case (t1View, t2View) of
         (App (Var v1) [], App (Var v2) []) -> return $ (v1 /= v2) <$ unVar v1 -- prune different vars
         (_,               _)               -> mzero
@@ -509,13 +509,13 @@ instantiateDataCon mv dataCon = do
   DataCon tyCon _ dataConTypeTel dataConType <- getDefinition dataCon
   -- We know that the metavariable must have the right type (we have
   -- typechecked the arguments already).
-  App (Def tyCon') tyConArgs0 <- whnfViewTC endType'
+  App (Def tyCon') tyConArgs0 <- whnfView endType'
   Just tyConArgs <- return $ mapM isApply tyConArgs0
   True <- return $ tyCon == tyCon'
-  appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConArgs
+  appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConArgs
   (dataConArgsCtx, _) <- unrollPi appliedDataConType
   dataConArgs <- createMvsPars ctxMvArgs $ Tel.tel dataConArgsCtx
-  mvT <- ctxLamTC ctxMvArgs =<< conTC dataCon dataConArgs
+  mvT <- ctxLam ctxMvArgs =<< con dataCon dataConArgs
   -- given the usage, here we know that the body is going to be well typed.
   -- TODO make sure that the above holds.
   instantiateMetaVar mv mvT
@@ -527,7 +527,7 @@ createMvsPars _ Tel.Empty =
   return []
 createMvsPars ctx (Tel.Cons (_, type') tel) = do
   mv  <- addMetaVarInCtx ctx type'
-  mvs <- createMvsPars ctx =<< liftTermM (Tel.instantiate tel mv)
+  mvs <- createMvsPars ctx =<< Tel.instantiate tel mv
   return (mv : mvs)
 
 applyProjection
@@ -541,11 +541,11 @@ applyProjection
   -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
-  h' <- eliminateTC h [Proj proj projIx]
-  App (Def tyCon') tyConArgs0 <- whnfViewTC type_
+  h' <- eliminate h [Proj proj projIx]
+  App (Def tyCon') tyConArgs0 <- whnfView type_
   let _assert@True = tyCon == tyCon'
   let Just tyConArgs = mapM isApply tyConArgs0
-  appliedProjType <- liftTermM $ Tel.substs projTypeTel projType tyConArgs
-  Pi _ endType <- whnfViewTC appliedProjType
-  endType' <- instantiateTC endType h
+  appliedProjType <- Tel.substs projTypeTel projType tyConArgs
+  Pi _ endType <- whnfView appliedProjType
+  endType' <- instantiate endType h
   return (h', endType')

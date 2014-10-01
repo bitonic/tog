@@ -18,7 +18,7 @@ import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
-import           Term.TermM
+import           Term.MonadTerm
 
 -- Ctx
 ------------------------------------------------------------------------
@@ -41,13 +41,13 @@ length (Snoc ctx _) = 1 + length ctx
 ctx1 ++ Empty                 = ctx1
 ctx1 ++ (Snoc ctx2 namedType) = Snoc (ctx1 ++ ctx2) namedType
 
-weaken :: (Term.IsTerm t) => Int -> Ctx t -> t -> TermM t
+weaken :: (Term.IsTerm t, MonadTerm t m) => Int -> Ctx t -> t -> m t
 weaken ix ctx t = Term.weaken ix (length ctx) t
 
-weaken_ :: (Term.IsTerm t) => Ctx t -> t -> TermM t
+weaken_ :: (Term.IsTerm t, MonadTerm t m) => Ctx t -> t -> m t
 weaken_ = weaken 0
 
-lookupName :: Term.IsTerm t => Name -> Ctx t -> TermM (Maybe (Term.Var, t))
+lookupName :: (Term.IsTerm t, MonadTerm t m) => Name -> Ctx t -> m (Maybe (Term.Var, t))
 lookupName n = go 0
   where
     go _ Empty =
@@ -57,7 +57,7 @@ lookupName n = go 0
       then Just . (Term.V (Term.named n ix), ) <$> Term.weaken_ (ix + 1) type_
       else go (ix + 1) ctx
 
-lookupVar :: Term.IsTerm t => Term.Var -> Ctx t -> TermM (Maybe t)
+lookupVar :: (Term.IsTerm t, MonadTerm t m) => Term.Var -> Ctx t -> m (Maybe t)
 lookupVar v _ | Term.varIndex v < 0 =
   error "lookupVar: negative argument"
 lookupVar v ctx0 =
@@ -72,7 +72,7 @@ lookupVar v ctx0 =
         then Just type_
         else go (i - 1) ctx
 
-getVar :: (Term.IsTerm t) => Term.Var -> Closed (Ctx t) -> TermM t
+getVar :: (Term.IsTerm t, MonadTerm t m) => Term.Var -> Closed (Ctx t) -> m t
 getVar v ctx = do
   mbT <- lookupVar v ctx
   case mbT of

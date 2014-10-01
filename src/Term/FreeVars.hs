@@ -11,7 +11,7 @@ import qualified Data.Set                         as Set
 
 import qualified Term.Signature                   as Sig
 import           Term.Types
-import           Term.TermM
+import           Term.MonadTerm
 
 -- Free variables
 ------------------------------------------------------------------------
@@ -31,9 +31,9 @@ instance Monoid FreeVars where
     FreeVars (rigid1 `mappend` rigid2) (flex1 `mappend` flex2)
 
 freeVars
-  :: forall t. (IsTerm t)
-  => Sig.Signature t -> t -> TermM FreeVars
-freeVars sig = go Just
+  :: forall t m. (IsTerm t, MonadTerm t m)
+  => t -> m FreeVars
+freeVars = go Just
   where
     lift :: (Var -> Maybe Var) -> (Var -> Maybe Var)
     lift f (V (Named n ix)) =
@@ -41,9 +41,9 @@ freeVars sig = go Just
       then f $ V (Named n (ix - 1))
       else Nothing
 
-    go :: (Var -> Maybe Var) -> t -> TermM FreeVars
+    go :: (Var -> Maybe Var) -> t -> m FreeVars
     go strengthen' t0 = do
-      tView <- whnfView sig t0
+      tView <- whnfView t0
       case tView of
         Lam body ->
           go (lift strengthen') body

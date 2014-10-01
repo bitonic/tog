@@ -3,10 +3,9 @@ module TypeCheck3.Solve.TwoContexts
   ( SolveState
   , initSolveState
   , solve
-  , prettySolveState
   ) where
 
-import           Prelude                          hiding (any)
+import           Prelude                          hiding (any, pi)
 
 import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Maybe        (runMaybeT)
@@ -15,6 +14,7 @@ import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Syntax.Internal                  (Name)
 
+import           Conf
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
 import qualified PrettyPrint                      as PP
@@ -24,7 +24,7 @@ import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import qualified Term.Signature                   as Sig
 import qualified TypeCheck3.Common                as Common
-import           TypeCheck3.Common                hiding (Constraint(..), prettyConstraintTC)
+import           TypeCheck3.Common                hiding (Constraint(..))
 import qualified TypeCheck3.Check                 as Check
 import           TypeCheck3.Monad
 import           TypeCheck3.Solve.Common
@@ -90,7 +90,7 @@ solve c = do
     go progress newConstrs ((mvs, constr) : constrs) = do
       debug $ do
         let mvsDoc = PP.pretty $ HS.toList mvs
-        constrDoc <- prettyConstraintTC constr
+        constrDoc <- prettyM constr
         return $
           "** Attempting" $$
           "constraint:" //> constrDoc $$
@@ -124,16 +124,16 @@ solve' (UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2) = do
 solve' (Check ctx type_ term) = do
   coreCheckOrPostpone ctx type_ term $ return []
 
-prettySolveState
-  :: (IsTerm t) => Sig.Signature t -> Bool -> SolveState t -> TermM PP.Doc
-prettySolveState sig detailed (SolveState cs0) = execWriterT $ go cs0
-  where
-    go cs = do
-      tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
-      when detailed $ forM_ cs $ \(mvs, c) -> do
-        tell $ PP.line <> "------------------------------------------------------------------------"
-        cDoc <- lift $ prettyConstraint sig c
-        tell $ PP.line <> "** Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
+instance PrettyM SolveState where
+  prettyM (SolveState cs0) = do
+     detailed <- confProblemsReport <$> readConf
+     let go cs = do
+           tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
+           when detailed $ forM_ cs $ \(mvs, c) -> do
+             tell $ PP.line <> "------------------------------------------------------------------------"
+             cDoc <- lift $ prettyM c
+             tell $ PP.line <> "** Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
+     execWriterT $ go cs0
 
 -- This is local stuff
 ----------------------
@@ -157,12 +157,12 @@ checkEqual
   :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
   let msg = do
-        ctxXDoc <- prettyContextTC ctx1_0
-        typeXDoc <- prettyTermTC type1_0
-        xDoc <- prettyTermTC t1_0
-        ctxYDoc <- prettyContextTC ctx2_0
-        typeYDoc <- prettyTermTC type2_0
-        yDoc <- prettyTermTC t2_0
+        ctxXDoc <- prettyM ctx1_0
+        typeXDoc <- prettyTermM type1_0
+        xDoc <- prettyTermM t1_0
+        ctxYDoc <- prettyM ctx2_0
+        typeYDoc <- prettyTermM type2_0
+        yDoc <- prettyTermM t2_0
         return $
           "*** checkEqual" $$
           "ctxX:" //> ctxXDoc $$
@@ -192,10 +192,10 @@ checkSynEq
 checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
   debugBracket_ "*** Syntactic check" $ do
     -- Optimization: try with a simple syntactic check first.
-    t1' <- ignoreBlockingTC =<< whnfTC t1
-    t2' <- ignoreBlockingTC =<< whnfTC t2
+    t1' <- ignoreBlocking =<< whnf t1
+    t2' <- ignoreBlocking =<< whnf t2
     -- TODO add option to skip this check
-    eq <- termEqTC t1' t2'
+    eq <- termEq t1' t2'
     if eq
       then done []
       else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
@@ -230,34 +230,34 @@ etaExpand (ctx1, type1, t1, ctx2, type2, t2) = do
           return t
         Just t' -> do
           debug $ do
-            tDoc <- prettyTermTC t'
+            tDoc <- prettyTermM t'
             return $
               "** Expanded" <+> desc <+> "to" //> tDoc
           return t'
 
     expand type_ t = do
-      typeView <- whnfViewTC type_
+      typeView <- whnfView type_
       case typeView of
         App (Def tyCon) _ -> do
           tyConDef <- getDefinition tyCon
           case tyConDef of
             Constant (Record dataCon projs) _ -> do
-              tView <- whnfViewTC t
+              tView <- whnfView t
               case tView of
                 Con _ _ -> return Nothing
                 _       -> do
-                  ts <- mapM (\(n, ix) -> eliminateTC t [Proj n ix]) projs
-                  Just <$> conTC dataCon ts
+                  ts <- mapM (\(n, ix) -> eliminate t [Proj n ix]) projs
+                  Just <$> con dataCon ts
             _ ->
               return Nothing
         Pi _ codomain -> do
-          name <- getAbsNameTC codomain
-          v <- varTC $ boundVar name
-          tView <- whnfViewTC t
+          name <- getAbsName_ codomain
+          v <- var $ boundVar name
+          tView <- whnfView t
           case tView of
             Lam _ -> return Nothing
-            _     -> do t' <- liftTermM $ weaken_ 1 t
-                        t'' <- lamTC =<< eliminateTC t' [Apply v]
+            _     -> do t' <- weaken_ 1 t
+                        t'' <- lam =<< eliminate t' [Apply v]
                         return $ Just t''
         _ ->
           return Nothing
@@ -267,9 +267,9 @@ coreCheckOrPostpone
   => Ctx t -> Type t -> Term t -> TC t s (Constraints t) -> TC t s (Constraints t)
 coreCheckOrPostpone ctx type_ term ret = do
   let msg = do
-        ctxDoc <- prettyContextTC ctx
-        typeDoc <- prettyTermTC type_
-        termDoc <- prettyTermTC term
+        ctxDoc <- prettyM ctx
+        typeDoc <- prettyTermM type_
+        termDoc <- prettyTermM term
         return $
           "*** coreCheckOrPostpone" $$
           "ctx:" //> ctxDoc $$
@@ -279,8 +279,8 @@ coreCheckOrPostpone ctx type_ term ret = do
     mbErr <- catchTC $ Check.check ctx term type_
     case mbErr of
       Left _err -> do
-        mvs1 <- metaVarsTC type_
-        mvs2 <- metaVarsTC term
+        mvs1 <- metaVars type_
+        mvs2 <- metaVars term
         let mvs = mvs1 <> mvs2
         debug_ $ "** Could not typecheck, waiting on:" <+> PP.pretty (HS.toList mvs)
         when (HS.null mvs) $
@@ -302,14 +302,14 @@ checkMetaVars
   :: forall t s. (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
 checkMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
-  blockedT1 <- whnfTC t1
-  t1' <- ignoreBlockingTC blockedT1
-  blockedT2 <- whnfTC t2
-  t2' <- ignoreBlockingTC blockedT2
+  blockedT1 <- whnf t1
+  t1' <- ignoreBlocking blockedT1
+  blockedT2 <- whnf t2
+  t2' <- ignoreBlocking blockedT2
   let syntacticEqualityOrPostpone mvs = do
-        t1'' <- nfTC t1'
-        t2'' <- nfTC t2'
-        eq <- liftTermM $ termEq t1'' t2''
+        t1'' <- nf t1'
+        t2'' <- nf t2'
+        eq <- termEq t1'' t2''
         if eq
           then done []
           else do
@@ -347,7 +347,7 @@ checkEqualBlockedOn
 checkEqualBlockedOn ctx1 type1 mvs bh elims1 ctx2 type2 t2 = do
   let msg = "*** Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
             ", trying to invert definition" <+> PP.pretty bh
-  t1 <- ignoreBlockingTC $ BlockedOn mvs bh elims1
+  t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
   debugBracket_ msg $ do
     case bh of
       BlockedOnJ -> do
@@ -360,13 +360,13 @@ checkEqualBlockedOn ctx1 type1 mvs bh elims1 ctx2 type2 t2 = do
             debug_ "** Couldn't invert."
             fallback t1
           Invertible injClauses -> do
-            t2View <- whnfViewTC t2
+            t2View <- whnfView t2
             case t2View of
               App (Def fun2) elims2 | fun1 == fun2 -> do
                 debug_ "** Could invert, and same heads, checking spines."
                 equalSpine (Def fun1) ctx1 elims1 ctx2 elims2
               _ -> do
-                t2Head <- termHead =<< unviewTC t2View
+                t2Head <- termHead =<< unview t2View
                 case t2Head of
                   Nothing -> do
                     debug_ "** Definition invertible but we don't have a clause head."
@@ -403,11 +403,11 @@ checkEqualBlockedOn ctx1 type1 mvs bh elims1 ctx2 type2 t2 = do
 
     matchPat :: Name -> [Pattern] -> Elim t -> TC t s Bool
     matchPat dataCon pats (Apply t) = do
-      tView <- whnfViewTC t
+      tView <- whnfView t
       case tView of
         App (Meta mv) mvArgs -> do
           mvT <- instantiateDataCon mv dataCon
-          void $ matchPat dataCon pats . Apply =<< eliminateTC mvT mvArgs
+          void $ matchPat dataCon pats . Apply =<< eliminate mvT mvArgs
           return True
         Con dataCon' dataConArgs | dataCon == dataCon' ->
           matchPats pats (map Apply dataConArgs)
@@ -442,8 +442,8 @@ checkEqualSpine
   -> Ctx t -> Type t -> Head -> [Elim (Term t)]
   -> TC t s (Constraints t)
 checkEqualSpine ctx1 type1 h1 elims1 ctx2 type2 h2 elims2  = do
-  h1' <- appTC h1 []
-  h2' <- appTC h2 []
+  h1' <- app h1 []
+  h2' <- app h2 []
   checkEqualSpine' ctx1 type1 (Just h1') elims1 ctx2 type2 (Just h2') elims2
 
 checkEqualSpine'
@@ -457,13 +457,13 @@ checkEqualSpine' ctx1 type1 mbH1 (elim1 : elims1) ctx2 type2 mbH2 (elim2 : elims
   let msg = do
         let prettyMbH mbH = case mbH of
               Nothing -> return "No head"
-              Just h  -> prettyTermTC h
-        type1Doc <- prettyTermTC type1
+              Just h  -> prettyTermM h
+        type1Doc <- prettyTermM type1
         h1Doc <- prettyMbH mbH1
-        elims1Doc <- prettyElimsTC $ elim1 : elims1
-        type2Doc <- prettyTermTC type2
+        elims1Doc <- prettyListM $ elim1 : elims1
+        type2Doc <- prettyTermM type2
         h2Doc <- prettyMbH mbH2
-        elims2Doc <- prettyElimsTC $ elim2 : elims2
+        elims2Doc <- prettyListM $ elim2 : elims2
         return $
           "*** checkEqualSpine" $$
           "type1:" //> type1Doc $$
@@ -475,13 +475,13 @@ checkEqualSpine' ctx1 type1 mbH1 (elim1 : elims1) ctx2 type2 mbH2 (elim2 : elims
   debugBracket msg $ do
     case (elim1, elim2) of
       (Apply arg1, Apply arg2) -> do
-        Pi dom1 cod1 <- whnfViewTC type1
-        Pi dom2 cod2 <- whnfViewTC type2
+        Pi dom1 cod1 <- whnfView type1
+        Pi dom2 cod2 <- whnfView type2
         res1  <- checkEqual (ctx1, dom1, arg1, ctx2, dom2, arg2)
-        cod1' <- instantiateTC cod1 arg1
-        mbH1' <- traverse (`eliminateTC` [Apply arg1]) mbH1
-        cod2' <- instantiateTC cod2 arg2
-        mbH2' <- traverse (`eliminateTC` [Apply arg2]) mbH2
+        cod1' <- instantiate cod1 arg1
+        mbH1' <- traverse (`eliminate` [Apply arg1]) mbH1
+        cod2' <- instantiate cod2 arg2
+        mbH2' <- traverse (`eliminate` [Apply arg2]) mbH2
         res2  <- checkEqualSpine' ctx1 cod1' mbH1' elims1 ctx2 cod2' mbH2' elims2
         return $ res1 ++ res2
       (Proj proj projIx, Proj proj' projIx') | proj == proj' && projIx == projIx' -> do
@@ -503,9 +503,9 @@ metaAssign
 metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
   mvType <- getMetaVarType mv
   let msg = do
-        mvTypeDoc <- prettyTermTC mvType
-        elimsDoc <- prettyElimsTC elims1_0
-        tDoc <- prettyTermTC t2_0
+        mvTypeDoc <- prettyTermM mvType
+        elimsDoc <- prettyListM elims1_0
+        tDoc <- prettyTermM t2_0
         return $
           "*** metaAssign" $$
           "assigning metavar:" <+> PP.pretty mv $$
@@ -520,17 +520,17 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
       if ctxChanged
       then return "** No change in context"
       else do
-        ctx1Doc <- prettyContextTC ctx1
-        ctx2Doc <- prettyContextTC ctx2
+        ctx1Doc <- prettyM ctx1
+        ctx2Doc <- prettyM ctx2
         return $
           "** New contexts:" $$
           "left:" //> ctx1Doc $$
           "right:" //> ctx2Doc
-    type1 <- liftTermM $ sub type1_0
-    t2 <- liftTermM $ sub t2_0
+    type1 <- sub type1_0
+    t2 <- sub t2_0
     when ctxChanged $ debug $ do
-      type1Doc <- prettyTermTC type1
-      t2Doc <- prettyTermTC t2
+      type1Doc <- prettyTermM type1
+      t2Doc <- prettyTermM t2
       return $
         "** Type and term after eta-expanding vars:" $$
         "type:" //> type1Doc $$
@@ -548,20 +548,20 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
         debug_ $ "** Couldn't invert"
         -- If we can't invert, try to prune the variables not
         -- present on the right from the eliminators.
-        t2' <- nfTC t2
+        t2' <- nf t2
         -- TODO should we really prune allowing all variables here?  Or
         -- only the rigid ones?
-        fvs <- fvAll <$> freeVarsTC t2'
-        elims1' <- mapM nf'TC elims1
+        fvs <- fvAll <$> freeVars t2'
+        elims1' <- mapM nf' elims1
         mbMvT <- prune fvs mv elims1'
         -- If we managed to prune them, restart the equality.
         -- Otherwise, wait on the metavariables.
         case mbMvT of
           Nothing -> do
-            mvT <- metaVarTC mv elims1'
+            mvT <- metaVar mv elims1'
             done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2')]
           Just mvT -> do
-            mvT' <- eliminateTC mvT elims1'
+            mvT' <- eliminate mvT elims1'
             done =<< checkEqual (ctx1, type1, mvT', ctx2, type2_0, t2')
       Right inv -> do
         debug $ do
@@ -571,18 +571,18 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
             "inversion:" //> invDoc
         t2_1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t2
         debug $ do
-          t1Doc <- prettyTermTC t2_1
+          t1Doc <- prettyTermM t2_1
           return $ "** Pruned term:" //> t1Doc
         t2_2 <- applyInvertMeta inv t2_1
         case t2_2 of
           TTOK t2' -> do
-            mvs <- metaVarsTC t2'
+            mvs <- metaVars t2'
             when (mv `HS.member` mvs) $
               checkError $ OccursCheckFailed mv t2'
             Done <$> checkedInstantiateMetaVar mv t2'
           TTMetaVars mvs -> do
             debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
-            mvT <- metaVarTC mv elims1
+            mvT <- metaVar mv elims1
             done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2)]
           TTFail v ->
             checkError $ FreeVariableInEquatedTerm mv elims1 t2 v
@@ -597,19 +597,19 @@ etaExpandVars
   -- ^ Eliminators on the MetaVar
   -> Ctx t
   -- ^ Context on the right
-  -> TC t s (Ctx t, [Elim t], Ctx t, t -> TermM t)
+  -> TC t s (Ctx t, [Elim t], Ctx t, t -> TC t s t)
   -- ^ Returns the new contexts, the new eliminators, and a substituting
   -- action to update terms to the new context.
 etaExpandVars ctx1 elims1 ctx2 = return (ctx1, elims1, ctx2, return)
 -- etaExpandVars ctx1 elims1_0 ctx2 = do
 --   -- First, check if any of the eliminators are projections.  Otherwise
 --   -- we definitely don't need expansion.
---   elims1 <- mapM (etaContractElim <=< nf'TC) elims1_0
+--   elims1 <- mapM (etaContractElim <=< nf') elims1_0
 --   attempt <- any isJust <$> mapM (runMaybeT . isProjectedVar) elims1
 --   if attempt
 --     then do
 --       (ctx1', ctx2', sub) <- expandRecordTypes ctx1 ctx2
---       elims1' <- liftTermM $ mapM (mapElimM sub) elims1
+--       elims1' <- mapM (mapElimM sub) elims1
 --       return (ctx1', elims1', ctx2', sub)
 --     else do
 --       return (ctx1, elims1, ctx2, return)
@@ -625,8 +625,8 @@ etaExpandVars ctx1 elims1 ctx2 = return (ctx1, elims1, ctx2, return)
 --     go Tel.Empty Tel.Empty = do
 --       return (Tel.Empty, Tel.Empty, return)
 --     go (Tel.Cons (name1, type1) tel1) (Tel.Cons (name2, type2) tel2) = do
---       type1View <- whnfViewTC type1
---       type2View <- whnfViewTC type2
+--       type1View <- whnfView type1
+--       type2View <- whnfView type2
 --       case (type1View, type2View) of
 --         (Constant (Record dataCon
 --       error "TODO"
@@ -634,9 +634,9 @@ etaExpandVars ctx1 elims1 ctx2 = return (ctx1, elims1, ctx2, return)
 --       error "impossibe.expandRecordType"
 
 {-
-  elims1 <- mapM (etaContractElim <=< nf'TC) elims1_0
+  elims1 <- mapM (etaContractElim <=< nf') elims1_0
   let msg = do
-        elimsDoc <- prettyElimsTC elims1
+        elimsDoc <- prettyListM elims1
         return $
           "*** Eta-expand vars" $$
           "elims:" //> elimsDoc
@@ -653,7 +653,7 @@ etaExpandVars ctx1 elims1 ctx2 = return (ctx1, elims1, ctx2, return)
         mbSub2 <- etaExpandVar tyCon type2 tel2
         case mbSub2 of
           Just (tel2', sub2) -> do
-            elims2 <- mapM (liftTermM . mapElimM sub1) elims1
+            elims2 <- mapM (mapElimM sub1) elims1
             (ctx1_2, elims3, sub1', ctx2_2, sub2') <-
               etaExpandVars (ctx1 Ctx.++ Tel.unTel tel') elims2
 --         return (ctx2, elims3, (sub >=> sub'))
@@ -675,15 +675,15 @@ etaExpandVar tyCon type_ tel = do
   case tyConDef of
     Constant (Record dataCon projs) _ -> do
       DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
-      App (Def _) tyConPars0 <- whnfViewTC type_
+      App (Def _) tyConPars0 <- whnfView type_
       let Just tyConPars = mapM isApply tyConPars0
-      appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+      appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
       (dataConPars, _) <- assert ("etaExpandVar, unrollPiWithNames:" <+>) $
         unrollPiWithNames appliedDataConType (map fst projs)
-      dataConT <- conTC dataCon =<< mapM varTC (ctxVars dataConPars)
-      tel' <- liftTermM $ Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
+      dataConT <- con dataCon =<< mapM var (ctxVars dataConPars)
+      tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
       let telLen = Tel.length tel'
-      dataConT' <- liftTermM $ weaken_ telLen dataConT
+      dataConT' <- weaken_ telLen dataConT
       let sub t = subst telLen dataConT' =<< weaken (telLen + 1) 1 t
       return $ Just (dataConPars Tel.++ tel', sub)
     _ -> do
@@ -692,18 +692,18 @@ etaExpandVar tyCon type_ tel = do
 
 compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
-  type1View <- whnfViewTC type1
-  t1View <- whnfViewTC t1
-  type2View <- whnfViewTC type2
-  t2View <- whnfViewTC t2
-  let mkVar n ix = varTC $ V $ named n ix
+  type1View <- whnfView type1
+  t1View <- whnfView t1
+  type2View <- whnfView type2
+  t2View <- whnfView t2
+  let mkVar n ix = var $ V $ named n ix
   case (type1View, t1View, type2View, t2View) of
     -- Note that here we rely on canonical terms to have canonical
     -- types, and on the terms to be eta-expanded.
     (Pi dom1 cod1, Lam body1, Pi dom2 cod2, Lam body2) -> do
       -- TODO there is a bit of duplication between here and expansion.
-      name1 <- getAbsNameTC body1
-      name2 <- getAbsNameTC body2
+      name1 <- getAbsName_ body1
+      name2 <- getAbsName_ body2
       ctx1' <- extendContext ctx1 (name1, dom1)
       ctx2' <- extendContext ctx2 (name2, dom2)
       checkEqual (ctx1', cod1, body1, ctx2', cod2, body2)
@@ -711,17 +711,17 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
       -- Pi : (A : Set) -> (A -> Set) -> Set
       piType <- do
         av <- mkVar "A" 0
-        b <- piTC av set
-        piTC set =<< piTC b set
-      cod1' <- lamTC cod1
-      cod2' <- lamTC cod2
+        b <- pi av set
+        pi set =<< pi b set
+      cod1' <- lam cod1
+      cod2' <- lam cod2
       checkEqualApplySpine ctx1 piType [dom1, cod1'] ctx2 piType [dom2, cod2']
     (Set, Equal type1' l1 r1, Set, Equal type2' l2 r2) -> do
       -- _==_ : (A : Set) -> A -> A -> Set
       equalType_ <- do
         xv <- mkVar "A" 0
         yv <- mkVar "A" 1
-        piTC set =<< piTC xv =<< piTC yv set
+        pi set =<< pi xv =<< pi yv set
       checkEqualApplySpine ctx1 equalType_ [type1', l1, r1] ctx2 equalType_ [type2', l2, r2]
     (Equal _ _ _, Refl, Equal _ _ _, Refl) -> do
       return []
@@ -731,8 +731,8 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
        let Just tyConPars1 = mapM isApply tyConPars10
        let Just tyConPars2 = mapM isApply tyConPars20
        DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
-       appliedDataConType1 <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars1
-       appliedDataConType2 <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars2
+       appliedDataConType1 <- Tel.substs dataConTypeTel dataConType tyConPars1
+       appliedDataConType2 <- Tel.substs dataConTypeTel dataConType tyConPars2
        checkEqualApplySpine ctx1 appliedDataConType1 dataConArgs1 ctx2 appliedDataConType2 dataConArgs2
     (Set, Set, Set, Set) -> do
       return []
@@ -743,48 +743,43 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
 
 -- Pretty printing Constraints
 
-prettyConstraintTC
-  :: (IsTerm t) => Constraint t -> TC t s PP.Doc
-prettyConstraintTC c = withSignatureTermM $ \sig -> prettyConstraint sig c
-
-prettyConstraint
-  :: (IsTerm t) => Sig.Signature t -> Constraint t -> TermM PP.Doc
-prettyConstraint sig c0 = do
-  case fromMaybe c0 (simplify c0) of
-    Unify ctx1 type1 t1 ctx2 type2 t2 -> do
-      ctx1Doc <- prettyContext sig ctx1
-      type1Doc <- prettyTerm sig type1
-      t1Doc <- prettyTerm sig t1
-      ctx2Doc <- prettyContext sig ctx2
-      type2Doc <- prettyTerm sig type2
-      t2Doc <- prettyTerm sig t2
-      return $ group $
-        group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
-        hang 2 "=" //
-        group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
-    c1 :>>: c2 -> do
-      c1Doc <- prettyConstraint sig c1
-      c2Doc <- prettyConstraint sig c2
-      return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
-    Conj cs -> do
-      csDoc <- mapM (prettyConstraint sig) cs
-      return $
-        "Conj" //> PP.list csDoc
-    UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
-      return "TODO UnifySpine"
-      -- ctxDoc <- prettyContext sig ctx
-      -- typeDoc <- prettyTerm sig type_
-      -- hDoc <- case mbH of
-      --   Nothing -> return "no head"
-      --   Just h  -> prettyTerm sig h
-      -- elims1Doc <- prettyElims sig elims1
-      -- elims2Doc <- prettyElims sig elims2
-      -- return $
-      --   "UnifySpine" $$
-      --   "ctx:" //> ctxDoc $$
-      --   "type:" //> typeDoc $$
-      --   "h:" //> hDoc $$
-      --   "elims1:" //> elims1Doc $$
-      --   "elims2:" //> elims2Doc
-    Check ctx type_ term -> do
-      return "TODO Check"
+instance PrettyM Constraint where
+  prettyM c0 = do
+    case fromMaybe c0 (simplify c0) of
+      Unify ctx1 type1 t1 ctx2 type2 t2 -> do
+        ctx1Doc <- prettyM ctx1
+        type1Doc <- prettyTermM type1
+        t1Doc <- prettyTermM t1
+        ctx2Doc <- prettyM ctx2
+        type2Doc <- prettyTermM type2
+        t2Doc <- prettyTermM t2
+        return $ group $
+          group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
+          hang 2 "=" //
+          group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
+      c1 :>>: c2 -> do
+        c1Doc <- prettyM c1
+        c2Doc <- prettyM c2
+        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+      Conj cs -> do
+        csDoc <- mapM prettyM cs
+        return $
+          "Conj" //> PP.list csDoc
+      UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
+        return "TODO UnifySpine"
+        -- ctxDoc <- prettyM ctx
+        -- typeDoc <- prettyTermM type_
+        -- hDoc <- case mbH of
+        --   Nothing -> return "no head"
+        --   Just h  -> prettyTermM h
+        -- elims1Doc <- prettyListM elims1
+        -- elims2Doc <- prettyListM elims2
+        -- return $
+        --   "UnifySpine" $$
+        --   "ctx:" //> ctxDoc $$
+        --   "type:" //> typeDoc $$
+        --   "h:" //> hDoc $$
+        --   "elims1:" //> elims1Doc $$
+        --   "elims2:" //> elims2Doc
+      Check ctx type_ term -> do
+        return "TODO Check"

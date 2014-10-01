@@ -62,7 +62,7 @@ instance IsTerm EasyWeaken where
       Normal _     -> genericStrengthen (EW ewRef)
 
   -- TODO write faster versions
-  getAbsName = genericGetAbsName
+  getAbsName' = genericGetAbsName
 
   whnf sig t = do
     blockedT <- genericWhnf sig t

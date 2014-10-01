@@ -16,22 +16,22 @@ check
   => Ctx t -> Term t -> Type t -> TC t s ()
 check ctx t type_ = do
   let msg = do
-        tDoc <- prettyTermTC t
-        typeDoc <- prettyTermTC type_
+        tDoc <- prettyTermM t
+        typeDoc <- prettyTermM type_
         return $
           "*** Core.check" $$
           "t:" //> tDoc $$
           "type:" //> typeDoc
   debugBracket msg $ do
-    tView <- whnfViewTC t
+    tView <- whnfView t
     case tView of
       Con dataCon args -> do
         DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
         tyConArgs <- matchTyCon tyCon type_
-        appliedDataConType <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
+        appliedDataConType <- Tel.substs tyConParsTel dataConType tyConArgs
         checkConArgs ctx args appliedDataConType
       Refl -> do
-        typeView <- whnfViewTC type_
+        typeView <- whnfView type_
         case typeView of
           Equal type' t1 t2 -> do
             checkEqual (ctx, type', t1, t2)
@@ -39,7 +39,7 @@ check ctx t type_ = do
             checkError $ ExpectingEqual type_
       Lam body -> do
         (dom, cod) <- matchPi type_
-        name <- getAbsNameTC body
+        name <- getAbsName_ body
         ctx' <- extendContext ctx (name, dom)
         check ctx' body cod
       _ -> do
@@ -54,7 +54,7 @@ checkConArgs _ [] _ = do
 checkConArgs ctx (arg : args) type_ = do
   (dom, cod) <- matchPi type_
   check ctx arg dom
-  cod' <- liftTermM $ instantiate cod arg
+  cod' <-  instantiate cod arg
   checkConArgs ctx args cod'
 
 checkSpine
@@ -69,8 +69,8 @@ checkSpine ctx h (el : els) type_ = case el of
   Apply arg -> do
     (dom, cod) <- matchPi type_
     check ctx arg dom
-    cod' <- instantiateTC cod arg
-    h' <- eliminateTC h [Apply arg]
+    cod' <- instantiate cod arg
+    h' <- eliminate h [Apply arg]
     checkSpine ctx h' els cod'
 
 applyProjection
@@ -84,22 +84,22 @@ applyProjection
   -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
-  h' <- eliminateTC h [Proj proj projIx]
+  h' <- eliminate h [Proj proj projIx]
   tyConArgs <- matchTyCon tyCon type_
-  appliedProjType <- liftTermM $ Tel.substs projTypeTel projType tyConArgs
-  appliedProjTypeView <- whnfViewTC appliedProjType
+  appliedProjType <-  Tel.substs projTypeTel projType tyConArgs
+  appliedProjTypeView <- whnfView appliedProjType
   case appliedProjTypeView of
     Pi _ endType -> do
-      endType' <- instantiateTC endType h
+      endType' <- instantiate endType h
       return (h', endType')
     _ -> do
-      doc <- prettyTermTC appliedProjType
+      doc <- prettyTermM appliedProjType
       fatalError $ "impossible.applyProjection: " ++ render doc
 
 matchTyCon
   :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
 matchTyCon tyCon type_ = do
-  typeView <- whnfViewTC type_
+  typeView <- whnfView type_
   case typeView of
     App (Def tyCon') elims | tyCon' == tyCon -> do
       let Just tyConArgs = mapM isApply elims
@@ -110,7 +110,7 @@ matchTyCon tyCon type_ = do
 matchPi
   :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
 matchPi type_ = do
-  typeView <- whnfViewTC type_
+  typeView <- whnfView type_
   case typeView of
     Pi dom cod -> do
       return (dom, cod)
@@ -122,23 +122,23 @@ infer
   => Ctx t -> Term t -> TC t s (Type t)
 infer ctx t = do
   let msg = do
-        tDoc <- prettyTermTC t
+        tDoc <- prettyTermM t
         return $
           "** infer:" //> tDoc
   debugBracket msg $ do
-    tView <- whnfViewTC t
+    tView <- whnfView t
     case tView of
       Set ->
         return set
       Pi dom cod -> do
         check ctx dom set
-        name <- getAbsNameTC cod
+        name <- getAbsName_ cod
         ctx' <- extendContext ctx (name, dom)
         check ctx' cod set
         return set
       App h elims -> do
         type_ <- inferHead ctx h
-        h' <- appTC h []
+        h' <- app h []
         checkSpine ctx h' elims type_
       Equal type_ t1 t2 -> do
         check ctx type_ set
@@ -152,7 +152,7 @@ inferHead
   :: (IsTerm t)
   => Ctx t -> Head -> TC t s (Type t)
 inferHead ctx h = case h of
-  Var v    -> liftTermM $ Ctx.getVar v ctx
+  Var v    ->  Ctx.getVar v ctx
   Def name -> definitionType =<< getDefinition name
   J        -> return typeOfJ
   Meta mv  -> getMetaVarType mv
@@ -164,9 +164,9 @@ checkEqual
   => CheckEqual t -> TC t s ()
 checkEqual x@(_, type_, t1, t2) = do
   let msg = do
-        typeDoc <- prettyTermTC type_
-        t1Doc <- prettyTermTC t1
-        t2Doc <- prettyTermTC t2
+        typeDoc <- prettyTermM type_
+        t1Doc <- prettyTermM t1
+        t2Doc <- prettyTermM t2
         return $
           "*** Core.checkEqual" $$
           "type:" //> typeDoc $$
@@ -183,10 +183,10 @@ checkEqual x@(_, type_, t1, t2) = do
 checkSynEq :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
 checkSynEq (ctx, type_, t1, t2) = do
   -- Optimization: try with a simple syntactic check first.
-  t1' <- ignoreBlockingTC =<< whnfTC t1
-  t2' <- ignoreBlockingTC =<< whnfTC t2
+  t1' <- ignoreBlocking =<< whnf t1
+  t2' <- ignoreBlocking =<< whnf t2
   -- TODO add option to skip this check
-  eq <- termEqTC t1' t2'
+  eq <- termEq t1' t2'
   return $ if eq
     then Nothing
     else Just (ctx, type_, t1', t2')
@@ -199,49 +199,49 @@ etaExpand (ctx, type_, t1, t2) = do
   return $ Just (ctx, type_, t1', t2')
   where
     expand = do
-      typeView <- whnfViewTC type_
+      typeView <- whnfView type_
       case typeView of
         App (Def tyCon) _ -> do
           tyConDef <- getDefinition tyCon
           case tyConDef of
             Constant (Record dataCon projs) _ -> return $ \t -> do
-              tView <- whnfViewTC t
+              tView <- whnfView t
               case tView of
                 Con _ _ -> return t
                 _       -> do
-                  ts <- mapM (\(n, ix) -> eliminateTC t [Proj n ix]) projs
-                  conTC dataCon ts
+                  ts <- mapM (\(n, ix) -> eliminate t [Proj n ix]) projs
+                  con dataCon ts
             _ ->
               return return
         Pi _ codomain -> return $ \t -> do
-          name <- getAbsNameTC codomain
-          v <- varTC $ boundVar name
-          tView <- whnfViewTC t
+          name <- getAbsName_ codomain
+          v <- var $ boundVar name
+          tView <- whnfView t
           case tView of
             Lam _ -> return t
-            _     -> do t' <- liftTermM $ weaken_ 1 t
-                        t'' <- lamTC =<< eliminateTC t' [Apply v]
+            _     -> do t' <-  weaken_ 1 t
+                        t'' <- lam =<< eliminate t' [Apply v]
                         return t''
         _ ->
           return return
 
 compareTerms :: (IsTerm t) => CheckEqual t -> TC t s ()
 compareTerms (ctx, type_, t1, t2) = do
-  typeView <- whnfViewTC type_
-  t1View <- whnfViewTC t1
-  t2View <- whnfViewTC t2
+  typeView <- whnfView type_
+  t1View <- whnfView t1
+  t2View <- whnfView t2
   case (typeView, t1View, t2View) of
     -- Note that here we rely on canonical terms to have canonical
     -- types, and on the terms to be eta-expanded.
     (Pi dom cod, Lam body1, Lam body2) -> do
       -- TODO there is a bit of duplication between here and expansion.
-      name <- getAbsNameTC body1
+      name <- getAbsName_ body1
       ctx' <- extendContext ctx (name, dom)
       checkEqual (ctx', cod, body1, body2)
     (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
       checkEqual (ctx, set, dom1, dom2)
-      cod1' <- instantiateTC cod1 dom1
-      cod2' <- instantiateTC cod2 dom1
+      cod1' <- instantiate cod1 dom1
+      cod2' <- instantiate cod2 dom1
       checkEqual (ctx, set, cod1', cod2')
     (Set, Equal type1' l1 r1, Equal type2' l2 r2) -> do
       checkEqual (ctx, set, type1', type2')
@@ -253,13 +253,13 @@ compareTerms (ctx, type_, t1, t2) = do
       | dataCon == dataCon' -> do
         let Just tyConPars = mapM isApply tyConPars0
         DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
-        appliedDataConType <- liftTermM $ Tel.substs dataConTypeTel dataConType tyConPars
+        appliedDataConType <-  Tel.substs dataConTypeTel dataConType tyConPars
         checkEqualSpine ctx appliedDataConType Nothing (map Apply dataConArgs1) (map Apply dataConArgs2)
     (Set, Set, Set) -> do
       return ()
     (_, App h elims1, App h'' elims2) | h == h'' -> do
       hType <- inferHead ctx h
-      h' <- appTC h []
+      h' <- app h []
       checkEqualSpine ctx hType (Just h') elims1 elims2
     (_, _, _) -> do
      checkError $ TermsNotEqual type_ t1 type_ t2
@@ -274,8 +274,8 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
     (Apply arg1, Apply arg2) -> do
       (dom, cod) <- matchPi type_
       checkEqual (ctx, dom, arg1, arg2)
-      cod' <- liftTermM $ instantiate cod arg1
-      mbH' <- traverse (`eliminateTC` [Apply arg1]) mbH
+      cod' <-  instantiate cod arg1
+      mbH' <- traverse (`eliminate` [Apply arg1]) mbH
       checkEqualSpine ctx cod' mbH' elims1 elims2
     (Proj proj projIx, Proj proj' projIx') | proj == proj' && projIx == projIx' -> do
       let Just h = mbH

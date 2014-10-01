@@ -44,6 +44,7 @@ module Prelude.Extended
   , Monoid(..)
   , mplus
   , any
+  , MonadIO(..)
   ) where
 
 import Prelude ()
@@ -51,6 +52,7 @@ import Prelude ()
 import Control.Applicative
 import Control.Arrow
 import Control.Monad hiding (forM_, msum, forM)
+import Control.Monad.IO.Class
 import Data.Foldable
 import Data.Function
 import Data.Hashable

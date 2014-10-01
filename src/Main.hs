@@ -93,7 +93,7 @@ parseMain =
       , Haskeline.autoAddHistory = True
       }
 
-    interact :: (IsTerm t) => TCState' t -> Haskeline.InputT TermM ()
+    interact :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
     interact ts = do
       mbS <- Haskeline.getInputLine "> "
       forM_ mbS $ \s ->

@@ -3,6 +3,7 @@ module Term.Impl.Simple (Simple) where
 import           Data.Typeable                    (Typeable)
 
 import           Term
+import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
 import           System.IO.Unsafe                 (unsafePerformIO)
 
@@ -15,7 +16,7 @@ newtype Simple = S {unS :: TermView Simple}
 instance IsTerm Simple where
   -- termEq = genericTermEq
   strengthen = genericStrengthen
-  getAbsName = genericGetAbsName
+  getAbsName' = genericGetAbsName
 
   whnf = genericWhnf
   nf = genericNf
@@ -32,5 +33,5 @@ instance IsTerm Simple where
 
 {-# NOINLINE typeOfJS #-}
 typeOfJS :: Closed Simple
-typeOfJS = unsafePerformIO genericTypeOfJ
+typeOfJS = unsafePerformIO $ monadTermIO Sig.empty genericTypeOfJ
 

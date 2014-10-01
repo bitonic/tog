@@ -1,15 +1,13 @@
 module Term.Impl.Hashed where
 
-import           Control.Monad                    (unless)
-import           Data.Functor                     ((<$>))
 import qualified Data.HashTable.IO                as HT
 import           Data.Hashable                    (Hashable, hashWithSalt, hash)
-import           Data.Maybe                       (fromMaybe)
-import           Data.Typeable                    (Typeable)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term
+import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
+import           Prelude.Extended
 
 
 data Hashed = H Int (TermView Hashed)
@@ -23,14 +21,14 @@ instance Hashable Hashed where
 
 instance IsTerm Hashed where
   strengthen = genericStrengthen
-  getAbsName = genericGetAbsName
+  getAbsName' = genericGetAbsName
 
-  whnf sig t = do
-    t' <- fromMaybe t <$> lookupWhnfTerm t
-    blockedT <- genericWhnf sig t'
+  whnf t = do
+    t' <- fromMaybe t <$> liftIO (lookupWhnfTerm t)
+    blockedT <- genericWhnf t'
     -- TODO don't do a full traversal for this check
     t'' <- ignoreBlocking blockedT
-    unless (t == t'') $ do
+    unless (t == t'') $ liftIO $ do
       -- TODO do not add both if we didn't get anything the with
       -- `lookupWhnfTerm'.
       insertWhnfTerm t t''
@@ -51,7 +49,7 @@ instance IsTerm Hashed where
 
 {-# NOINLINE typeOfJH #-}
 typeOfJH :: Closed Hashed
-typeOfJH = unsafePerformIO genericTypeOfJ
+typeOfJH = unsafePerformIO $ monadTermIO Sig.empty genericTypeOfJ
 
 -- Table
 
@@ -67,4 +65,3 @@ lookupWhnfTerm t0 = do
 
 insertWhnfTerm :: Hashed -> Hashed -> IO ()
 insertWhnfTerm t1 t2 = HT.insert hashedTable t1 t2
-

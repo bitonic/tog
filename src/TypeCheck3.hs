@@ -80,7 +80,7 @@ checkExpr ctx synT type_ = do
   debugBracket_ "*** checkExpr" $ do
     (t, constr) <- mapTC csElaborateState $ elaborate ctx type_ synT
     debug $ do
-      constrDoc <- prettyConstraintTC constr
+      constrDoc <- prettyM constr
       return $ "** Constraint:" //> constrDoc
     mapTC csSolveState $ solve constr
     check ctx t type_
@@ -105,7 +105,7 @@ checkData tyCon tyConPars dataCons = do
     addConstant tyCon (Data []) tyConType
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
     checkEqual (tyConPars', set, endType, set)
-    appliedTyConType <- ctxAppTC (def tyCon []) tyConPars'
+    appliedTyConType <- ctxApp (def tyCon []) tyConPars'
     mapM_ (checkConstr tyCon tyConPars' appliedTyConType) dataCons
 
 checkConstr
@@ -123,7 +123,7 @@ checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
   atSrcLoc dataCon $ do
     dataConType <- checkExpr tyConPars synDataConType set
     (vs, endType) <- unrollPi dataConType
-    appliedTyConType' <- liftTermM $ Ctx.weaken_ vs appliedTyConType
+    appliedTyConType' <- Ctx.weaken_ vs appliedTyConType
     let ctx = tyConPars Ctx.++ vs
     checkEqual (ctx, set, appliedTyConType', endType)
     addDataCon dataCon tyCon (Ctx.length vs) (Tel.tel tyConPars) dataConType
@@ -145,14 +145,14 @@ checkRec tyCon tyConPars dataCon fields = do
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
     checkEqual (tyConPars', set, endType, set)
     fieldsTel <- checkFields tyConPars' fields
-    appliedTyConType <- ctxAppTC (def tyCon []) tyConPars'
-    fieldsTel' <- liftTermM $ Tel.weaken_ 1 fieldsTel
+    appliedTyConType <- ctxApp (def tyCon []) tyConPars'
+    fieldsTel' <- Tel.weaken_ 1 fieldsTel
     addProjections
       tyCon tyConPars' (boundVar "_") (map A.typeSigName fields)
       fieldsTel'
     let fieldsCtx = Tel.unTel fieldsTel
-    appliedTyConType' <- liftTermM $ Ctx.weaken_ fieldsCtx appliedTyConType
-    addDataCon dataCon tyCon (length fields) (Tel.tel tyConPars') =<< ctxPiTC fieldsCtx appliedTyConType'
+    appliedTyConType' <- Ctx.weaken_ fieldsCtx appliedTyConType
+    addDataCon dataCon tyCon (length fields) (Tel.tel tyConPars') =<< ctxPi fieldsCtx appliedTyConType'
 
 checkFields
     :: forall t. (IsTerm t)
@@ -190,9 +190,9 @@ addProjections tyCon tyConPars self fields0 =
       ([], Tel.Empty) ->
         return ()
       ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
-        endType <- (`piTC` fieldType) =<< ctxAppTC (def tyCon []) tyConPars
+        endType <- (`pi` fieldType) =<< ctxApp (def tyCon []) tyConPars
         addProjection field ix tyCon (Tel.tel tyConPars) endType
-        (go fields' <=< liftTermM . Tel.instantiate fieldTypes') =<< appTC (Var self) [Proj field ix]
+        (go fields' <=< Tel.instantiate fieldTypes') =<< app (Var self) [Proj field ix]
       (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
 
 checkFunDef :: (IsTerm t) => Name -> [A.Clause] -> CheckM t ()
@@ -210,7 +210,7 @@ checkClause
 checkClause fun funType (A.Clause synPats synClauseBody) = do
   (ctx, pats, _, clauseType) <- checkPatterns fun synPats funType
   let msg = do
-        ctxDoc <- prettyContextTC ctx
+        ctxDoc <- prettyM ctx
         return $ "*** checkClause" $$
                  "context:" //> ctxDoc
   debugBracket msg $ do
@@ -218,7 +218,7 @@ checkClause fun funType (A.Clause synPats synClauseBody) = do
     -- This is an optimization: we want to remove as many MetaVars
     -- as possible so that we'll avoid recomputing things.
     -- TODO generalize this to everything which adds a term.
-    clauseBody' <- withSignatureTermM $ \sig -> instantiateMetaVars sig clauseBody
+    clauseBody' <- instantiateMetaVars clauseBody
     return $ Clause pats clauseBody'
 
 checkPatterns
@@ -236,14 +236,14 @@ checkPatterns _ [] type_ =
 checkPatterns funName (synPat : synPats) type0 = atSrcLoc synPat $ do
   -- TODO this can be a soft match, like `matchPi'.  I just need to
   -- carry the context around.
-  typeView <- whnfViewTC type0
+  typeView <- whnfView type0
   case typeView of
     Pi dom cod -> do
       (ctx, pat, patVar) <- checkPattern funName synPat dom
-      cod'  <- liftTermM $ Ctx.weaken 1 ctx cod
-      cod'' <- instantiateTC cod' patVar
+      cod'  <- Ctx.weaken 1 ctx cod
+      cod'' <- instantiate cod' patVar
       (ctx', pats, patsVars, bodyType) <- checkPatterns funName synPats cod''
-      patVar' <- liftTermM $ Ctx.weaken_ ctx' patVar
+      patVar' <- Ctx.weaken_ ctx' patVar
       return (ctx Ctx.++ ctx', pat : pats, patVar' : patsVars, bodyType)
     _ -> do
       checkError $ ExpectingPi type0
@@ -259,10 +259,10 @@ checkPattern
     -- the term produced by it.
 checkPattern funName synPat type_ = case synPat of
     A.VarP name -> do
-      v <- varTC $ boundVar name
+      v <- var $ boundVar name
       return (Ctx.singleton name type_, VarP, v)
     A.WildP _ -> do
-      v <- varTC $ boundVar "_"
+      v <- var $ boundVar "_"
       return (Ctx.singleton "_" type_, VarP, v)
     A.ConP dataCon synPats -> do
       DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
@@ -270,16 +270,16 @@ checkPattern funName synPat type_ = case synPat of
       case typeConDef of
         Constant (Data _)     _ -> return ()
         Constant (Record _ _) _ -> checkError $ PatternMatchOnRecord synPat tyCon
-        _                       -> do doc <- prettyDefinitionTC typeConDef
+        _                       -> do doc <- prettyM typeConDef
                                       fatalError $ "impossible.checkPattern " ++ render doc
-      typeView <- whnfViewTC type_
+      typeView <- whnfView type_
       -- TODO this can be a soft match, like `matchTyCon'
       case typeView of
         App (Def tyCon') tyConArgs0 | tyCon == tyCon' -> do
           let Just tyConArgs = mapM isApply tyConArgs0
-          dataConTypeNoPars <- liftTermM $ Tel.substs tyConParsTel dataConType tyConArgs
+          dataConTypeNoPars <- Tel.substs tyConParsTel dataConType tyConArgs
           (ctx, pats, patsVars, _) <- checkPatterns funName synPats dataConTypeNoPars
-          t <- conTC dataCon patsVars
+          t <- con dataCon patsVars
           return (ctx, ConP dataCon pats, t)
         _ -> do
           checkError $ ExpectingTyCon tyCon type_
@@ -364,20 +364,20 @@ checkProgram' _ decls0 ret = do
           forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
             let mbBody = HMS.lookup mv mvsBodies
             when (isNothing mbBody || not mvOnlyUnsolved) $ do
-              mvTypeDoc <- prettyTerm sig mvType
+              mvTypeDoc <- monadTermIO sig $ prettyTermM mvType
               putStrLn $ render $
                 PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc
               when (not mvOnlyUnsolved) $ do
                 mvBody <- case HMS.lookup mv mvsBodies of
                   Nothing      -> return "?"
-                  Just mvBody0 -> prettyTerm sig mvBody0
+                  Just mvBody0 -> monadTermIO sig $ prettyTermM mvBody0
                 putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
               putStrLn ""
       noProblemsSummary <- confNoProblemsSummary <$> readConf
       problemsReport <- confProblemsReport <$> readConf
       when (not noProblemsSummary || problemsReport) $  do
         drawLine
-        putStrLn . render =<< prettySolveState sig problemsReport (tsState ts ^. csSolveState)
+        putStrLn . render =<< monadTermIO sig (prettyM (tsState ts ^. csSolveState))
       drawLine
 
     drawLine =
@@ -414,17 +414,17 @@ runCommand ts cmd =
   case cmd of
     TypeOf synT -> runTC' $ do
       (_, type_) <- inferExpr Ctx.Empty synT
-      typeDoc <- prettyTermTC type_
+      typeDoc <- prettyTermM type_
       return $ "type:" //> typeDoc
     Normalize synT -> runTC' $ do
       (t, type_) <- inferExpr Ctx.Empty synT
-      typeDoc <- prettyTermTC type_
-      tDoc <- prettyTermTC t
+      typeDoc <- prettyTermM type_
+      tDoc <- prettyTermM t
       return $
         "type:" //> typeDoc $$
         "term:" //> tDoc
     ShowConstraints -> runTC' $ do
-      mapTC csSolveState (prettySolveStateTC True)
+      prettyM =<< L.use csSolveState
   where
     runTC' m = do
       mbErr <- runTC False ts m

@@ -15,11 +15,6 @@ module TypeCheck3.Monad
   , assert
     -- ** Source location
   , atSrcLoc
-    -- ** 'TermM'
-  , liftTermM
-    -- ** Using the 'Signature'
-  , withSignature
-  , withSignatureTermM
     -- ** Definition handling
   , addDefinition
   , getDefinition
@@ -44,6 +39,7 @@ module TypeCheck3.Monad
 
 import           Control.Exception.Base           (throwIO, try, Exception)
 import qualified Control.Lens                     as L
+import           Control.Monad.IO.Class           (MonadIO(liftIO))
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
 
@@ -81,6 +77,12 @@ instance Monad (TC t s) where
     TC $ \s@(te, _) -> do
       (ts, x) <- m s
       unTC (f x) (te, ts)
+
+instance MonadIO (TC t s) where
+  liftIO m = TC $ \(_, ts) -> (ts,) <$> m
+
+instance MonadTerm t (TC t s) where
+  askSignature = tsSignature <$> get
 
 catchTC
   :: TC t s a -> TC t s (Either PP.Doc a)
@@ -189,27 +191,8 @@ assert msg m = do
 atSrcLoc :: HasSrcLoc a => a -> TC t s b -> TC t s b
 atSrcLoc x (TC m) = TC $ \(te, ts) -> m (te{teCurrentSrcLoc = srcLoc x}, ts)
 
--- TermM
-------------------------------------------------------------------------
-
-liftTermM :: TermM a -> TC t s a
-liftTermM m = TC $ \(_, ts) -> do
-  x <- m
-  return $ (ts, x)
-
 -- Signature
 ------------------------------------------------------------------------
-
--- | Do something with the current signature.
-withSignature :: (Sig.Signature t -> a) -> TC t s a
-withSignature f = do
-  sig <- tsSignature <$> get
-  return $ f sig
-
-withSignatureTermM :: (Sig.Signature t -> TermM a) -> TC t s a
-withSignatureTermM f = do
-  sig <- tsSignature <$> get
-  liftTermM $ f sig
 
 getDefinition
   :: (IsTerm t) => Name -> TC t s (Closed (Definition t))
@@ -254,7 +237,7 @@ addMetaVar type_ = do
   sig <- tsSignature <$> get
   let (mv, sig') = Sig.addMetaVar sig loc type_
   let msg = do
-        typeDoc <- prettyTermTC type_
+        typeDoc <- prettyTermM type_
         return $
           "*** addMetaVar" <+> PP.pretty mv $$
           typeDoc
@@ -266,7 +249,7 @@ instantiateMetaVar
   :: (IsTerm t) => MetaVar -> Closed (Term t) -> TC t s ()
 instantiateMetaVar mv t = do
   let msg = do
-        tDoc <- prettyTermTC t
+        tDoc <- prettyTermM t
         return $
           "*** instantiateMetaVar" <+> PP.pretty mv $$
           tDoc
@@ -362,6 +345,3 @@ ask = TC $ \(te, ts) -> return (ts, te)
 
 local :: TCEnv -> TC t s a -> TC t s a
 local te (TC m) = TC $ \(_, ts) -> m (te, ts)
-
-prettyTermTC :: (IsTerm t) => t -> TC t s PP.Doc
-prettyTermTC t = withSignatureTermM $ \sig -> prettyTerm sig t

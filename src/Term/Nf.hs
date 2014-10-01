@@ -9,34 +9,33 @@ import           Control.Monad                    ((<=<))
 
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import           Term.TermM
+import           Term.MonadTerm
 import           Term.Types
 
 class Nf t where
-  nf' :: (IsTerm f) => Sig.Signature f -> t f -> TermM (t f)
+  nf' :: (IsTerm f, MonadTerm f m) => t f -> m (t f)
 
 instance Nf Elim where
-  nf' _   (Proj ix field) = return $ Proj ix field
-  nf' sig (Apply t)       = Apply <$> nf sig t
+  nf' (Proj ix field) = return $ Proj ix field
+  nf' (Apply t)       = Apply <$> nf t
 
 instance Nf Tel.Tel where
-  nf' _   Tel.Empty                 = return Tel.Empty
-  nf' sig (Tel.Cons (n, type_) tel) = Tel.Cons <$> ((n,) <$> nf sig type_) <*> nf' sig tel
+  nf' Tel.Empty                 = return Tel.Empty
+  nf' (Tel.Cons (n, type_) tel) = Tel.Cons <$> ((n,) <$> nf type_) <*> nf' tel
 
 instance Nf Clause where
-  nf' sig (Clause pats body) =
-    Clause pats <$> nf sig body
+  nf' (Clause pats body) = Clause pats <$> nf body
 
 instance Nf Definition where
-  nf' sig (Constant kind t)                   = Constant kind <$> nf sig t
-  nf' sig (DataCon tyCon args pars type_)     = DataCon tyCon args <$> nf' sig pars <*> nf sig type_
-  nf' sig (Projection field tyCon pars type_) = Projection field tyCon <$> nf' sig pars <*> nf sig type_
-  nf' sig (Function type_ clauses)            = Function <$> nf sig type_ <*> nfInvertible clauses
+  nf'(Constant kind t)                   = Constant kind <$> nf t
+  nf'(DataCon tyCon args pars type_)     = DataCon tyCon args <$> nf' pars <*> nf type_
+  nf'(Projection field tyCon pars type_) = Projection field tyCon <$> nf' pars <*> nf type_
+  nf'(Function type_ clauses)            = Function <$> nf type_ <*> nfInvertible clauses
     where
       nfInvertible (NotInvertible clauses') =
-        NotInvertible <$> mapM (nf' sig) clauses'
+        NotInvertible <$> mapM nf' clauses'
       nfInvertible (Invertible injClauses) =
-        Invertible <$> mapM (\(th, clause) -> (th ,) <$> nf' sig clause) injClauses
+        Invertible <$> mapM (\(th, clause) -> (th ,) <$> nf' clause) injClauses
 
 instance Nf TermView where
-  nf' sig t = (whnfView sig <=< nf sig <=< unview) t
+  nf' t = (whnfView <=< nf <=< unview) t

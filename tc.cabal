@@ -42,6 +42,7 @@ executable tc
                      , ExistentialQuantification
                      , FlexibleContexts
                      , FlexibleInstances
+                     , FunctionalDependencies
                      , GADTs
                      , GeneralizedNewtypeDeriving
                      , KindSignatures
