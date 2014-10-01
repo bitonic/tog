@@ -1,8 +1,5 @@
 module Term.MonadTerm (MonadTerm(askSignature), monadTermIO) where
 
-import           Control.Applicative              (Applicative)
-import           Control.Monad.Reader             (MonadReader(ask))
-
 import           Prelude.Extended
 import {-# SOURCE #-} qualified Term.Signature    as Sig
 

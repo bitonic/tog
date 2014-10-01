@@ -8,7 +8,6 @@ module TypeCheck3.Solve.Simple
 import           Prelude                          hiding (any, pi)
 
 import           Control.Monad.State.Strict       (get, put)
-import           Control.Monad.Trans.Maybe        (runMaybeT)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
@@ -21,7 +20,6 @@ import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
-import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..))

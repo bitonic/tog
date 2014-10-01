@@ -39,7 +39,6 @@ module TypeCheck3.Monad
 
 import           Control.Exception.Base           (throwIO, try, Exception)
 import qualified Control.Lens                     as L
-import           Control.Monad.IO.Class           (MonadIO(liftIO))
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
 

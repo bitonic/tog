@@ -1,7 +1,6 @@
 module Term.Impl.Hashed where
 
 import qualified Data.HashTable.IO                as HT
-import           Data.Hashable                    (Hashable, hashWithSalt, hash)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term

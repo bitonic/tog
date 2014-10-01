@@ -13,11 +13,8 @@ import qualified PrettyPrint                      as PP
 import qualified Syntax.Internal                  as A
 import           Term.Types
 import qualified Term.Context                     as Ctx
-import qualified Term.Signature                   as Sig
-import           Term.Synonyms
 import qualified Term.Telescope                   as Tel
 import           Term.MonadTerm
-import           Term.Utils
 
 prettyTermM :: (IsTerm t, MonadTerm t m) => t -> m PP.Doc
 prettyTermM = prettyPrecTerm 0
@@ -118,8 +115,7 @@ internalToTerm
   :: (IsTerm t, MonadTerm t m) => t -> m A.Expr
 internalToTerm t0 = do
   dontNormalize <- confDontNormalizePP <$> readConf
-  t <- if dontNormalize then return t0 else nf t0
-  tView <- view t0
+  tView <- view =<< if dontNormalize then return t0 else nf t0
   case tView of
     Lam body -> do
       n <- getAbsName_ body

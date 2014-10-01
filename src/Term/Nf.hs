@@ -7,7 +7,6 @@ import           Prelude                          hiding (pi)
 import           Control.Applicative              ((<$>), (<*>))
 import           Control.Monad                    ((<=<))
 
-import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import           Term.MonadTerm
 import           Term.Types

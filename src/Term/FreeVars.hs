@@ -9,7 +9,6 @@ import           Data.Functor                     ((<$>))
 import           Data.Monoid                      (Monoid, mappend, mempty, (<>), mconcat)
 import qualified Data.Set                         as Set
 
-import qualified Term.Signature                   as Sig
 import           Term.Types
 import           Term.MonadTerm
 

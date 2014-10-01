@@ -3,8 +3,6 @@ module TypeCheck3.Common where
 
 import           Prelude                          hiding (abs, pi)
 
-import qualified Data.HashSet                     as HS
-
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import qualified Syntax.Internal                  as A

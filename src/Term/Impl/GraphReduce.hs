@@ -1,8 +1,6 @@
 module Term.Impl.GraphReduce (GraphReduce) where
 
-import           Data.Functor                     ((<$>))
 import           Data.IORef                       (IORef, readIORef, writeIORef, newIORef)
-import           Data.Typeable                    (Typeable)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term
