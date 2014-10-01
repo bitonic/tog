@@ -1,12 +1,12 @@
-name:                tc
+name:                tog
 version:             0.1.0.0
-license-file:        LICENSE
+license:             BSD3
 author:              Francesco Mazzoli
 maintainer:          f@mazzo.li
 build-type:          Simple
 cabal-version:       >= 1.10
 
-executable tc
+executable tog
   main-is:             Main.hs
   other-modules:       Syntax.Raw.Lex
                      , Syntax.Raw.Par
