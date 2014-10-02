@@ -11,7 +11,6 @@ import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
 import           Prelude.Extended
 import           Term
-import           Term.Impl                        (Simple)
 import           TypeCheck3
 import           Syntax.Internal                  (scopeCheckProgram)
 import           Syntax.Raw                       (parseProgram)
@@ -82,11 +81,10 @@ parseMain =
 
     typeCheck file interactive conf = do
       writeConf conf
-      checkFile file $ \errOrTs ->
-        case errOrTs of
-          Left err -> putStrLn (PP.render err) >> exitFailure
-          Right ts -> when interactive $
-                      Haskeline.runInputT interactSettings (interact ts)
+      checkFile file
+        (\err -> putStrLn (PP.render err) >> exitFailure)
+        (\ts -> when interactive $
+                Haskeline.runInputT interactSettings (interact ts))
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"
@@ -108,20 +106,25 @@ parseMain =
 
 checkFile
   :: FilePath
-  -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a)
+  -> (PP.Doc -> IO a)
+  -> (forall t. (IsTerm t) => TCState' t -> IO a)
   -> IO a
-checkFile file ret = do
+checkFile file handle ret = do
   mbErr <- runExceptT $ do
     s   <- lift $ readFile file
-    raw <- ExceptT $ return $ showError "Parse" $ parseProgram s
-    ExceptT $ return $ showError "Scope" $ scopeCheckProgram raw
+    raw <- exceptShowErr "Parse" $ parseProgram s
+    exceptShowErr "Scope" $ scopeCheckProgram raw
   case mbErr of
-    Left err  -> ret (Left err :: Either PP.Doc (TCState' Simple))
-    Right int -> checkProgram int $ \ts -> ret (showError "Type" ts)
+    Left err  -> handle err
+    Right int -> checkProgram int $ \mbErr' -> case mbErr' of
+                   Left err -> handle $ showError "Type" err
+                   Right ts -> ret ts
   where
-    showError :: String -> Either PP.Doc b -> Either PP.Doc b
-    showError errType =
-      either (\err -> Left $ PP.text errType <+> "error: " $$ PP.nest 2 err) Right
+    showError errType err =
+      PP.text errType <+> "error: " $$ PP.nest 2 err
+
+    exceptShowErr errType =
+      ExceptT . return . either (Left . showError errType) Right
 
 main :: IO ()
 main = do
