@@ -44,7 +44,7 @@ import           TypeCheck3.Solve
 
 data CheckState t = CheckState
   { _csSolveState     :: !(SolveState t)
-  , _csElaborateState :: !ElaborateState
+  , _csElaborateState :: !(ElaborateState t)
   }
 
 L.makeLenses ''CheckState
@@ -105,7 +105,7 @@ checkData tyCon tyConPars dataCons = do
     tyConType <- definitionType =<< getDefinition tyCon
     addConstant tyCon (Data []) tyConType
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
-    checkEqual (tyConPars', set, endType, set)
+    definitionallyEqual tyConPars' set endType set
     appliedTyConType <- ctxApp (def tyCon []) tyConPars'
     mapM_ (checkConstr tyCon tyConPars' appliedTyConType) dataCons
 
@@ -126,7 +126,7 @@ checkConstr tyCon tyConPars appliedTyConType (A.Sig dataCon synDataConType) = do
     (vs, endType) <- unrollPi dataConType
     appliedTyConType' <- Ctx.weaken_ vs appliedTyConType
     let ctx = tyConPars Ctx.++ vs
-    checkEqual (ctx, set, appliedTyConType', endType)
+    definitionallyEqual ctx set appliedTyConType' endType
     addDataCon dataCon tyCon (Ctx.length vs) (Tel.tel tyConPars) dataConType
 
 checkRec
@@ -144,7 +144,7 @@ checkRec tyCon tyConPars dataCon fields = do
     tyConType <- definitionType =<< getDefinition tyCon
     addConstant tyCon (Record dataCon []) tyConType
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
-    checkEqual (tyConPars', set, endType, set)
+    definitionallyEqual tyConPars' set endType set
     fieldsTel <- checkFields tyConPars' fields
     appliedTyConType <- ctxApp (def tyCon []) tyConPars'
     fieldsTel' <- Tel.weaken_ 1 fieldsTel

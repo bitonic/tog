@@ -20,14 +20,14 @@ import           TypeCheck3.Monad
 import           PrettyPrint                      (($$), (//>))
 import qualified PrettyPrint                      as PP
 
-data ElaborateState = ElaborateState
+data ElaborateState t = ElaborateState
 
-initElaborateState :: IO ElaborateState
+initElaborateState :: IO (ElaborateState t)
 initElaborateState = return ElaborateState
 
-type ElabM t = TC t ElaborateState
+type ElabM t = TC t (ElaborateState t)
 
--- | Pre: In @elaborate Γ τ t@, @Γ ⊢ τ : U@.
+-- | Pre: In @elaborate Γ τ t@, @Γ ⊢ τ : Set@.
 --
 --   Post: If @(t′, constrs) <- elaborate Γ τ t@, @Γ t′ : τ@, and if
 --   @constr@ is solved, then @t@ is well typed and @t@ and @t′@ are
@@ -105,7 +105,7 @@ fillArgsWithMetas ctx' type' = do
       fatalError "impossible.fillArgsWithMetas: bad type for tycon"
 
 -- | Pre: In @waitForUnifiedType Γ τ σ t u@, we have
---   @Γ ⊢ τ : U@, @Γ ⊢ σ : U@, @Γ ⊢ t : τ@, @Γ ⊢ u : τ@.
+--   @Γ ⊢ τ : Set@, @Γ ⊢ σ : Set@, @Γ ⊢ t : τ@, @Γ ⊢ u : τ@.
 --
 --   Waits for τ and σ to be unified, then unifies t and u.
 waitForUnifiedType

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Check (check, checkEqual) where
+module TypeCheck3.Check (check, definitionallyEqual) where
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
@@ -11,6 +11,8 @@ import           PrettyPrint                      (($$), (//>), render)
 import           TypeCheck3.Monad
 import           TypeCheck3.Common
 
+-- | @check Γ t A@ checks that @t@ is of type @A@ in @Γ@, treating
+-- metavariables as object variables.
 check
   :: (IsTerm t)
   => Ctx t -> Term t -> Type t -> TC t s ()
@@ -34,7 +36,7 @@ check ctx t type_ = do
         typeView <- whnfView type_
         case typeView of
           Equal type' t1 t2 -> do
-            checkEqual (ctx, type', t1, t2)
+            definitionallyEqual ctx type' t1 t2
           _ -> do
             checkError $ ExpectingEqual type_
       Lam body -> do
@@ -44,7 +46,7 @@ check ctx t type_ = do
         check ctx' body cod
       _ -> do
         type' <- infer ctx t
-        checkEqual (ctx, set, type', type_)
+        definitionallyEqual ctx set type' type_
 
 checkConArgs
   :: (IsTerm t)
@@ -96,27 +98,6 @@ applyProjection proj h type_ = do
       doc <- prettyTermM appliedProjType
       fatalError $ "impossible.applyProjection: " ++ render doc
 
-matchTyCon
-  :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
-matchTyCon tyCon type_ = do
-  typeView <- whnfView type_
-  case typeView of
-    App (Def tyCon') elims | tyCon' == tyCon -> do
-      let Just tyConArgs = mapM isApply elims
-      return tyConArgs
-    _ -> do
-      checkError $ ExpectingTyCon tyCon type_
-
-matchPi
-  :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
-matchPi type_ = do
-  typeView <- whnfView type_
-  case typeView of
-    Pi dom cod -> do
-      return (dom, cod)
-    _ -> do
-      checkError $ ExpectingPi type_
-
 infer
   :: (IsTerm t)
   => Ctx t -> Term t -> TC t s (Type t)
@@ -156,6 +137,34 @@ inferHead ctx h = case h of
   Def name -> definitionType =<< getDefinition name
   J        -> return typeOfJ
   Meta mv  -> getMetaVarType mv
+
+matchTyCon
+  :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
+matchTyCon tyCon type_ = do
+  typeView <- whnfView type_
+  case typeView of
+    App (Def tyCon') elims | tyCon' == tyCon -> do
+      let Just tyConArgs = mapM isApply elims
+      return tyConArgs
+    _ -> do
+      checkError $ ExpectingTyCon tyCon type_
+
+matchPi
+  :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
+matchPi type_ = do
+  typeView <- whnfView type_
+  case typeView of
+    Pi dom cod -> do
+      return (dom, cod)
+    _ -> do
+      checkError $ ExpectingPi type_
+
+-- Definitional equality
+------------------------------------------------------------------------
+
+-- | Type-directed definitional equality.
+definitionallyEqual :: (IsTerm t) => Ctx t -> Type t -> Term t -> Term t -> TC t s ()
+definitionallyEqual ctx type_ t1 t2 = checkEqual (ctx, type_, t1, t2)
 
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 

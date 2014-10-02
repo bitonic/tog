@@ -22,9 +22,10 @@ import           TypeCheck3.Monad
 -- Unification stuff which is common amongst the solvers.
 ------------------------------------------------------------------------
 
--- | The term must be in normal form.
---
--- Returns the pruned term.
+-- | @pruneTerm vs t@ tries to remove all the variables that are not
+--   in @vs@ by instantiating metavariables that can make such
+--   variables disappear.  Always succeeds, but might not eliminate
+--   all the variables.
 pruneTerm
     :: (IsTerm t)
     => Set.Set Var                -- ^ allowed vars
@@ -74,11 +75,10 @@ pruneTerm' vs t = do
 
     addVar name = Set.insert (boundVar name) (Set.mapMonotonic (weakenVar_ 1) vs)
 
--- | Prunes a 'MetaVar' application and instantiates the new body.
--- Returns the the new body of the metavariable if we managed to prune
--- anything.
---
--- The term must be in normal form.
+-- | @prune vs α es@ tries to prune all the variables in @es@ that are
+--   not in @vs@, by instantiating @α@.  If we managed to prune
+--   anything returns 'Just', 'Nothing' if we can't prune or no prune
+--   is needed.
 prune
     :: forall t s.
        (IsTerm t)
@@ -157,7 +157,7 @@ prune _ _ _ = do
   return Nothing
 
 -- | Returns whether the term should be killed, given a set of allowed
--- variables.
+--   variables.
 shouldKill
   :: (IsTerm t)
   => Set.Set Var -> Term t -> TC t s (Maybe Bool)
@@ -191,37 +191,44 @@ shouldKill vs t = runMaybeT $ do
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
 
--- | A substitution from variables of the term on the left of the
--- equation to terms inside the metavar.
+-- | An inversion is a substitution from to be used in the term we're
+--   trying to instantiate a metavariable with. So if we have @α v₁ ⋯
+--   vₙ = t@ we want to produce an inversion that makes sure that @t@
+--   only contains variables in @v₁ ⋯ vₙ@, and that substitutes them
+--   for what @α@ will abstract over.
 --
--- We also store how many variables the metavar abstracts.
+--   Note that we need @[(Var, t)]@ instead of simply @[(Var, Var)]@
+--   because we might substitute variables with data constructors of
+--   records (so in @α v₁ ⋯ vₙ@ the vs can be also data constructors
+--   of records).
 data InvertMeta t =
   InvertMeta [(Var, t)]
              -- This 'Var' refers to a variable in the term equated to
              -- the metavariable
              Int
+             -- How many variables the metavar abstracts.
 
 invertMetaVars :: InvertMeta t -> [Var]
 invertMetaVars (InvertMeta sub _) = map fst sub
 
-prettyInvertMetaTC
-  :: (IsTerm t) => InvertMeta t -> TC t s PP.Doc
-prettyInvertMetaTC (InvertMeta ts vs) = do
-  ts' <- forM ts $ \(v, t) -> do
-    tDoc <- prettyTermM t
-    return $ PP.pretty (v, tDoc)
-  return $ PP.list ts' $$ PP.pretty vs
+instance PrettyM InvertMeta where
+  prettyM (InvertMeta ts vs) = do
+    ts' <- forM ts $ \(v, t) -> do
+      tDoc <- prettyTermM t
+      return $ PP.pretty (v, tDoc)
+    return $ PP.list ts' $$ PP.pretty vs
 
--- | Tries to invert a metavariable given its parameters (eliminators),
--- providing a substitution for the term on the right if it suceeds.
--- Doing so amounts to check if the pattern condition is respected for
--- the arguments, although we employ various trick to get around it when
--- the terms are not variables.
+-- | Tries to invert a metavariable given its parameters
+--   (eliminators), providing a substitution for the term on the right
+--   if it suceeds.  Doing so amounts to check if the pattern
+--   condition is respected for the arguments, although we employ
+--   various trick to get around it when the terms are not variables.
+--   See doc for 'InvertMeta'.
 --
--- 'TTMetaVars' if the pattern condition check is blocked on a some
--- 'MetaVar's.
+--   'TTMetaVars' if the pattern condition check is blocked on a some
+--   'MetaVar's.
 --
--- 'TTFail' if the pattern condition fails.
+--   'TTFail' if the pattern condition fails.
 invertMeta
   :: forall t s.
      (IsTerm t)
@@ -301,8 +308,10 @@ invertMeta elims0 = case mapM isApply elims0 of
     -- TODO Consider making this work for singleton types.
     makeLinear (_ : _) = TTFail ()
 
--- | Takes a meta inversion and applies it to a term.  Fails returning a
--- 'Var' if that 'Var' couldn't be substituted in the term.
+-- | Takes a meta inversion and applies it to a term.  Fails returning
+--   a 'Var' if that 'Var' couldn't be substituted in the term -- in
+--   other word if the term contains variables not present in the
+--   substitution.
 applyInvertMeta
   :: forall t s.
      (IsTerm t)
@@ -389,6 +398,8 @@ applyInvertMetaSubst sub t0 =
             (Meta mv, _) ->
               sequenceA $ app (Meta mv) <$> resElims
 
+-- | Checks whether an eliminator is a a projected variables (because
+--   we can expand those).
 isProjectedVar :: (IsTerm t) => Elim t -> MaybeT (TC t s) (Var, Name)
 isProjectedVar elim = do
   Apply t <- return elim
@@ -425,6 +436,7 @@ etaContractElim :: (IsTerm t) => Elim t -> TC t s (Elim t)
 etaContractElim (Apply t)  = Apply <$> etaContract t
 etaContractElim (Proj n f) = return $ Proj n f
 
+-- | η-contracts a term (both records and lambdas).
 etaContract :: (IsTerm t) => t -> TC t s t
 etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
   t0View <- lift $ whnfView t0
@@ -453,6 +465,8 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
       guard $ n == n' && f == f'
       lift $ nf =<< app h (init elims)
 
+-- | @killArgs α kills@ instantiates @α@ so that it discards the
+--   arguments indicated by @kills@.
 killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (Closed (Term t))
 killArgs newMv kills = do
   let vs = reverse [ V (Named n ix)
@@ -461,6 +475,9 @@ killArgs newMv kills = do
   body <- metaVar newMv . map Apply =<< mapM var vs
   foldl' (\body' _ -> lam =<< body') (return body) kills
 
+-- | @etaExpandMetaVar A t@ checks if @t = α ts@ and @α : Δ -> D ⋯@,
+--   where D is a record type constructor, and if that's the case
+--   instantiates @α@ with the appropriate data constructor.
 etaExpandMetaVar :: (IsTerm t) => Type t -> Term t -> TC t s (Maybe (Term t))
 etaExpandMetaVar type_ t = do
   mbRecordDataCon <- runMaybeT $ do
@@ -497,6 +514,11 @@ intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
     areVars _ _ =
       mzero
 
+-- | @instantiateDataCon α c@ makes it so that @α := c β₁ ⋯ βₙ@, where
+--   @c@ is a data constructor.
+--
+--   Pre: @α : Δ → D t₁ ⋯ tₙ@, where @D@ is the fully applied type
+--   constructor for @c@.
 instantiateDataCon
   :: (IsTerm t)
   => MetaVar
@@ -521,6 +543,8 @@ instantiateDataCon mv dataCon = do
   instantiateMetaVar mv mvT
   return mvT
 
+-- | @createMvsPars Γ Δ@ unrolls @Δ@ and creates a metavariable for
+--   each of the elements.
 createMvsPars
   :: (IsTerm t) => Ctx t -> Tel.Tel (Type t) -> TC t s [Term t]
 createMvsPars _ Tel.Empty =
@@ -530,6 +554,8 @@ createMvsPars ctx (Tel.Cons (_, type') tel) = do
   mvs <- createMvsPars ctx =<< Tel.instantiate tel mv
   return (mv : mvs)
 
+-- | Applies a projection to a term, and returns the new term and the
+--   new type.
 applyProjection
   :: (IsTerm t)
   => Name

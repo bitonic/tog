@@ -292,3 +292,7 @@ checkInvertibility = go []
           go ((tHead, clause) : injClauses) clauses
         _ ->
           return $ NotInvertible $ reverse (map snd injClauses) ++ (clause : clauses)
+
+-- Miscellanea
+--------------
+

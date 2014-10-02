@@ -499,7 +499,7 @@ metaAssign ctx0 type0 mv elims0 t0 = do
             checkEqual (ctx, type_, mvT', t')
       Right inv -> do
         debug $ do
-          invDoc <- prettyInvertMetaTC inv
+          invDoc <- prettyM inv
           return $
             "** Could invert, now pruning" $$
             "inversion:" //> invDoc
