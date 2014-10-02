@@ -573,7 +573,7 @@ etaExpandVar tyCon type_ tel = do
   appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
   (dataConPars, _) <- assert ("etaExpandVar, unrollPiWithNames:" <+>) $
     unrollPiWithNames appliedDataConType (map fst projs)
-  dataConT <- con dataCon =<< mapM var (ctxVars dataConPars)
+  dataConT <- con dataCon =<< mapM var (Ctx.vars dataConPars)
   tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
   let telLen = Tel.length tel'
   dataConT' <- weaken_ telLen dataConT

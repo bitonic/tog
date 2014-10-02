@@ -9,6 +9,10 @@ module Term.Context
     , lookupName
     , lookupVar
     , getVar
+    , vars
+    , pi
+    , lam
+    , app
     ) where
 
 import           Prelude                          hiding (pi, length, lookup, (++))
@@ -16,6 +20,7 @@ import qualified Prelude
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
+import           Term.Types                       (IsTerm, Var(..), named)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
 import           Term.MonadTerm
@@ -41,13 +46,13 @@ length (Snoc ctx _) = 1 + length ctx
 ctx1 ++ Empty                 = ctx1
 ctx1 ++ (Snoc ctx2 namedType) = Snoc (ctx1 ++ ctx2) namedType
 
-weaken :: (Term.IsTerm t, MonadTerm t m) => Int -> Ctx t -> t -> m t
+weaken :: (IsTerm t, MonadTerm t m) => Int -> Ctx t -> t -> m t
 weaken ix ctx t = Term.weaken ix (length ctx) t
 
-weaken_ :: (Term.IsTerm t, MonadTerm t m) => Ctx t -> t -> m t
+weaken_ :: (IsTerm t, MonadTerm t m) => Ctx t -> t -> m t
 weaken_ = weaken 0
 
-lookupName :: (Term.IsTerm t, MonadTerm t m) => Name -> Ctx t -> m (Maybe (Term.Var, t))
+lookupName :: (IsTerm t, MonadTerm t m) => Name -> Ctx t -> m (Maybe (Term.Var, t))
 lookupName n = go 0
   where
     go _ Empty =
@@ -57,7 +62,7 @@ lookupName n = go 0
       then Just . (Term.V (Term.named n ix), ) <$> Term.weaken_ (ix + 1) type_
       else go (ix + 1) ctx
 
-lookupVar :: (Term.IsTerm t, MonadTerm t m) => Term.Var -> Ctx t -> m (Maybe t)
+lookupVar :: (IsTerm t, MonadTerm t m) => Term.Var -> Ctx t -> m (Maybe t)
 lookupVar v _ | Term.varIndex v < 0 =
   error "lookupVar: negative argument"
 lookupVar v ctx0 =
@@ -72,10 +77,34 @@ lookupVar v ctx0 =
         then Just type_
         else go (i - 1) ctx
 
-getVar :: (Term.IsTerm t, MonadTerm t m) => Term.Var -> Closed (Ctx t) -> m t
+getVar :: (IsTerm t, MonadTerm t m) => Term.Var -> Closed (Ctx t) -> m t
 getVar v ctx = do
   mbT <- lookupVar v ctx
   case mbT of
     Nothing -> error $ "getVar: " Prelude.++ show v Prelude.++ " not in scope."
     Just t  -> return t
 
+-- | Collects all the variables in the 'Ctx'.
+vars :: forall t. (IsTerm t) => Ctx (Type t) -> [Var]
+vars = reverse . go 0
+  where
+    go :: Int -> Ctx (Type t) -> [Var]
+    go _  Empty                = []
+    go ix (Snoc ctx (name, _)) = V (named name ix) : go (ix + 1) ctx
+
+-- | Creates a 'Pi' type containing all the types in the 'Ctx' and
+-- terminating with the provided 't'.
+pi :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Type t -> m (Type t)
+pi Empty                  t = return t
+pi (Snoc ctx (_n, type_)) t = pi ctx =<< Term.pi type_ t
+
+-- | Creates a 'Lam' term with as many arguments there are in the
+-- 'Ctx'.
+lam :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Term t -> m (Term t)
+lam Empty        t = return t
+lam (Snoc ctx _) t = lam ctx =<< Term.lam t
+
+app :: (IsTerm t, MonadTerm t m) => m (Term t) -> Ctx (Type t) -> m (Term t)
+app t ctx0 = do
+  t' <- t
+  Term.eliminate t' . map Term.Apply =<< mapM Term.var (vars ctx0)

@@ -1,30 +1,30 @@
-        module Main where
-
+{-# LANGUAGE OverloadedStrings #-}
 import           Prelude                          hiding (interact)
 
+import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Options.Applicative
 import           System.Exit                      (exitFailure)
 import qualified System.Console.Haskeline         as Haskeline
 
 import           Conf
-import           Main.Common
-import           Main.Test
+import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
 import           Prelude.Extended
 import           Term
-import qualified Term.Signature                   as Sig
-import           TypeCheck3                       (parseCommand, runCommand, TCState')
-import           TypeCheck3.Monad                 (tsSignature)
+import           Term.Impl                        (Simple)
+import           TypeCheck3
+import           Syntax.Internal                  (scopeCheckProgram)
+import           Syntax.Raw                       (parseProgram)
 
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
   <$> strOption
       ( long "termType" <> short 't' <> value "S" <>
-        help "Available types: S (Simple), GR (GraphReduce), H (Hashed), SUSP (Suspended)."
+        help "Available types: S (Simple), GR (GraphReduce), H (Hashed)."
       )
   <*> strOption
-      ( long "solver" <> value "Simple" <>
-        help "Available solvers: Simple, TwoContexts."
+      ( long "solver" <> value "S" <>
+        help "Available solvers: S (Simple), TW (TwoContexts)."
       )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
@@ -69,21 +69,16 @@ parseTypeCheckConf = Conf
 
 parseMain :: Parser (IO ())
 parseMain =
-  subparser
-    (command "check" parseTypeCheck <> command "test" parseTest)
+  typeCheck
+    <$> argument Just (metavar "FILE")
+    <*> parseInteractive
+    <*> parseTypeCheckConf
   where
     parseInteractive =
       switch
       ( long "interactive" <> short 'i' <>
         help "Start interpreter once the file is loaded."
       )
-
-    parseTypeCheck =
-      info (typeCheck
-              <$> argument Just (metavar "FILE")
-              <*> parseInteractive
-              <*> parseTypeCheckConf)
-           (progDesc "Typecheck a file.")
 
     typeCheck file interactive conf = do
       writeConf conf
@@ -102,7 +97,7 @@ parseMain =
     interact ts = do
       mbS <- Haskeline.getInputLine "> "
       forM_ mbS $ \s ->
-        case parseCommand (Sig.toScope (tsSignature ts)) s of
+        case parseCommand ts s of
           Left err -> do
             lift $ putStrLn $ PP.render err
             interact ts
@@ -110,6 +105,23 @@ parseMain =
             (doc, ts') <- lift $ runCommand ts cmd
             lift $ putStrLn $ PP.render doc
             interact ts'
+
+checkFile
+  :: FilePath
+  -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a)
+  -> IO a
+checkFile file ret = do
+  mbErr <- runExceptT $ do
+    s   <- lift $ readFile file
+    raw <- ExceptT $ return $ showError "Parse" $ parseProgram s
+    ExceptT $ return $ showError "Scope" $ scopeCheckProgram raw
+  case mbErr of
+    Left err  -> ret (Left err :: Either PP.Doc (TCState' Simple))
+    Right int -> checkProgram int $ \ts -> ret (showError "Type" ts)
+  where
+    showError :: String -> Either PP.Doc b -> Either PP.Doc b
+    showError errType =
+      either (\err -> Left $ PP.text errType <+> "error: " $$ PP.nest 2 err) Right
 
 main :: IO ()
 main = do

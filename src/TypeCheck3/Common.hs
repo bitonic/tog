@@ -1,5 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Common where
+module TypeCheck3.Common
+  ( -- * Errors
+    CheckError(..)
+  , checkError
+    -- * Constraints
+  , Constraint(..)
+    -- * Clauses invertibility
+  , termHead
+  , checkInvertibility
+    -- * Miscellanea
+  , addMetaVarInCtx
+  , extendContext
+  , definitionType
+  , isApply
+  , unrollPiWithNames
+  , unrollPi
+  ) where
 
 import           Prelude                          hiding (abs, pi)
 
@@ -9,7 +25,6 @@ import qualified Syntax.Internal                  as A
 import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
-import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
 import qualified PrettyPrint                      as PP
@@ -85,39 +100,11 @@ addMetaVarInCtx
   :: (IsTerm t)
   => Ctx t -> Type t -> TC t s (Term t)
 addMetaVarInCtx ctx type_ = do
-  mv <- addMetaVar =<< ctxPi ctx type_
-  ctxApp (metaVar mv []) ctx
+  mv <- addMetaVar =<< Ctx.pi ctx type_
+  Ctx.app (metaVar mv []) ctx
 
 -- Telescope & context utils
 ----------------------------
-
--- telStrengthen :: (IsTerm f) => Tel.IdTel f (Suc v) -> TermM (Maybe (Tel.IdTel f v))
--- telStrengthen (Tel.Empty (Tel.Id t)) =
---   fmap (Tel.Empty . Tel.Id) <$> strengthen t
--- telStrengthen (Tel.Cons (n, t) tel0) = runMaybeT $ do
---   t' <- MaybeT $ strengthen t
---   tel' <- MaybeT $ telStrengthen tel0
---   return $ Tel.Cons (n, t') tel'
-
--- | Collects all the variables in the 'Ctx.Ctx'.
-ctxVars :: forall t. (IsTerm t) => Ctx.Ctx (Type t) -> [Var]
-ctxVars = reverse . go 0
-  where
-    go :: Int -> Ctx.Ctx (Type t) -> [Var]
-    go _ Ctx.Empty                 = []
-    go ix (Ctx.Snoc ctx (name, _)) = V (named name ix) : go (ix + 1) ctx
-
--- | Creates a 'Pi' type containing all the types in the 'Ctx' and
--- terminating with the provided 't'.
-ctxPi :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Type t -> m (Type t)
-ctxPi Ctx.Empty                  t = return t
-ctxPi (Ctx.Snoc ctx (_n, type_)) t = ctxPi ctx =<< pi type_ t
-
--- | Creates a 'Lam' term with as many arguments there are in the
--- 'Ctx.Ctx'.
-ctxLam :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Term t -> m (Term t)
-ctxLam Ctx.Empty        t = return t
-ctxLam (Ctx.Snoc ctx _) t = ctxLam ctx =<< lam t
 
 -- | Useful just for debugging.
 extendContext
@@ -131,17 +118,6 @@ extendContext ctx type_ = do
   debug msg
   return ctx'
 
--- Monad versions of signature-requiring things
------------------------------------------------
-
-ctxApp :: (IsTerm t, MonadTerm t m) => m (Term t) -> Ctx (Type t) -> m (Term t)
-ctxApp t ctx0 = do
-  t' <- t
-  eliminate t' . map Apply =<< mapM var (ctxVars ctx0)
-
-telPi :: (IsTerm t) => Tel.Tel (Type t) -> Type t -> TC t s (Type t)
-telPi = ctxPi . Tel.unTel
-
 -- Miscellanea
 --------------
 
@@ -151,32 +127,9 @@ isApply Proj{}    = Nothing
 
 definitionType :: (IsTerm t) => Closed (Definition t) -> TC t s (Closed (Type t))
 definitionType (Constant _ type_)         = return type_
-definitionType (DataCon _ _ tel type_)    = telPi tel type_
-definitionType (Projection _ _ tel type_) = telPi tel type_
+definitionType (DataCon _ _ tel type_)    = Tel.pi tel type_
+definitionType (Projection _ _ tel type_) = Tel.pi tel type_
 definitionType (Function type_ _)         = return type_
-
-isRecordType :: (IsTerm t) => Name -> TC t s Bool
-isRecordType tyCon = do
-  sig <- askSignature
-  return $ case Sig.getDefinition sig tyCon of
-    Constant (Record _ _) _ -> True
-    _                       -> False
-
-isRecordConstr :: (IsTerm t) => Name -> TC t s Bool
-isRecordConstr dataCon = do
-  sig <- askSignature
-  case Sig.getDefinition sig dataCon of
-    DataCon tyCon _ _ _ -> isRecordType tyCon
-    _                   -> return False
-
-headType
-  :: (IsTerm t)
-  => Ctx t -> Head -> TC t s (Type t)
-headType ctx h = case h of
-  Var v   -> Ctx.getVar v ctx
-  Def f   -> definitionType =<< getDefinition f
-  J       -> return typeOfJ
-  Meta mv -> getMetaVarType mv
 
 -- Unrolling Pis
 ----------------
@@ -292,7 +245,3 @@ checkInvertibility = go []
           go ((tHead, clause) : injClauses) clauses
         _ ->
           return $ NotInvertible $ reverse (map snd injClauses) ++ (clause : clauses)
-
--- Miscellanea
---------------
-

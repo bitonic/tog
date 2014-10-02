@@ -44,7 +44,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
           "t:" //> absTDoc
   debugBracket msg $ do
     -- Don't create this here, it might not be necessary.
-    mvT <- fresh ctx type_
+    mvT <- addMetaVarInCtx ctx type_
     let waitForUnifiedType' type' t = waitForUnifiedType ctx type_ type' mvT t
     case absT of
       A.Set _ -> do
@@ -65,16 +65,16 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         t <- equal type' t1 t2
         return (mvT, Conj [waitForUnifiedType' set t, constrType, constrT1, constrT2])
       A.Lam name synBody -> do
-        dom <- fresh ctx set
+        dom <- addMetaVarInCtx ctx set
         let ctx' = Ctx.Snoc ctx (name, dom)
-        cod <- fresh ctx' set
+        cod <- addMetaVarInCtx ctx' set
         (body, constrBody) <- elaborate ctx' cod synBody
         type' <- pi dom cod
         t <- lam body
         return (mvT, Conj [waitForUnifiedType' type' t, constrBody])
       A.Refl _ -> do
-        eqType <- fresh ctx set
-        t1 <- fresh ctx eqType
+        eqType <- addMetaVarInCtx ctx set
+        t1 <- addMetaVarInCtx ctx eqType
         type' <- equal eqType t1 t1
         return (mvT, waitForUnifiedType' type' refl)
       A.Con dataCon synArgs -> do
@@ -96,7 +96,7 @@ fillArgsWithMetas ctx' type' = do
   typeView <- whnfView type'
   case typeView of
     Pi dom cod -> do
-      arg <- fresh ctx' dom
+      arg <- addMetaVarInCtx ctx' dom
       cod' <- instantiate cod arg
       (arg :) <$> fillArgsWithMetas ctx' cod'
     Set -> do
@@ -174,18 +174,18 @@ elaborateApp
   => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraint t)
 elaborateApp ctx type_ h [] = atSrcLoc h $ do
   (t, hType) <- inferHead ctx h
-  mvT <- fresh ctx type_
+  mvT <- addMetaVarInCtx ctx type_
   return (mvT, waitForUnifiedType ctx type_ hType mvT t)
 elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
-  dom <- fresh ctx set
+  dom <- addMetaVarInCtx ctx set
   -- TODO better name here
-  cod <- fresh (Ctx.Snoc ctx ("_", dom)) set
+  cod <- addMetaVarInCtx (Ctx.Snoc ctx ("_", dom)) set
   typeF <- pi dom cod
   (f, constrF) <- elaborateApp' ctx typeF h elims
   (arg', constrArg) <- elaborate ctx dom arg
   type' <- instantiate cod arg'
   t <- eliminate f [Apply arg']
-  mvT <- fresh ctx type_
+  mvT <- addMetaVarInCtx ctx type_
   return (mvT, Conj [waitForUnifiedType ctx type_ type' mvT t, constrF, constrArg])
 elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
@@ -197,13 +197,5 @@ elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   Pi _ type1 <- whnfView type0
   type' <- instantiate type1 rec_
   t <- eliminate rec_ [Proj proj projIx]
-  mvT <- fresh ctx type_
+  mvT <- addMetaVarInCtx ctx type_
   return (mvT, Conj [waitForUnifiedType ctx type_ type' mvT t, constrRec])
-
--- Utils
-------------------------------------------------------------------------
-
-fresh :: (IsTerm t) => Ctx t -> Type t -> ElabM t (Term t)
-fresh ctx type_ = do
-  mv <- addMetaVar =<< ctxPi ctx type_
-  ctxApp (metaVar mv []) ctx

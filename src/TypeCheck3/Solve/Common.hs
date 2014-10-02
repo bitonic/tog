@@ -537,7 +537,7 @@ instantiateDataCon mv dataCon = do
   appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConArgs
   (dataConArgsCtx, _) <- unrollPi appliedDataConType
   dataConArgs <- createMvsPars ctxMvArgs $ Tel.tel dataConArgsCtx
-  mvT <- ctxLam ctxMvArgs =<< con dataCon dataConArgs
+  mvT <- Ctx.lam ctxMvArgs =<< con dataCon dataConArgs
   -- given the usage, here we know that the body is going to be well typed.
   -- TODO make sure that the above holds.
   instantiateMetaVar mv mvT
@@ -575,3 +575,29 @@ applyProjection proj h type_ = do
   Pi _ endType <- whnfView appliedProjType
   endType' <- instantiate endType h
   return (h', endType')
+
+-- Miscellanea
+------------------------------------------------------------------------
+
+headType
+  :: (IsTerm t)
+  => Ctx t -> Head -> TC t s (Type t)
+headType ctx h = case h of
+  Var v   -> Ctx.getVar v ctx
+  Def f   -> definitionType =<< getDefinition f
+  J       -> return typeOfJ
+  Meta mv -> getMetaVarType mv
+
+isRecordConstr :: (IsTerm t) => Name -> TC t s Bool
+isRecordConstr dataCon = do
+  sig <- askSignature
+  case Sig.getDefinition sig dataCon of
+    DataCon tyCon _ _ _ -> isRecordType tyCon
+    _                   -> return False
+
+isRecordType :: (IsTerm t) => Name -> TC t s Bool
+isRecordType tyCon = do
+  sig <- askSignature
+  return $ case Sig.getDefinition sig tyCon of
+    Constant (Record _ _) _ -> True
+    _                       -> False

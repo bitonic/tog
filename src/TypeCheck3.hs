@@ -2,9 +2,11 @@
 {-# LANGUAGE TemplateHaskell #-}
 -- TODO add options that are present in TypeCheck
 module TypeCheck3
-  ( availableTermTypes
-  , checkProgram
-  , TCState'
+  ( -- * Global state
+    TCState'
+  , -- * Program checking
+    checkProgram
+    -- * Interactive mode
   , Command
   , parseCommand
   , runCommand
@@ -106,7 +108,7 @@ checkData tyCon tyConPars dataCons = do
     addConstant tyCon (Data []) tyConType
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
     definitionallyEqual tyConPars' set endType set
-    appliedTyConType <- ctxApp (def tyCon []) tyConPars'
+    appliedTyConType <- Ctx.app (def tyCon []) tyConPars'
     mapM_ (checkConstr tyCon tyConPars' appliedTyConType) dataCons
 
 checkConstr
@@ -146,14 +148,14 @@ checkRec tyCon tyConPars dataCon fields = do
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
     definitionallyEqual tyConPars' set endType set
     fieldsTel <- checkFields tyConPars' fields
-    appliedTyConType <- ctxApp (def tyCon []) tyConPars'
+    appliedTyConType <- Ctx.app (def tyCon []) tyConPars'
     fieldsTel' <- Tel.weaken_ 1 fieldsTel
     addProjections
       tyCon tyConPars' (boundVar "_") (map A.typeSigName fields)
       fieldsTel'
     let fieldsCtx = Tel.unTel fieldsTel
     appliedTyConType' <- Ctx.weaken_ fieldsCtx appliedTyConType
-    addDataCon dataCon tyCon (length fields) (Tel.tel tyConPars') =<< ctxPi fieldsCtx appliedTyConType'
+    addDataCon dataCon tyCon (length fields) (Tel.tel tyConPars') =<< Ctx.pi fieldsCtx appliedTyConType'
 
 checkFields
     :: forall t. (IsTerm t)
@@ -191,7 +193,7 @@ addProjections tyCon tyConPars self fields0 =
       ([], Tel.Empty) ->
         return ()
       ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
-        endType <- (`pi` fieldType) =<< ctxApp (def tyCon []) tyConPars
+        endType <- (`pi` fieldType) =<< Ctx.app (def tyCon []) tyConPars
         addProjection field ix tyCon (Tel.tel tyConPars) endType
         (go fields' <=< Tel.instantiate fieldTypes') =<< app (Var self) [Proj field ix]
       (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
@@ -291,9 +293,6 @@ checkPattern funName synPat type_ = case synPat of
 -- Checking programs
 --------------------
 
-availableTermTypes :: [String]
-availableTermTypes = ["GR", "S", "H", "SUSP"]
-
 type TCState' t = TCState t (CheckState t)
 
 checkProgram
@@ -392,8 +391,8 @@ data Command
   | ShowConstraints
   deriving (Eq, Show)
 
-parseCommand :: A.Scope -> String -> Either PP.Doc Command
-parseCommand scope s = runReadP $
+parseCommand :: TCState' t -> String -> Either PP.Doc Command
+parseCommand ts s = runReadP $
   (do void $ ReadP.string ":t "
       return (\s' -> TypeOf <$> parseAndScopeCheck s')) <|>
   (do void $ ReadP.string ":n "
@@ -402,6 +401,8 @@ parseCommand scope s = runReadP $
       ReadP.eof
       return (\_ -> Right ShowConstraints))
   where
+    scope = Sig.toScope $ tsSignature ts
+
     parseAndScopeCheck = parseExpr >=> A.scopeCheckExpr scope
 
     runReadP :: ReadP.ReadP (String -> Either PP.Doc Command) -> Either PP.Doc Command

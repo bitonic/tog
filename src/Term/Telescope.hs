@@ -12,6 +12,7 @@ module Term.Telescope
     , weaken_
     , strengthen
     , strengthen_
+    , pi
     ) where
 
 import qualified Prelude
@@ -116,3 +117,6 @@ strengthen from by (Cons (n, type_) tel') = runMaybeT $ do
 
 strengthen_ :: (Term.IsTerm t, MonadTerm t m) => Int -> Tel t -> m (Maybe (Tel t))
 strengthen_ = strengthen 0
+
+pi :: (Term.IsTerm t, MonadTerm t m) => Tel (Type t) -> Type t -> m (Type t)
+pi = Ctx.pi . unTel

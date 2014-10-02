@@ -24,11 +24,11 @@ initSolveState :: (IsTerm t) => IO (SolveState t)
 initSolveState = do
   solver <- confSolver <$> readConf
   case solver of
-    "Simple" ->
+    "S" ->
       return $ SolveState{ sState = Simple.initSolveState
                          , sSolve = Simple.solve
                          }
-    "TwoContexts" ->
+    "TW" ->
       return $ SolveState{ sState = TwoContexts.initSolveState
                          , sSolve = TwoContexts.solve
                          }
