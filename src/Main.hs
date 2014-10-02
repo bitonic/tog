@@ -1,4 +1,4 @@
-module Main where
+        module Main where
 
 import           Prelude                          hiding (interact)
 
@@ -8,6 +8,7 @@ import qualified System.Console.Haskeline         as Haskeline
 
 import           Conf
 import           Main.Common
+import           Main.Test
 import qualified PrettyPrint                      as PP
 import           Prelude.Extended
 import           Term
@@ -65,7 +66,7 @@ parseTypeCheckConf = Conf
 parseMain :: Parser (IO ())
 parseMain =
   subparser
-    (command "check" parseTypeCheck)
+    (command "check" parseTypeCheck <> command "test" parseTest)
   where
     parseInteractive =
       switch
