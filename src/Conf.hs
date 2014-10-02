@@ -34,7 +34,7 @@ writeConf :: (MonadIO m) => Conf -> m ()
 writeConf conf = do
   ok <- liftIO $ tryPutMVar confRef conf
   unless ok $ error "writeConf: already written."
-
+    
 readConf :: (MonadIO m) => m Conf
 readConf = do
   mbConf <- liftIO $ tryReadMVar confRef

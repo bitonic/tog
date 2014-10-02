@@ -14,8 +14,9 @@ import           Prelude                          hiding (abs, pi)
 
 import           Control.Lens                     ((^.))
 import qualified Control.Lens                     as L
-import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
+import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT, throwE)
 import           Data.Proxy                       (Proxy(Proxy))
+import qualified Data.HashSet                     as HS
 import qualified Data.HashMap.Strict              as HMS
 import qualified Text.ParserCombinators.ReadP     as ReadP
 
@@ -296,9 +297,7 @@ availableTermTypes = ["GR", "S", "H", "SUSP"]
 type TCState' t = TCState t (CheckState t)
 
 checkProgram
-  :: forall a. [A.Decl]
-  -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a)
-  -> IO a
+  :: [A.Decl] -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a) -> IO a
 checkProgram decls ret = do
   tt <- confTermType <$> readConf
   case tt of
@@ -310,10 +309,8 @@ checkProgram decls ret = do
     type_ -> ret (Left ("Invalid term type" <+> PP.text type_) :: Either PP.Doc (TCState' Simple))
 
 checkProgram'
-    :: forall t b. (IsTerm t)
-    => Proxy t -> [A.Decl]
-    -> (forall a. (IsTerm a) => Either PP.Doc (TCState' a) -> IO b)
-    -> IO b
+    :: forall t a. (IsTerm t)
+    => Proxy t -> [A.Decl] -> (Either PP.Doc (TCState' t) -> IO a) -> IO a
 checkProgram' _ decls0 ret = do
     quiet <- confQuiet <$> readConf
     unless quiet $ do
@@ -325,13 +322,11 @@ checkProgram' _ decls0 ret = do
   where
     goDecls :: TCState' t -> [A.Decl] -> ExceptT PP.Doc IO (TCState' t)
     goDecls ts [] = do
-      quiet <- confQuiet <$> lift readConf
-      lift $ unless quiet  $ report ts
-      return ts
+      ts <$ checkState ts
     goDecls ts (decl : decls) = do
-      quiet <- confQuiet <$> lift readConf
-      cdebug <- confDebug <$> lift readConf
-      lift $ unless quiet $ do
+      quiet <- confQuiet <$> readConf
+      cdebug <- confDebug <$> readConf
+      unless quiet $ lift $ do
         putStrLn $ render decl
         let separate = case decl of
               A.TypeSig (A.Sig n _) -> case decls of
@@ -347,38 +342,43 @@ checkProgram' _ decls0 ret = do
       goDecls ts' decls
 
     -- TODO change for this to work in TC
-    report :: TCState' t -> IO ()
-    report ts = do
+    checkState :: TCState' t -> ExceptT PP.Doc IO ()
+    checkState ts = do
       let sig = tsSignature ts
-      mvNoSummary <- confNoMetaVarsSummary <$> readConf
-      mvReport <- confMetaVarsReport <$> readConf
-      mvOnlyUnsolved <- confMetaVarsOnlyUnsolved <$> readConf
-      when (not mvNoSummary || mvReport) $ do
-        let mvsTypes  = Sig.metaVarsTypes sig
-        let mvsBodies = Sig.metaVarsBodies sig
-        drawLine
-        putStrLn $ "-- Solved MetaVars: " ++ show (HMS.size mvsBodies)
-        putStrLn $ "-- Unsolved MetaVars: " ++ show (HMS.size mvsTypes - HMS.size mvsBodies)
-        when mvReport $ do
+      unsolvedMvs <- lift $ monadTermIO sig $ metaVars' sig
+      quiet <- confQuiet <$> readConf
+      unless quiet $ lift $ do
+        mvNoSummary <- confNoMetaVarsSummary <$> readConf
+        mvReport <- confMetaVarsReport <$> readConf
+        mvOnlyUnsolved <- confMetaVarsOnlyUnsolved <$> readConf
+        when (not mvNoSummary || mvReport) $ do
+          let solvedMvs   = HS.fromList $ HMS.keys $ Sig.metaVarsBodies sig
           drawLine
-          forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
-            let mbBody = HMS.lookup mv mvsBodies
-            when (isNothing mbBody || not mvOnlyUnsolved) $ do
-              mvTypeDoc <- monadTermIO sig $ prettyTermM mvType
-              putStrLn $ render $
-                PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc
-              when (not mvOnlyUnsolved) $ do
-                mvBody <- case HMS.lookup mv mvsBodies of
-                  Nothing      -> return "?"
-                  Just mvBody0 -> monadTermIO sig $ prettyTermM mvBody0
-                putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
-              putStrLn ""
-      noProblemsSummary <- confNoProblemsSummary <$> readConf
-      problemsReport <- confProblemsReport <$> readConf
-      when (not noProblemsSummary || problemsReport) $  do
+          putStrLn $ "-- Solved MetaVars: " ++ show (HS.size solvedMvs)
+          putStrLn $ "-- Unsolved MetaVars: " ++ show (HS.size unsolvedMvs)
+          when mvReport $ do
+            drawLine
+            let mvsTypes = Sig.metaVarsTypes sig
+            forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
+              let mbBody = Sig.getMetaVarBody sig mv
+              when (isNothing mbBody || not mvOnlyUnsolved) $ do
+                mvTypeDoc <- monadTermIO sig $ prettyTermM mvType
+                putStrLn $ render $
+                  PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc
+                when (not mvOnlyUnsolved) $ do
+                  mvBody <- case mbBody of
+                    Nothing      -> return "?"
+                    Just mvBody0 -> monadTermIO sig $ prettyTermM mvBody0
+                  putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
+                putStrLn ""
+        noProblemsSummary <- confNoProblemsSummary <$> readConf
+        problemsReport <- confProblemsReport <$> readConf
+        when (not noProblemsSummary || problemsReport) $  do
+          drawLine
+          putStrLn . render =<< monadTermIO sig (prettyM (tsState ts ^. csSolveState))
         drawLine
-        putStrLn . render =<< monadTermIO sig (prettyM (tsState ts ^. csSolveState))
-      drawLine
+      unless (HS.null unsolvedMvs) $ do
+        throwE $ "Unsolved metas: " <+> PP.pretty (HS.toList unsolvedMvs)
 
     drawLine =
       putStrLn "------------------------------------------------------------------------"

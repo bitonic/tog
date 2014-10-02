@@ -22,8 +22,8 @@ import           Options.Applicative
 
 -- newtype CaptureReport = CR (forall a. (forall t. (IsTerm t) => TCReport' t -> a) -> a)
 
--- testTypeCheckConf :: String -> TypeCheckConf
--- testTypeCheckConf tt = defaultTypeCheckConf{tccTermType = tt}
+testTypeCheckConf :: String -> TypeCheckConf
+testTypeCheckConf tt = defaultConf{tccTermType = tt}
 
 -- implConsistency
 --   :: String -> String -> [A.Decl]
@@ -69,12 +69,11 @@ import           Options.Applicative
 --     else do
 --       return $ Left "Different defined names"
 
--- parseTest' :: Parser (IO ())
--- parseTest' =
---   subparser
---     (command "consistency" (info parseConsistency (progDesc "Check consistency of two term types.")) <>
---      command "fail" (info parseShouldFail (progDesc "Check that a file fails to compile.")) <>
---      command "succeed" (info parseShouldSucceed (progDesc "Check that a file compiles.")))
+parseTest' :: Parser (IO ())
+parseTest' =
+  subparser
+    (command "fail" (info parseShouldFail (progDesc "Check that a file fails to compile.")) <>
+     command "succeed" (info parseShouldSucceed (progDesc "Check that a file compiles.")))
 --   where
 --     parseConsistency =
 --       consistency <$> argument Just (metavar "TERMTYPE")
@@ -93,30 +92,30 @@ import           Options.Applicative
 --         Right ok ->
 --           putStrLn $ PP.render ok
 
---     parseShouldFail =
---       shouldFail <$> argument Just (metavar "TERMTYPE") <*> argument Just (metavar "FILE")
+    parseShouldFail =
+      shouldFail <$> argument Just (metavar "TERMTYPE") <*> argument Just (metavar "FILE")
 
---     shouldFail tt file = do
---       mbErr <- checkFile (testTypeCheckConf tt) file $ \_ -> return ()
---       case mbErr of
---         Left _ -> do
---           putStrLn "OK"
---         Right _ -> do
---           putStrLn "Expecting failure, but the file compiled."
---           exitFailure
+    shouldFail tt file = do
+      mbErr <- checkFile (testTypeCheckConf tt) file $ \_ -> return ()
+      case mbErr of
+        Left _ -> do
+          putStrLn "OK"
+        Right _ -> do
+          putStrLn "Expecting failure, but the file compiled."
+          exitFailure
 
---     parseShouldSucceed =
---       shouldSucceed <$> argument Just (metavar "TERMTYPE") <*> argument Just (metavar "FILE")
+    parseShouldSucceed =
+      shouldSucceed <$> argument Just (metavar "TERMTYPE") <*> argument Just (metavar "FILE")
 
---     shouldSucceed tt file = do
---       mbErr <- checkFile (testTypeCheckConf tt) file $ \_ -> return ()
---       case mbErr of
---         Left err -> do
---           putStrLn $ PP.render $
---             "Expecting success, but we got an error:" $$ PP.nest 2 err
---           exitFailure
---         Right _ -> do
---           putStrLn "OK"
+    shouldSucceed tt file = do
+      mbErr <- checkFile (testTypeCheckConf tt) file $ \_ -> return ()
+      case mbErr of
+        Left err -> do
+          putStrLn $ PP.render $
+            "Expecting success, but we got an error:" $$ PP.nest 2 err
+          exitFailure
+        Right _ -> do
+          putStrLn "OK"
 
 
 parseTest :: ParserInfo (IO ())

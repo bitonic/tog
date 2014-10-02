@@ -31,10 +31,6 @@ instance PrettyM Elim where
   prettyM (Proj n _) = return $ PP.pretty $ A.Proj n
   prettyM (Apply t)  = PP.pretty . A.Apply <$> internalToTerm t
 
--- prettyListM :: (IsTerm t) => Sig.Signature t -> [Elim t] -> TermM PP.Doc
--- prettyListM elims =
---   PP.list <$> mapM (prettyElim sig) elims
-
 instance PrettyM Definition where
   prettyM (Constant Postulate type_) =
     prettyTermM type_
