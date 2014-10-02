@@ -49,8 +49,8 @@ data CheckState t = CheckState
 
 L.makeLenses ''CheckState
 
-initCheckState :: CheckState t
-initCheckState = CheckState initSolveState initElaborateState
+initCheckState :: (IsTerm t) => IO (CheckState t)
+initCheckState = CheckState <$> initSolveState <*> initElaborateState
 
 type CheckM t = TC t (CheckState t)
 
@@ -317,7 +317,7 @@ checkProgram' _ decls0 ret = do
       drawLine
       putStrLn "-- Checking declarations"
       drawLine
-    let s = initCheckState
+    s <- initCheckState
     ret =<< runExceptT (goDecls (initTCState s) decls0)
   where
     goDecls :: TCState' t -> [A.Decl] -> ExceptT PP.Doc IO (TCState' t)

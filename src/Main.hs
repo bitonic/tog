@@ -22,6 +22,10 @@ parseTypeCheckConf = Conf
       ( long "termType" <> short 't' <> value "S" <>
         help "Available types: S (Simple), GR (GraphReduce), H (Hashed), SUSP (Suspended)."
       )
+  <*> strOption
+      ( long "solver" <> value "Simple" <>
+        help "Available solvers: Simple, TwoContexts."
+      )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch

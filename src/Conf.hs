@@ -2,14 +2,15 @@ module Conf (Conf(..), defaultConf, writeConf, readConf) where
 
 import           Control.Monad                    (unless)
 import           System.IO.Unsafe                 (unsafePerformIO)
-import           Control.Concurrent.MVar          (MVar, newEmptyMVar, tryPutMVar, tryReadMVar)
 import           Control.Monad.IO.Class           (MonadIO, liftIO)
+import           Data.IORef                       (IORef, newIORef, atomicModifyIORef', readIORef)
 
 -- Configuration
 ------------------------------------------------------------------------
 
 data Conf = Conf
   { confTermType                :: String
+  , confSolver                  :: String
   , confQuiet                   :: Bool
   , confNoMetaVarsSummary       :: Bool
   , confMetaVarsReport          :: Bool
@@ -24,20 +25,22 @@ data Conf = Conf
   }
 
 defaultConf :: Conf
-defaultConf = Conf "S" False False False False False False False False False False False
+defaultConf = Conf "S" "Simple" False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
-confRef :: MVar Conf
-confRef = unsafePerformIO newEmptyMVar
+confRef :: IORef (Maybe Conf)
+confRef = unsafePerformIO $ newIORef Nothing
 
 writeConf :: (MonadIO m) => Conf -> m ()
 writeConf conf = do
-  ok <- liftIO $ tryPutMVar confRef conf
+  ok <- liftIO $ atomicModifyIORef' confRef $ \mbConf -> case mbConf of
+    Nothing -> (Just conf, True)
+    Just c  -> (Just c,    False)
   unless ok $ error "writeConf: already written."
     
 readConf :: (MonadIO m) => m Conf
 readConf = do
-  mbConf <- liftIO $ tryReadMVar confRef
+  mbConf <- liftIO $ readIORef confRef
   case mbConf of
     Nothing   -> error "readConf: conf not written"
     Just conf -> return conf

@@ -30,6 +30,7 @@ module TypeCheck3.Monad
   , unsafeRemoveMetaVar
     -- ** State handling
   , mapTC
+  , nestTC
     -- * Debugging
   , debugBracket
   , debugBracket_
@@ -325,6 +326,13 @@ mapTC :: L.Lens' s s' -> TC t s' a -> TC t s a
 mapTC l (TC m) = TC $ \(te, ts) -> do
   (ts'', x) <- m (te, L.view l <$> ts)
   return ((\s -> L.set l s (tsState ts)) <$> ts'', x)
+
+-- | Runs an action with a different state, but with the same
+-- environment and signature and debug state.
+nestTC :: s' -> TC t s' a -> TC t s (a, s')
+nestTC s (TC m) = TC $ \(te, ts) -> do
+  (ts', x) <- m (te, s <$ ts)
+  return (tsState ts <$ ts', (x, tsState ts'))
 
 -- Utils
 ------------------------------------------------------------------------

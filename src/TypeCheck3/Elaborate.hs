@@ -9,8 +9,6 @@ module TypeCheck3.Elaborate
 
 import           Prelude                          hiding (mapM_, pi)
 
-import qualified Control.Lens                     as L
-
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
 import           Term
@@ -24,10 +22,8 @@ import qualified PrettyPrint                      as PP
 
 data ElaborateState = ElaborateState
 
-initElaborateState :: ElaborateState
-initElaborateState = ElaborateState
-
-L.makeLenses ''ElaborateState
+initElaborateState :: IO ElaborateState
+initElaborateState = return ElaborateState
 
 type ElabM t = TC t ElaborateState
 
