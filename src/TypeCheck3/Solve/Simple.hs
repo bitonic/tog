@@ -139,6 +139,16 @@ sequenceConstraints scs1 c2 =
 
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
+data CheckEqualProgress t
+  = Done (Constraints t)
+  | KeepGoing (CheckEqual t)
+
+done :: Constraints t -> TC t s (CheckEqualProgress t)
+done = return . Done
+
+keepGoing :: CheckEqual t -> TC t s (CheckEqualProgress t)
+keepGoing = return . KeepGoing
+
 checkEqual
   :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 checkEqual (ctx0, type0, t1_0, t2_0) = do
@@ -165,12 +175,12 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
         (action : actions) -> do
           constrsOrArgs <- action args
           case constrsOrArgs of
-            Left constrs -> return constrs
-            Right args'  -> runCheckEqual actions finally args'
+            Done constrs    -> return constrs
+            KeepGoing args' -> runCheckEqual actions finally args'
 
 checkSynEq
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
 checkSynEq (ctx, type_, t1, t2) = do
   debugBracket_ "*** Syntactic check" $ do
     -- Optimization: try with a simple syntactic check first.
@@ -178,13 +188,13 @@ checkSynEq (ctx, type_, t1, t2) = do
     t2' <- ignoreBlocking =<< whnf t2
     -- TODO add option to skip this check
     eq <- termEq t1' t2'
-    return $ if eq
-      then Left []
-      else Right (ctx, type_, t1', t2')
+    if eq
+      then done []
+      else keepGoing (ctx, type_, t1', t2')
 
 etaExpandMetaVars
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
 etaExpandMetaVars (ctx, type_, t1, t2) = do
   -- Try to eta-expand the metavariable first.  We do this before
   -- expanding the terms because if we expand the terms first we might
@@ -193,17 +203,17 @@ etaExpandMetaVars (ctx, type_, t1, t2) = do
   -- instantiate `α' to `tt'.
   t1' <- fromMaybe t1 <$> etaExpandMetaVar type_ t1
   t2' <- fromMaybe t2 <$> etaExpandMetaVar type_ t2
-  return $ Right (ctx, type_, t1', t2')
+  keepGoing (ctx, type_, t1', t2')
 
 etaExpand
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
 etaExpand (ctx, type0, t1, t2) = do
   debugBracket_ "*** Eta expansion" $ do
     -- TODO compute expanding function once
     t1' <- expandOrDont "x" type0 t1
     t2' <- expandOrDont "y" type0 t2
-    return $ Right (ctx, type0, t1', t2')
+    keepGoing (ctx, type0, t1', t2')
   where
     expandOrDont desc type_ t = do
       mbT <- expand type_ t
@@ -247,7 +257,7 @@ etaExpand (ctx, type0, t1, t2) = do
 
 checkMetaVars
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (Either (Constraints t) (CheckEqual t))
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
 checkMetaVars (ctx, type_, t1, t2) = do
   blockedT1 <- whnf t1
   t1' <- ignoreBlocking blockedT1
@@ -258,10 +268,10 @@ checkMetaVars (ctx, type_, t1, t2) = do
         t2'' <- nf t2'
         eq <- termEq t1'' t2''
         if eq
-          then return $ Left []
+          then done []
           else do
             debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
-            return $ Left [(mvs, Unify ctx type_ t1'' t2'')]
+            done [(mvs, Unify ctx type_ t1'' t2'')]
   case (blockedT1, blockedT2) of
     (MetaVarHead mv els1, MetaVarHead mv' els2) | mv == mv' -> do
       mbKills <- intersectVars els1 els2
@@ -270,21 +280,21 @@ checkMetaVars (ctx, type_, t1, t2) = do
           syntacticEqualityOrPostpone $ HS.singleton mv
         Just kills -> do
           instantiateMetaVar mv =<< killArgs mv kills
-          return (Left [])
+          done []
     (MetaVarHead mv elims, _) -> do
-      Left <$> metaAssign ctx type_ mv elims t2
+      done =<< metaAssign ctx type_ mv elims t2
     (_, MetaVarHead mv elims) -> do
-      Left <$> metaAssign ctx type_ mv elims t1
+      done =<< metaAssign ctx type_ mv elims t1
     (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
       -- Both blocked, and we already checked for syntactic equality,
       -- let's try syntactic equality when normalized.
       syntacticEqualityOrPostpone (mvs1 <> mvs2)
     (BlockedOn mvs f elims, _) -> do
-      Left <$> checkEqualBlockedOn ctx type_ mvs f elims t2
+      done =<< checkEqualBlockedOn ctx type_ mvs f elims t2
     (_, BlockedOn mvs f elims) -> do
-      Left <$> checkEqualBlockedOn ctx type_ mvs f elims t1
+      done =<< checkEqualBlockedOn ctx type_ mvs f elims t1
     (NotBlocked _, NotBlocked _) -> do
-      return $ Right (ctx, type_, t1', t2')
+      keepGoing (ctx, type_, t1', t2')
 
 checkEqualBlockedOn
   :: forall t s.
