@@ -8,6 +8,7 @@ module TypeCheck3.Solve.TwoContexts
 import           Prelude                          hiding (any, pi)
 
 import           Control.Monad.State.Strict       (get, put)
+import           Control.Monad.Trans.Maybe        (runMaybeT)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
@@ -171,7 +172,7 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           "y:" //> yDoc
   debugBracket msg $ do
     runCheckEqual
-      [checkSynEq, etaExpandMetaVars, etaExpand, checkMetaVars]
+      [checkSynEq, etaExpandContext, etaExpandMetaVars, etaExpand, checkMetaVars]
       compareTerms
       (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0)
   where
@@ -197,6 +198,92 @@ checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
     if eq
       then done []
       else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
+
+etaExpandContext
+  :: forall t s. (IsTerm t)
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
+etaExpandContext (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
+  debugBracket_ "*** Eta-expanding context" $ do
+    (tel1, type1, t1, tel2, type2, t2) <-
+      go (Tel.tel ctx1_0) type1_0 t1_0 (Tel.tel ctx2_0) type2_0 t2_0
+    debug $ do
+      if (Tel.length tel1 /= Ctx.length ctx1_0)
+        then do
+          ctx1Doc <- prettyM ctx1_0
+          tel1Doc <- prettyM tel1
+          ctx2Doc <- prettyM ctx2_0
+          tel2Doc <- prettyM tel2
+          return $
+            "** Expanded" $$
+            "before1" //> ctx1Doc $$
+            "after1" //> tel1Doc $$
+            "before2" //> ctx2Doc $$
+            "after2" //> tel2Doc
+        else do
+          return "** No change"
+    keepGoing (Tel.unTel tel1, type1, t1, Tel.unTel tel2, type2, t2)
+  where
+    go Tel.Empty type1 t1 Tel.Empty type2 t2 = do
+      return (Tel.Empty, type1, t1, Tel.Empty, type2, t2)
+    go (Tel.Cons (n1, arg1) tel1) type1 t1 (Tel.Cons (n2, arg2) tel2) type2 t2 = do
+      -- Check if both types are record types.
+      mbTyCon <- runMaybeT $ do
+        App (Def tyCon) tyConArgs1 <- lift $ whnfView arg1
+        True <- lift $ isRecordType tyCon
+        let Just tyConPars1 = mapM isApply tyConArgs1
+        App (Def tyCon') tyConArgs2 <- lift $ whnfView arg2
+        let Just tyConPars2 = mapM isApply tyConArgs2
+        unless (tyCon == tyCon') $
+          lift $ fatalError "etaExpandContexts: different tycons"
+        return (tyCon, tyConPars1, tyConPars2)
+      -- If the are not, then continue through the rest of the
+      -- context.  If they are, split up the variable into the record
+      -- fields.
+      case mbTyCon of
+        Nothing -> do
+          (tel1', type1', t1', tel2', type2', t2') <- go tel1 type1 t1 tel2 type2 t2
+          return ( Tel.Cons (n1, arg1) tel1', type1', t1',
+                   Tel.Cons (n2, arg2) tel2', type2', t2'
+                 )
+        Just (tyCon, tyConPars1, tyConPars2) -> do
+          Constant (Record dataCon projs) _ <- getDefinition tyCon
+          DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
+          -- Instantiate the tycon pars in the type of the datacon
+          appliedDataConType1 <- Tel.substs dataConTypeTel dataConType tyConPars1
+          appliedDataConType2 <- Tel.substs dataConTypeTel dataConType tyConPars2
+          let unrollDataConType t =
+                assert ("etaExpandVar, unrollPiWithNames:" <+>) $
+                unrollPiWithNames t (map fst projs)
+          -- Get the type of each field
+          (dataConPars1, _) <- unrollDataConType appliedDataConType1
+          (dataConPars2, _) <- unrollDataConType appliedDataConType2
+          let numDataConPars = Ctx.length dataConPars1
+          -- Build a term with variables representing the fields
+          recordTerm1 <- con dataCon =<< mapM var (Ctx.vars dataConPars1)
+          recordTerm2 <- con dataCon =<< mapM var (Ctx.vars dataConPars2)
+          -- Now we need a telescope with the fields, and then the
+          -- telescope that we already had, but with the variable that
+          -- stood for arg replaced with the record term.
+          --
+          -- Note that the telescopes also need to be weakened,
+          -- since we're introducing new variables.
+          let telLen = Tel.length tel1
+          let weakenBy = max 0 $ numDataConPars -1
+          let adjustTel t x = Tel.subst 0 t =<< Tel.weaken 1 weakenBy x
+          tel1' <- adjustTel recordTerm1 tel1
+          tel2' <- adjustTel recordTerm1 tel2
+          let adjustTerm t x = do
+                t' <- weaken_ telLen t
+                subst telLen t' =<< weaken (telLen+1) weakenBy x
+          t1' <- adjustTerm recordTerm1 t1
+          type1' <- adjustTerm recordTerm1 type1
+          t2' <- adjustTerm recordTerm2 t2
+          type2' <- adjustTerm recordTerm2 type2
+          -- Now continue.
+          go (dataConPars1 Tel.++ tel1') type1' t1'
+             (dataConPars1 Tel.++ tel2') type2' t2'
+    go _ _ _ _ _ _ = do
+      fatalError "etaExpandContext: different lengthts"
 
 etaExpandMetaVars
   :: (IsTerm t)

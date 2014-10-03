@@ -361,7 +361,7 @@ checkProgram' _ decls0 ret = do
             let mvsTypes = Sig.metaVarsTypes sig
             forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
               let mbBody = Sig.getMetaVarBody sig mv
-              when (isNothing mbBody || not mvOnlyUnsolved) $ do
+              when (not (isJust mbBody) || not mvOnlyUnsolved) $ do
                 mvTypeDoc <- monadTermIO sig $ prettyTermM mvType
                 putStrLn $ render $
                   PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc

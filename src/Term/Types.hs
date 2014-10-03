@@ -457,6 +457,9 @@ data Definition t
     -- ^ Field number, record type name, telescope ranging over the
     -- parameters of the type constructor ending with the type of the
     -- projection.
+    --
+    -- Note that the type of the projection is always a pi type from a
+    -- member of the record type to the type of the projected thing.
     | Function (Type t) (Invertible t)
     -- ^ Function type, clauses.
     deriving (Typeable)
