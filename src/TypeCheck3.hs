@@ -296,7 +296,8 @@ checkPattern funName synPat type_ = case synPat of
 type TCState' t = TCState t (CheckState t)
 
 checkProgram
-  :: [A.Decl] -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a) -> IO a
+  :: [A.Decl]
+  -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a) -> IO a
 checkProgram decls ret = do
   tt <- confTermType <$> readConf
   case tt of
