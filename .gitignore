@@ -1,5 +1,8 @@
 bnfc/
 dist/
+*.agdai
+modules.pdf
+TAGS
 
 *~
 \#*\#
