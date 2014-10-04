@@ -584,10 +584,11 @@ etaExpandVar tyCon type_ tel = do
   (dataConPars, _) <- assert ("etaExpandVar, unrollPiWithNames:" <+>) $
     unrollPiWithNames appliedDataConType (map fst projs)
   dataConT <- con dataCon =<< mapM var (Ctx.vars dataConPars)
-  tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
+  let weakenBy = max 0 $ Ctx.length dataConPars - 1
+  tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 weakenBy tel
   let telLen = Tel.length tel'
   dataConT' <- weaken_ telLen dataConT
-  let sub t = subst telLen dataConT' =<< weaken (telLen + 1) 1 t
+  let sub t = subst telLen dataConT' =<< weaken (telLen + 1) weakenBy t
   return (dataConPars Tel.++ tel', sub)
 
 compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
