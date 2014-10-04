@@ -28,7 +28,7 @@ initSolveState = do
       return $ SolveState{ sState = Simple.initSolveState
                          , sSolve = Simple.solve
                          }
-    "TW" ->
+    "TC" ->
       return $ SolveState{ sState = TwoContexts.initSolveState
                          , sSolve = TwoContexts.solve
                          }

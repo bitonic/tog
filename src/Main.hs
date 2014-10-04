@@ -18,12 +18,12 @@ import           Syntax.Raw                       (parseProgram)
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
   <$> strOption
-      ( long "termType" <> short 't' <> value "S" <>
+      ( long "termType" <> short 't' <> value "GR" <>
         help "Available types: S (Simple), GR (GraphReduce), H (Hashed)."
       )
   <*> strOption
       ( long "solver" <> value "S" <>
-        help "Available solvers: S (Simple), TW (TwoContexts)."
+        help "Available solvers: S (Simple), TC (TwoContexts)."
       )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
