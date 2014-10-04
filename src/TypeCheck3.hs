@@ -345,7 +345,7 @@ checkProgram' _ decls0 ret = do
     checkState :: TCState' t -> ExceptT PP.Doc IO ()
     checkState ts = do
       let sig = tsSignature ts
-      unsolvedMvs <- lift $ monadTermIO sig $ metaVars' sig
+      unsolvedMvs <- lift $ runTermM sig $ metaVars' sig
       quiet <- confQuiet <$> readConf
       unless quiet $ lift $ do
         mvNoSummary <- confNoMetaVarsSummary <$> readConf
@@ -362,20 +362,20 @@ checkProgram' _ decls0 ret = do
             forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
               let mbBody = Sig.getMetaVarBody sig mv
               when (not (isJust mbBody) || not mvOnlyUnsolved) $ do
-                mvTypeDoc <- monadTermIO sig $ prettyTermM mvType
+                mvTypeDoc <- runTermM sig $ prettyTermM mvType
                 putStrLn $ render $
                   PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc
                 when (not mvOnlyUnsolved) $ do
                   mvBody <- case mbBody of
                     Nothing      -> return "?"
-                    Just mvBody0 -> monadTermIO sig $ prettyTermM mvBody0
+                    Just mvBody0 -> runTermM sig $ prettyTermM mvBody0
                   putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
                 putStrLn ""
         noProblemsSummary <- confNoProblemsSummary <$> readConf
         problemsReport <- confProblemsReport <$> readConf
         when (not noProblemsSummary || problemsReport) $  do
           drawLine
-          putStrLn . render =<< monadTermIO sig (prettyM (tsState ts ^. csSolveState))
+          putStrLn . render =<< runTermM sig (prettyM (tsState ts ^. csSolveState))
         drawLine
       unless (HS.null unsolvedMvs) $ do
         throwE $ "Unsolved metas: " <+> PP.pretty (HS.toList unsolvedMvs)

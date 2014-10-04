@@ -48,7 +48,7 @@ instance IsTerm Hashed where
 
 {-# NOINLINE typeOfJH #-}
 typeOfJH :: Closed Hashed
-typeOfJH = unsafePerformIO $ monadTermIO Sig.empty genericTypeOfJ
+typeOfJH = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 
 -- Table
 

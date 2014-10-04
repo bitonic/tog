@@ -33,5 +33,5 @@ instance IsTerm Simple where
 
 {-# NOINLINE typeOfJS #-}
 typeOfJS :: Closed Simple
-typeOfJS = unsafePerformIO $ monadTermIO Sig.empty genericTypeOfJ
+typeOfJS = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 

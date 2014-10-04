@@ -57,4 +57,4 @@ reflGR = unsafePerformIO $ GR <$> newIORef Refl
 
 {-# NOINLINE typeOfJGR #-}
 typeOfJGR :: GraphReduce
-typeOfJGR = unsafePerformIO $ monadTermIO Sig.empty genericTypeOfJ
+typeOfJGR = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
