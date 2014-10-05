@@ -475,14 +475,15 @@ killArgs newMv kills = do
   body <- metaVar newMv . map Apply =<< mapM var vs
   foldl' (\body' _ -> lam =<< body') (return body) kills
 
--- | @etaExpandMetaVar A t@ checks if @t = α ts@ and @α : Δ -> D ⋯@,
+-- | @etaExpandMetaVar t@ checks if @t = α ts@ and @α : Δ -> D ⋯@,
 --   where D is a record type constructor, and if that's the case
 --   instantiates @α@ with the appropriate data constructor.
-etaExpandMetaVar :: (IsTerm t) => Type t -> Term t -> TC t s (Maybe (Term t))
-etaExpandMetaVar type_ t = do
+etaExpandMetaVar :: (IsTerm t) => Term t -> TC t s (Maybe (Term t))
+etaExpandMetaVar t = do
   mbRecordDataCon <- runMaybeT $ do
     App (Meta mv) elims <- lift $ whnfView t
-    App (Def tyCon) _ <- lift $ whnfView type_
+    (_, mvType) <- lift $ unrollPi =<< getMetaVarType mv
+    App (Def tyCon) _ <- lift $ whnfView mvType
     Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
     return (mv, elims, dataCon)
   case mbRecordDataCon of

@@ -201,8 +201,8 @@ etaExpandMetaVars (ctx, type_, t1, t2) = do
   -- "lose" some metavariables.  Consider the case where we have `α :
   -- Unit'.  This would get expanded to `tt : Unit', but then we don't
   -- instantiate `α' to `tt'.
-  t1' <- fromMaybe t1 <$> etaExpandMetaVar type_ t1
-  t2' <- fromMaybe t2 <$> etaExpandMetaVar type_ t2
+  t1' <- fromMaybe t1 <$> etaExpandMetaVar t1
+  t2' <- fromMaybe t2 <$> etaExpandMetaVar t2
   keepGoing (ctx, type_, t1', t2')
 
 etaExpand
