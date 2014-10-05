@@ -14,6 +14,7 @@ module PrettyPrint
   , parens
   , Pretty(..)
   , list
+  , prettyApp
   ) where
 
 import           Data.String                      (IsString(fromString))
@@ -24,6 +25,7 @@ import           Data.Monoid                      (Monoid(..))
 instance Monoid PP.Doc where
   mempty = PP.empty
   mappend = (PP.<>)
+
 render :: Pretty a => a -> String
 render x = defaultShow 0 x ""
 
@@ -129,3 +131,11 @@ instance (Pretty a,Pretty b,Pretty c) => Pretty (a,b,c) where
 instance Pretty a => Pretty (Maybe a) where
   pretty Nothing        = empty
   pretty (Just x)       = pretty x
+
+prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
+prettyApp _ h []   = h
+prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (reverse args0)))
+  where
+    prettyArgs []           = empty
+    prettyArgs [arg]        = line <> prettyPrec 4 arg
+    prettyArgs (arg : args) = group (prettyArgs args) $$ prettyPrec 4 arg

@@ -817,11 +817,11 @@ instance PrettyM Constraint where
     case fromMaybe c0 (simplify c0) of
       Unify ctx1 type1 t1 ctx2 type2 t2 -> do
         ctx1Doc <- prettyM ctx1
-        type1Doc <- prettyTermM type1
-        t1Doc <- prettyTermM t1
+        type1Doc <- prettyArgM type1
+        t1Doc <- prettyArgM t1
         ctx2Doc <- prettyM ctx2
-        type2Doc <- prettyTermM type2
-        t2Doc <- prettyTermM t2
+        type2Doc <- prettyArgM type2
+        t2Doc <- prettyArgM t2
         return $ group $
           group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
           hang 2 "=" //
@@ -831,20 +831,27 @@ instance PrettyM Constraint where
         return $
           "Conj" //> PP.list csDoc
       UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
-        return "TODO UnifySpine"
-        -- ctxDoc <- prettyM ctx
-        -- typeDoc <- prettyTermM type_
-        -- hDoc <- case mbH of
-        --   Nothing -> return "no head"
-        --   Just h  -> prettyTermM h
-        -- elims1Doc <- prettyListM elims1
-        -- elims2Doc <- prettyListM elims2
-        -- return $
-        --   "UnifySpine" $$
-        --   "ctx:" //> ctxDoc $$
-        --   "type:" //> typeDoc $$
-        --   "h:" //> hDoc $$
-        --   "elims1:" //> elims1Doc $$
-        --   "elims2:" //> elims2Doc
+        ctx1Doc <- prettyM ctx1
+        type1Doc <- prettyArgM type1
+        t1Doc <- prettyMbApp mbH1 elims1
+        ctx2Doc <- prettyM ctx2
+        type2Doc <- prettyArgM type2
+        t2Doc <- prettyMbApp mbH2 elims2
+        return $ group $
+          group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
+          hang 2 "=" //
+          group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
       Check ctx type_ term -> do
-        return "TODO Check"
+        ctxDoc <- prettyM ctx
+        typeDoc <- prettyArgM type_
+        termDoc <- prettyArgM term
+        return $
+          group (ctxDoc <+> "|-" // group (termDoc <+> ":" <+> typeDoc))
+    where
+      prettyMbApp mbH elims = do
+        hdoc <- case mbH of
+          Nothing -> return "[]"
+          Just t  -> do tDoc <- prettyTermM t
+                        return $ group "[" // tDoc // "]"
+        elimsDoc <- mapM prettyM elims
+        return $ PP.prettyApp 4 hdoc elimsDoc

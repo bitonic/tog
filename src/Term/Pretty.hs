@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Pretty
   ( prettyTermM
+  , prettyArgM
   , PrettyM(prettyM)
   , prettyListM
   ) where
@@ -17,12 +18,15 @@ import qualified Term.Telescope                   as Tel
 import           Term.MonadTerm
 
 prettyTermM :: (IsTerm t, MonadTerm t m) => t -> m PP.Doc
-prettyTermM = prettyPrecTerm 0
+prettyTermM = prettyPrecTermM 0
 
-prettyPrecTerm :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc
-prettyPrecTerm p t = do
+prettyPrecTermM :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc
+prettyPrecTermM p t = do
   synT <- internalToTerm t
   return $ PP.prettyPrec p synT
+
+prettyArgM :: (IsTerm t, MonadTerm t m) => t -> m PP.Doc
+prettyArgM = prettyPrecTermM 4
 
 class PrettyM f where
   prettyM :: (IsTerm t, MonadTerm t m) => f t -> m PP.Doc

@@ -194,10 +194,10 @@ instance PrettyM Constraint where
   prettyM c = case c of
     JMEq ctx type1 t1 type2 t2 -> do
       ctxDoc <- prettyM ctx
-      type1Doc <- prettyTermM type1
-      t1Doc <- prettyTermM t1
-      type2Doc <- prettyTermM type2
-      t2Doc <- prettyTermM t2
+      type1Doc <- prettyArgM type1
+      t1Doc <- prettyArgM t1
+      type2Doc <- prettyArgM type2
+      t2Doc <- prettyArgM t2
       return $
         group (ctxDoc <+> "|-") //>
         (group $

@@ -21,7 +21,7 @@ check ctx t type_ = do
         tDoc <- prettyTermM t
         typeDoc <- prettyTermM type_
         return $
-          "*** Core.check" $$
+          "*** check" $$
           "t:" //> tDoc $$
           "type:" //> typeDoc
   debugBracket msg $ do
@@ -177,7 +177,7 @@ checkEqual x@(_, type_, t1, t2) = do
         t1Doc <- prettyTermM t1
         t2Doc <- prettyTermM t2
         return $
-          "*** Core.checkEqual" $$
+          "*** definitionallyEqual" $$
           "type:" //> typeDoc $$
           "t1:" //> t1Doc $$
           "t2:" //> t2Doc

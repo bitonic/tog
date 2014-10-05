@@ -243,11 +243,3 @@ prettyTel = group . prs . reverse
     prs (b : bs) = group (prs bs) $$ pr b
 
     pr (x, e) = parens (pretty x <+> text ":" <+> pretty e)
-
-prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
-prettyApp _ h []   = h
-prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (reverse args0)))
-  where
-    prettyArgs []           = empty
-    prettyArgs [arg]        = line <> prettyPrec 4 arg
-    prettyArgs (arg : args) = group (prettyArgs args) $$ prettyPrec 4 arg
