@@ -42,7 +42,6 @@ data Constraint t
                (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
   | Check (Ctx t) (Type t) (Term t)
   | Conj [Constraint t]
-  | (:>>:) (Constraint t) (Constraint t)
 
 simplify :: Constraint t -> Maybe (Constraint t)
 simplify (Conj [])    = Nothing
@@ -51,9 +50,6 @@ simplify (Conj cs)    = msum $ map simplify $ concatMap flatten cs
   where
     flatten (Conj constrs) = concatMap flatten constrs
     flatten c              = [c]
-simplify (c1 :>>: c2) = case simplify c1 of
-                          Nothing  -> simplify c2
-                          Just c1' -> Just (c1' :>>: c2)
 simplify c            = Just c
 
 instance Monoid (Constraint t) where
@@ -65,11 +61,9 @@ instance Monoid (Constraint t) where
   c1       `mappend` c2       = Conj [c1, c2]
 
 constraint :: Common.Constraint t -> Constraint t
-constraint (Common.Unify ctx type_ t1 t2) =
-  Unify ctx type_ t1 ctx type_ t2
+constraint (Common.JMEq ctx type1 t1 type2 t2) =
+  Unify ctx type1 t1 ctx type2 t2
 constraint (Common.Conj cs) = Conj $ map constraint cs
-constraint (c1 Common.:>>: c2) =
-  constraint c1 :>>: constraint c2
 
 initSolveState :: SolveState t
 initSolveState = SolveState []
@@ -106,16 +100,6 @@ solve c = do
 solve' :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
 solve' (Conj constrs) = do
   mconcat <$> forM constrs solve'
-solve' (constr1 :>>: constr2) = do
-  constrs1_0 <- solve' constr1
-  let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
-                           | (mvs, constr) <- constrs1_0 ]
-  case mbConstrs1 of
-    Nothing -> do
-      solve' constr2
-    Just constrs1 -> do
-      let (mvs, constr1') = mconcat constrs1
-      return [(mvs, constr1' :>>: constr2)]
 solve' (Unify ctx1 type1 t1 ctx2 type2 t2) = do
   checkEqual (ctx1, type1, t1, ctx2, type2, t2)
 solve' (UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2) = do
@@ -842,10 +826,6 @@ instance PrettyM Constraint where
           group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
           hang 2 "=" //
           group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
-      c1 :>>: c2 -> do
-        c1Doc <- prettyM c1
-        c2Doc <- prettyM c2
-        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
       Conj cs -> do
         csDoc <- mapM prettyM cs
         return $

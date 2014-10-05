@@ -26,7 +26,7 @@ import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
+import           PrettyPrint                      (($$), (<+>), (//>), group, (//), hang)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 
@@ -175,9 +175,10 @@ unrollPi type_ = do
 --------------
 
 data Constraint t
-  = Unify (Ctx t) (Type t) (Term t) (Term t)
-  | Conj [Constraint t]
-  | (:>>:) (Constraint t) (Constraint t)
+  = Conj [Constraint t]
+  | JMEq (Ctx t)
+         (Type t) (Term t)
+         (Type t) (Term t)
 
 instance Monoid (Constraint t) where
   mempty = Conj []
@@ -191,18 +192,18 @@ instance Monoid (Constraint t) where
 
 instance PrettyM Constraint where
   prettyM c = case c of
-    Unify ctx type_ t1 t2 -> do
+    JMEq ctx type1 t1 type2 t2 -> do
       ctxDoc <- prettyM ctx
-      typeDoc <- prettyTermM type_
+      type1Doc <- prettyTermM type1
       t1Doc <- prettyTermM t1
+      type2Doc <- prettyTermM type2
       t2Doc <- prettyTermM t2
-      return $ group $
-        ctxDoc <+> "|-" //
-        group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
-    c1 :>>: c2 -> do
-      c1Doc <- prettyM c1
-      c2Doc <- prettyM c2
-      return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+      return $
+        group (ctxDoc <+> "|-") //>
+        (group $
+           group (group (t1Doc <+> ":" <+> type1Doc)) //
+           hang 2 "=" //
+           group (group (t2Doc <+> ":" <+> type2Doc)))
     Conj cs -> do
       csDoc <- mapM prettyM cs
       return $

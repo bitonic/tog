@@ -60,10 +60,10 @@ instance Monoid (Constraint t) where
   c1       `mappend` Conj cs2 = Conj (c1 : cs2)
   c1       `mappend` c2       = Conj [c1, c2]
 
-constraint :: Common.Constraint t -> Constraint t
-constraint (Common.Unify ctx type_ t1 t2) = Unify ctx type_ t1 t2
+constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
+constraint (Common.JMEq ctx type1 t1 type2 t2) =
+  Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
 constraint (Common.Conj cs) = Conj $ map constraint cs
-constraint (c1 Common.:>>: c2) = constraint c1 :>>: constraint c2
 
 initSolveState :: SolveState t
 initSolveState = SolveState []
