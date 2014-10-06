@@ -41,32 +41,10 @@ data Constraint t
   | UnifySpine (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
                (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
   | CheckAndInstantiate (Type t) (Term t) MetaVar
-  | Conj [Constraint t]
-  | (:>>:) (Constraint t) (Constraint t)
 
-simplify :: Constraint t -> Maybe (Constraint t)
-simplify (Conj [])    = Nothing
-simplify (Conj [c])   = simplify c
-simplify (Conj cs)    = msum $ map simplify $ concatMap flatten cs
-  where
-    flatten (Conj constrs) = concatMap flatten constrs
-    flatten c              = [c]
-simplify (c1 :>>: c2) = case simplify c1 of
-                          Nothing  -> simplify c2
-                          Just c1' -> Just (c1' :>>: c2)
-simplify c            = Just c
-
-instance Monoid (Constraint t) where
-  mempty = Conj []
-
-  Conj cs1 `mappend` Conj cs2 = Conj (cs1 ++ cs2)
-  Conj cs1 `mappend` c2       = Conj (c2 : cs1)
-  c1       `mappend` Conj cs2 = Conj (c1 : cs2)
-  c1       `mappend` c2       = Conj [c1, c2]
-
-constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
-constraint (Common.JMEq ctx type1 t1 type2 t2) =
-  Conj [Unify ctx set type1 ctx set type2, Unify ctx type1 t1 ctx type2 t2]
+constraints :: (IsTerm t) => Common.Constraint t -> [Constraint t]
+constraints (Common.JMEq ctx type1 t1 type2 t2) =
+  [Unify ctx set type1 ctx set type2, Unify ctx type1 t1 ctx type2 t2]
 
 initSolveState :: SolveState t
 initSolveState = SolveState []
@@ -75,7 +53,7 @@ solve :: forall t. (IsTerm t) => Common.Constraint t -> TC t (SolveState t) ()
 solve c = do
   debugBracket_ "*** solve" $ do
     SolveState constrs0 <- get
-    constrs <- go False [] ((mempty, constraint c) : constrs0)
+    constrs <- go False [] (map (mempty,) (constraints c) ++ constrs0)
     put $ SolveState constrs
   where
     go :: Bool -> Constraints t -> Constraints t -> TC t s (Constraints t)
@@ -109,24 +87,12 @@ solveConstraint constr0 = do
           "constraint:" //> constrDoc
   debugBracket msg $ do
     case constr0 of
-      Conj constrs -> do
-        mconcat <$> forM constrs solveConstraint
       Unify ctx1 type1 t1 ctx2 type2 t2 -> do
         checkEqual (ctx1, type1, t1, ctx2, type2, t2)
       UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
         checkEqualSpine' ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2
       CheckAndInstantiate type_ term mv -> do
         checkAndInstantiate type_ term mv
-      constr1 :>>: constr2 -> do
-          constrs1_0 <- solveConstraint constr1
-          let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
-                                   | (mvs, constr) <- constrs1_0 ]
-          case mbConstrs1 of
-            Nothing -> do
-              solveConstraint constr2
-            Just constrs1 -> do
-              let (mvs, constr1') = mconcat constrs1
-              return [(mvs, constr1' :>>: constr2)]
 
 instance PrettyM SolveState where
   prettyM (SolveState cs0) = do
@@ -177,7 +143,7 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           "y:" //> yDoc
   debugBracket msg $ do
     runCheckEqual
-      [checkSynEq, etaExpandContext, etaExpandMetaVars, etaExpand, checkMetaVars]
+      [checkTypeHeads, checkSynEq, etaExpandContext, etaExpandMetaVars, etaExpand, checkMetaVars]
       compareTerms
       (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0)
   where
@@ -189,6 +155,18 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           case constrsOrArgs of
             Done constrs    -> return constrs
             KeepGoing args' -> runCheckEqual actions finally args'
+
+-- | Before proceeding, we need to make sure that both types are
+-- non-blocking, so that we can perform eta-expansion & co. reliably.
+checkTypeHeads
+  :: (IsTerm t)
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
+checkTypeHeads args@(ctx1, type1, t1, ctx2, type2, t2) = do
+  blockedType1 <- whnf type1
+  blockedType2 <- whnf type2
+  case isBlocked blockedType1 <> isBlocked blockedType2 of
+    Nothing  -> keepGoing args
+    Just mvs -> done [(mvs, Unify ctx1 type1 t1 ctx2 type2 t2)]
 
 checkSynEq
   :: (IsTerm t)
@@ -709,7 +687,7 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
 
 instance PrettyM Constraint where
   prettyM c0 = do
-    case fromMaybe c0 (simplify c0) of
+    case c0 of
       Unify ctx1 type1 t1 ctx2 type2 t2 -> do
         ctx1Doc <- prettyM ctx1
         type1Doc <- prettyArgM type1
@@ -721,10 +699,6 @@ instance PrettyM Constraint where
           group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
           hang 2 "=" //
           group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
-      Conj cs -> do
-        csDoc <- mapM prettyM cs
-        return $
-          "Conj" //> PP.list csDoc
       UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
         ctx1Doc <- prettyM ctx1
         type1Doc <- prettyArgM type1
@@ -744,10 +718,6 @@ instance PrettyM Constraint where
           "type:" //> typeDoc $$
           "term:" //> termDoc $$
           "metavar:" //> PP.pretty mv
-      c1 :>>: c2 -> do
-        c1Doc <- prettyM c1
-        c2Doc <- prettyM c2
-        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
     where
       prettyMbApp mbH elims = do
         hdoc <- case mbH of

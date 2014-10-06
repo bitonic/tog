@@ -38,6 +38,7 @@ module Term.Types
     -- ** Blocked
   , Blocked(..)
   , BlockedHead(..)
+  , isBlocked
   , ignoreBlocking
   , blockedEq
     -- ** Utilities
@@ -322,6 +323,11 @@ data BlockedHead
     = BlockedOnFunction Name
     | BlockedOnJ
     deriving (Eq, Show)
+
+isBlocked :: Blocked t -> Maybe (HS.HashSet MetaVar)
+isBlocked (NotBlocked _)      = Nothing
+isBlocked (MetaVarHead mv _)  = Just $ HS.singleton mv
+isBlocked (BlockedOn mvs _ _) = Just mvs
 
 instance PP.Pretty BlockedHead where
   pretty = PP.text . show
