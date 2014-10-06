@@ -589,12 +589,12 @@ metaAssign
   => Ctx t -> Type t -> MetaVar -> [Elim (Term t)]
   -> Ctx t -> Type t -> Term t
   -> TC t s (CheckEqualProgress t)
-metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
+metaAssign ctx1 type1 mv elims1 ctx2 type2 t2 = do
   mvType <- getMetaVarType mv
   let msg = do
         mvTypeDoc <- prettyTermM mvType
-        elimsDoc <- prettyListM elims1_0
-        tDoc <- prettyTermM t2_0
+        elimsDoc <- prettyListM elims1
+        tDoc <- prettyTermM t2
         return $
           "*** metaAssign" $$
           "assigning metavar:" <+> PP.pretty mv $$
@@ -602,28 +602,6 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
           "elims:" //> elimsDoc $$
           "to term:" //> tDoc
   debugBracket msg $ do
-    (ctx1, elims1, ctx2, sub) <- etaExpandVars ctx1_0 elims1_0 ctx2_0
-    -- TODO this check could be more precise
-    let ctxChanged = Ctx.length ctx1 == Ctx.length ctx1_0
-    debug $ do
-      if ctxChanged
-      then return "** No change in context"
-      else do
-        ctx1Doc <- prettyM ctx1
-        ctx2Doc <- prettyM ctx2
-        return $
-          "** New contexts:" $$
-          "left:" //> ctx1Doc $$
-          "right:" //> ctx2Doc
-    type1 <- sub type1_0
-    t2 <- sub t2_0
-    when ctxChanged $ debug $ do
-      type1Doc <- prettyTermM type1
-      t2Doc <- prettyTermM t2
-      return $
-        "** Type and term after eta-expanding vars:" $$
-        "type:" //> type1Doc $$
-        "term:" //> t2Doc
     -- See if we can invert the metavariable
     ttInv <- invertMeta elims1
     let invOrMvs = case ttInv of
@@ -648,10 +626,10 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
         case mbMvT of
           Nothing -> do
             mvT <- metaVar mv elims1'
-            done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2')]
+            done [(mvs, Unify ctx1 type1 mvT ctx2 type2 t2')]
           Just mvT -> do
             mvT' <- eliminate mvT elims1'
-            done =<< checkEqual (ctx1, type1, mvT', ctx2, type2_0, t2')
+            done =<< checkEqual (ctx1, type1, mvT', ctx2, type2, t2')
       Right inv -> do
         debug $ do
           invDoc <- prettyM inv
@@ -672,112 +650,9 @@ metaAssign ctx1_0 type1_0 mv elims1_0 ctx2_0 type2_0 t2_0 = do
           TTMetaVars mvs -> do
             debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
             mvT <- metaVar mv elims1
-            done [(mvs, Unify ctx1 type1 mvT ctx2 type2_0 t2)]
+            done [(mvs, Unify ctx1 type1 mvT ctx2 type2 t2)]
           TTFail v ->
             checkError $ FreeVariableInEquatedTerm mv elims1 t2 v
-
--- | Eliminates projected variables by eta-expansion, thus modifying the
--- context.
-etaExpandVars
-  :: (IsTerm t)
-  => Ctx t
-  -- ^ Context on the left, the one relevant to the eliminators.
-  -> [Elim t]
-  -- ^ Eliminators on the MetaVar
-  -> Ctx t
-  -- ^ Context on the right
-  -> TC t s (Ctx t, [Elim t], Ctx t, t -> TC t s t)
-  -- ^ Returns the new contexts, the new eliminators, and a substituting
-  -- action to update terms to the new context.
-etaExpandVars ctx1 elims1 ctx2 = return (ctx1, elims1, ctx2, return)
--- etaExpandVars ctx1 elims1_0 ctx2 = do
---   -- First, check if any of the eliminators are projections.  Otherwise
---   -- we definitely don't need expansion.
---   elims1 <- mapM (etaContractElim <=< nf') elims1_0
---   attempt <- any isJust <$> mapM (runMaybeT . isProjectedVar) elims1
---   if attempt
---     then do
---       (ctx1', ctx2', sub) <- expandRecordTypes ctx1 ctx2
---       elims1' <- mapM (mapElimM sub) elims1
---       return (ctx1', elims1', ctx2', sub)
---     else do
---       return (ctx1, elims1, ctx2, return)
-
--- expandRecordTypes
---   :: (IsTerm t)
---   => Ctx t -> Ctx t -> TC t s (Ctx t, Ctx t, t -> TermM t)
--- expandRecordTypes ctx1 ctx2 = do
---   (tel1, tel2, sub) <- go (Tel.tel ctx1) (Tel.tel ctx2)
---   return (Tel.unTel tel1, Tel.unTel tel2, sub)
---   where
---     go :: (IsTerm t) => Tel t -> Tel t -> TC t s (Tel t, Tel t, t -> TermM t)
---     go Tel.Empty Tel.Empty = do
---       return (Tel.Empty, Tel.Empty, return)
---     go (Tel.Cons (name1, type1) tel1) (Tel.Cons (name2, type2) tel2) = do
---       type1View <- whnfView type1
---       type2View <- whnfView type2
---       case (type1View, type2View) of
---         (Constant (Record dataCon
---       error "TODO"
---     go _ _ = do
---       error "impossibe.expandRecordType"
-
-{-
-  elims1 <- mapM (etaContractElim <=< nf') elims1_0
-  let msg = do
-        elimsDoc <- prettyListM elims1
-        return $
-          "*** Eta-expand vars" $$
-          "elims:" //> elimsDoc
-  debugBracket msg $ do
-    mbVar <- collectProjectedVar elims1
-    case mbVar of
-      Nothing ->
-        return (ctx1_0, elims1, \t -> return t, ctx2_0, \t -> return t)
-      Just (v, tyCon) -> do
-        debug_ $ "** Found var" <+> PP.pretty v <+> "with tyCon" <+> PP.pretty tyCon
-        let (ctx1_1, type1, tel1) = splitContext ctx1_0 v
-        let (ctx2_1, type2, tel2) = splitContext ctx2_0 v
-        Just (tel1', sub1) <- etaExpandVar tyCon type1 tel1
-        mbSub2 <- etaExpandVar tyCon type2 tel2
-        case mbSub2 of
-          Just (tel2', sub2) -> do
-            elims2 <- mapM (mapElimM sub1) elims1
-            (ctx1_2, elims3, sub1', ctx2_2, sub2') <-
-              etaExpandVars (ctx1 Ctx.++ Tel.unTel tel') elims2
---         return (ctx2, elims3, (sub >=> sub'))
-
--- | Expands a record-typed variable ranging over the given 'Tel.Tel',
--- returning a new telescope ranging over all the fields of the record
--- type and the old telescope with the variable substituted with a
--- constructed record, and a substitution for the old variable.
-etaExpandVar
-  :: (IsTerm t)
-  => Name
-  -- ^ The type constructor of the record type.
-  -> Type t
-  -- ^ The type of the variable we're expanding.
-  -> Tel.Tel t
-  -> TC t s (Maybe (Tel.Tel t, t -> TermM t))
-etaExpandVar tyCon type_ tel = do
-  tyConDef <- getDefinition tyCon
-  case tyConDef of
-    Constant (Record dataCon projs) _ -> do
-      DataCon _ dataConTypeTel dataConType <- getDefinition dataCon
-      App (Def _) tyConPars0 <- whnfView type_
-      let Just tyConPars = mapM isApply tyConPars0
-      appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
-      (dataConPars, _) <- assert ("etaExpandVar, unrollPiWithNames:" <+>) $
-        unrollPiWithNames appliedDataConType (map fst projs)
-      dataConT <- con dataCon =<< mapM var (ctxVars dataConPars)
-      tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 1 tel
-      let telLen = Tel.length tel'
-      dataConT' <- weaken_ telLen dataConT
-      let sub t = subst telLen dataConT' =<< weaken (telLen + 1) 1 t
-      return $ Just (dataConPars Tel.++ tel', sub)
-    _ -> do
-      return Nothing
--}
 
 compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
