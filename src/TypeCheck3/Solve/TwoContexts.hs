@@ -40,8 +40,9 @@ data Constraint t
   = Unify (Ctx t) (Type t) (Term t) (Ctx t) (Type t) (Term t)
   | UnifySpine (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
                (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
-  | Check (Ctx t) (Type t) (Term t)
+  | CheckAndInstantiate (Type t) (Term t) MetaVar
   | Conj [Constraint t]
+  | (:>>:) (Constraint t) (Constraint t)
 
 simplify :: Constraint t -> Maybe (Constraint t)
 simplify (Conj [])    = Nothing
@@ -50,6 +51,9 @@ simplify (Conj cs)    = msum $ map simplify $ concatMap flatten cs
   where
     flatten (Conj constrs) = concatMap flatten constrs
     flatten c              = [c]
+simplify (c1 :>>: c2) = case simplify c1 of
+                          Nothing  -> simplify c2
+                          Just c1' -> Just (c1' :>>: c2)
 simplify c            = Just c
 
 instance Monoid (Constraint t) where
@@ -60,9 +64,15 @@ instance Monoid (Constraint t) where
   c1       `mappend` Conj cs2 = Conj (c1 : cs2)
   c1       `mappend` c2       = Conj [c1, c2]
 
-constraint :: Common.Constraint t -> Constraint t
+constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
 constraint (Common.JMEq ctx type1 t1 type2 t2) =
-  Unify ctx type1 t1 ctx type2 t2
+  -- TODO right now this is better than
+  --
+  --   Conj [Unify ctx set type1 ctx set type2, Unify ctx type1 t1 ctx type2 t2]
+  --
+  -- This is clearly off.  It means that the dependecncy tracking is
+  -- off.
+  Unify ctx set type1 ctx set type2 :>>: Unify ctx type1 t1 ctx type2 t2
 constraint (Common.Conj cs) = Conj $ map constraint cs
 
 initSolveState :: SolveState t
@@ -92,20 +102,38 @@ solve c = do
                     return $ null mvsBodies || any isJust mvsBodies
       if attempt
         then do
-          constrs' <- solve' constr
+          constrs' <- solveConstraint constr
           go True (constrs' ++ newConstrs) constrs
         else do
           go progress ((mvs, constr) : newConstrs) constrs
 
-solve' :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
-solve' (Conj constrs) = do
-  mconcat <$> forM constrs solve'
-solve' (Unify ctx1 type1 t1 ctx2 type2 t2) = do
-  checkEqual (ctx1, type1, t1, ctx2, type2, t2)
-solve' (UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2) = do
-  checkEqualSpine' ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2
-solve' (Check ctx type_ term) = do
-  coreCheckOrPostpone ctx type_ term $ return []
+solveConstraint :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
+solveConstraint constr0 = do
+  let msg = do
+        constrDoc <- prettyM constr0
+        return $
+          "*** solveConstraint" $$
+          "constraint:" //> constrDoc
+  debugBracket msg $ do
+    case constr0 of
+      Conj constrs -> do
+        mconcat <$> forM constrs solveConstraint
+      Unify ctx1 type1 t1 ctx2 type2 t2 -> do
+        checkEqual (ctx1, type1, t1, ctx2, type2, t2)
+      UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
+        checkEqualSpine' ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2
+      CheckAndInstantiate type_ term mv -> do
+        checkAndInstantiate type_ term mv
+      constr1 :>>: constr2 -> do
+          constrs1_0 <- solveConstraint constr1
+          let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
+                                   | (mvs, constr) <- constrs1_0 ]
+          case mbConstrs1 of
+            Nothing -> do
+              solveConstraint constr2
+            Just constrs1 -> do
+              let (mvs, constr1') = mconcat constrs1
+              return [(mvs, constr1' :>>: constr2)]
 
 instance PrettyM SolveState where
   prettyM (SolveState cs0) = do
@@ -331,21 +359,21 @@ etaExpand (ctx1, type1, t1, ctx2, type2, t2) = do
         _ ->
           return Nothing
 
-coreCheckOrPostpone
+checkAndInstantiate
   :: (IsTerm t)
-  => Ctx t -> Type t -> Term t -> TC t s (Constraints t) -> TC t s (Constraints t)
-coreCheckOrPostpone ctx type_ term ret = do
+  => Closed (Type t) -> Closed (Term t) -> MetaVar
+  -> TC t s (Constraints t)
+checkAndInstantiate type_ term mv = do
   let msg = do
-        ctxDoc <- prettyM ctx
         typeDoc <- prettyTermM type_
         termDoc <- prettyTermM term
         return $
-          "*** coreCheckOrPostpone" $$
-          "ctx:" //> ctxDoc $$
+          "*** checkAndInstantiate" $$
           "type:" //> typeDoc $$
-          "term:" //> termDoc
+          "term:" //> termDoc $$
+          "metavar:" //> PP.pretty mv
   debugBracket msg $ do
-    mbErr <- catchTC $ Check.check ctx term type_
+    mbErr <- catchTC $ Check.check Ctx.Empty term type_
     case mbErr of
       Left _err -> do
         mvs1 <- metaVars type_
@@ -353,19 +381,18 @@ coreCheckOrPostpone ctx type_ term ret = do
         let mvs = mvs1 <> mvs2
         debug_ $ "** Could not typecheck, waiting on:" <+> PP.pretty (HS.toList mvs)
         when (HS.null mvs) $
-          fatalError $ "coreCheckOrPostpone: no metas!"
-        return [(mvs, Check ctx type_ term)]
+          fatalError $ "checkAndInstantiate: no metas!"
+        return [(mvs, CheckAndInstantiate type_ term mv)]
       Right () -> do
-        ret
+        instantiateMetaVar mv term
+        return []
 
 checkedInstantiateMetaVar
   :: (IsTerm t)
   => MetaVar -> Closed (Term t) -> TC t s (Constraints t)
 checkedInstantiateMetaVar mv mvT = do
   mvType <- getMetaVarType mv
-  coreCheckOrPostpone Ctx.Empty mvType mvT $ do
-    instantiateMetaVar mv mvT
-    return []
+  checkAndInstantiate mvType mvT mv
 
 checkMetaVars
   :: forall t s. (IsTerm t)
@@ -841,12 +868,18 @@ instance PrettyM Constraint where
           group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
           hang 2 "=" //
           group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
-      Check ctx type_ term -> do
-        ctxDoc <- prettyM ctx
+      CheckAndInstantiate type_ term mv -> do
         typeDoc <- prettyArgM type_
         termDoc <- prettyArgM term
         return $
-          group (ctxDoc <+> "|-" // group (termDoc <+> ":" <+> typeDoc))
+          "CheckAndInstantiate" $$
+          "type:" //> typeDoc $$
+          "term:" //> termDoc $$
+          "metavar:" //> PP.pretty mv
+      c1 :>>: c2 -> do
+        c1Doc <- prettyM c1
+        c2Doc <- prettyM c2
+        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
     where
       prettyMbApp mbH elims = do
         hdoc <- case mbH of

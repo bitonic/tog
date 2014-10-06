@@ -101,6 +101,10 @@ solveConstraint constr0 = do
     case constr0 of
       Conj constrs -> do
         mconcat <$> forM constrs solveConstraint
+      Unify ctx type_ t1 t2 -> do
+        checkEqual (ctx, type_, t1, t2)
+      UnifySpine ctx type_ mbH elims1 elims2 -> do
+        checkEqualSpine' ctx type_ mbH elims1 elims2
       constr1 :>>: constr2 -> do
         constrs1_0 <- solveConstraint constr1
         let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
@@ -111,10 +115,6 @@ solveConstraint constr0 = do
           Just constrs1 -> do
             let (mvs, constr1') = mconcat constrs1
             return [(mvs, constr1' :>>: constr2)]
-      Unify ctx type_ t1 t2 -> do
-        checkEqual (ctx, type_, t1, t2)
-      UnifySpine ctx type_ mbH elims1 elims2 -> do
-        checkEqualSpine' ctx type_ mbH elims1 elims2
 
 instance PrettyM SolveState where
   prettyM (SolveState cs0) = do
