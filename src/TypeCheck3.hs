@@ -81,11 +81,11 @@ checkExpr
   => Ctx t -> A.Expr -> Type t -> CheckM t (Term t)
 checkExpr ctx synT type_ = do
   debugBracket_ "*** checkExpr" $ do
-    (t, constr) <- mapTC csElaborateState $ elaborate ctx type_ synT
+    (t, constrs) <- mapTC csElaborateState $ elaborate ctx type_ synT
     debug $ do
-      constrDoc <- prettyM constr
+      constrDoc <- PP.list <$> mapM prettyM constrs
       return $ "** Constraint:" //> constrDoc
-    mapTC csSolveState $ solve constr
+    mapTC csSolveState $ mapM_ solve constrs
     check ctx t type_
     return t
 

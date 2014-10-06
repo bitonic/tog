@@ -23,7 +23,7 @@ import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common
-import           TypeCheck3.Common                hiding (Constraint(..))
+import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
 import qualified TypeCheck3.Check                 as Check
 import           TypeCheck3.Monad
 import           TypeCheck3.Solve.Common
@@ -66,14 +66,7 @@ instance Monoid (Constraint t) where
 
 constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
 constraint (Common.JMEq ctx type1 t1 type2 t2) =
-  -- TODO right now this is better than
-  --
-  --   Conj [Unify ctx set type1 ctx set type2, Unify ctx type1 t1 ctx type2 t2]
-  --
-  -- This is clearly off.  It means that the dependecncy tracking is
-  -- off.
-  Unify ctx set type1 ctx set type2 :>>: Unify ctx type1 t1 ctx type2 t2
-constraint (Common.Conj cs) = Conj $ map constraint cs
+  Conj [Unify ctx set type1 ctx set type2, Unify ctx type1 t1 ctx type2 t2]
 
 initSolveState :: SolveState t
 initSolveState = SolveState []

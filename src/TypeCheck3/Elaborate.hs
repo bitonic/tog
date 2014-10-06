@@ -33,7 +33,7 @@ type ElabM t = TC t (ElaborateState t)
 --   @constr@ is solved, then @t@ is well typed and @t@ and @t′@ are
 --   equivalent (clarify equivalent).
 elaborate
-  :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> ElabM t (Term t, Constraint t)
+  :: (IsTerm t) => Ctx t -> Type t -> A.Expr -> ElabM t (Term t, Constraints t)
 elaborate ctx type_ absT = atSrcLoc absT $ do
   let msg = do
         typeDoc <- prettyTermM type_
@@ -45,7 +45,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
   debugBracket msg $ do
     -- Don't create this here, it might not be necessary.
     mvT <- addMetaVarInCtx ctx type_
-    let waitForUnifiedType type' t = JMEq ctx type_ mvT type' t
+    let waitForUnifiedType type' t = jmEq ctx type_ mvT type' t
     case absT of
       A.Set _ -> do
         return (mvT, waitForUnifiedType set set)
@@ -53,17 +53,17 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         (dom, constrDom) <- elaborate ctx set synDom
         (cod, constrCod) <- elaborate (Ctx.Snoc ctx (name, dom)) set synCod
         t <- pi dom cod
-        return (mvT, Conj [waitForUnifiedType set t, constrDom, constrCod])
+        return (mvT, waitForUnifiedType set t <> constrDom <> constrCod)
       A.Fun synDom synCod -> do
         elaborate ctx type_ (A.Pi "_" synDom synCod)
       A.Meta _ ->
-        return (mvT, Conj [])
+        return (mvT, mempty)
       A.Equal synType synT1 synT2 -> do
         (type', constrType) <- elaborate ctx set synType
         (t1, constrT1) <- elaborate ctx type' synT1
         (t2, constrT2) <- elaborate ctx type' synT2
         t <- equal type' t1 t2
-        return (mvT, Conj [waitForUnifiedType set t, constrType, constrT1, constrT2])
+        return (mvT, waitForUnifiedType set t <> constrType <> constrT1 <> constrT2)
       A.Lam name synBody -> do
         dom <- addMetaVarInCtx ctx set
         let ctx' = Ctx.Snoc ctx (name, dom)
@@ -71,7 +71,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         (body, constrBody) <- elaborate ctx' cod synBody
         type' <- pi dom cod
         t <- lam body
-        return (mvT, Conj [waitForUnifiedType type' t, constrBody])
+        return (mvT, waitForUnifiedType type' t <> constrBody)
       A.Refl _ -> do
         eqType <- addMetaVarInCtx ctx set
         t1 <- addMetaVarInCtx ctx eqType
@@ -85,7 +85,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         (dataConArgs, constrDataConArgs) <- elaborateDataConArgs ctx appliedDataConType synArgs
         type' <- app (Def tyCon) $ map Apply tyConArgs
         t <- con dataCon dataConArgs
-        return (mvT, Conj (waitForUnifiedType type' t : constrDataConArgs))
+        return (mvT, waitForUnifiedType type' t <> constrDataConArgs)
       A.App h elims -> do
         elaborateApp' ctx type_ h (reverse elims)
 
@@ -105,15 +105,15 @@ fillArgsWithMetas ctx' type' = do
       fatalError "impossible.fillArgsWithMetas: bad type for tycon"
 
 elaborateDataConArgs
-  :: (IsTerm t) => Ctx t -> Type t -> [A.Expr] -> ElabM t ([Term t], [Constraint t])
+  :: (IsTerm t) => Ctx t -> Type t -> [A.Expr] -> ElabM t ([Term t], Constraints t)
 elaborateDataConArgs _ _ [] =
-  return ([], [])
+  return ([], mempty)
 elaborateDataConArgs ctx type_ (synArg : synArgs) = do
   Pi dom cod <- whnfView type_
   (arg, constrArg) <- elaborate ctx dom synArg
   cod' <- instantiate cod arg
   (args, constrArgs) <- elaborateDataConArgs ctx cod' synArgs
-  return (arg : args, constrArg : constrArgs)
+  return (arg : args, constrArg <> constrArgs)
 
 inferHead
   :: (IsTerm t)
@@ -137,7 +137,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 
 elaborateApp'
   :: (IsTerm t)
-  => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraint t)
+  => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraints t)
 elaborateApp' ctx type_ h elims = do
   let msg = do
         ctxDoc <- prettyM ctx
@@ -152,11 +152,11 @@ elaborateApp' ctx type_ h elims = do
 
 elaborateApp
   :: (IsTerm t)
-  => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraint t)
+  => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraints t)
 elaborateApp ctx type_ h [] = atSrcLoc h $ do
   (t, hType) <- inferHead ctx h
   mvT <- addMetaVarInCtx ctx type_
-  return (mvT, JMEq ctx type_ mvT hType t)
+  return (mvT, jmEq ctx type_ mvT hType t)
 elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
   dom <- addMetaVarInCtx ctx set
   -- TODO better name here
@@ -167,7 +167,7 @@ elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
   type' <- instantiate cod arg'
   t <- eliminate f [Apply arg']
   mvT <- addMetaVarInCtx ctx type_
-  return (mvT, Conj [JMEq ctx type_ mvT type' t, constrF, constrArg])
+  return (mvT, jmEq ctx type_ mvT type' t <> constrF <> constrArg)
 elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
   tyConType <- definitionType =<< getDefinition tyCon
@@ -179,4 +179,4 @@ elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
   type' <- instantiate type1 rec_
   t <- eliminate rec_ [Proj proj projIx]
   mvT <- addMetaVarInCtx ctx type_
-  return (mvT, Conj [JMEq ctx type_ mvT type' t, constrRec])
+  return (mvT, jmEq ctx type_ mvT type' t <> constrRec)

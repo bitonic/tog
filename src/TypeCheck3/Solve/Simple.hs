@@ -22,7 +22,7 @@ import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common
-import           TypeCheck3.Common                hiding (Constraint(..))
+import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
 import           TypeCheck3.Monad
 import           TypeCheck3.Solve.Common
 
@@ -63,7 +63,6 @@ instance Monoid (Constraint t) where
 constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
 constraint (Common.JMEq ctx type1 t1 type2 t2) =
   Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
-constraint (Common.Conj cs) = Conj $ map constraint cs
 
 initSolveState :: SolveState t
 initSolveState = SolveState []

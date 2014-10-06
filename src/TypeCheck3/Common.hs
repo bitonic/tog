@@ -5,6 +5,8 @@ module TypeCheck3.Common
   , checkError
     -- * Constraints
   , Constraint(..)
+  , Constraints
+  , jmEq
     -- * Clauses invertibility
   , termHead
   , checkInvertibility
@@ -174,21 +176,15 @@ unrollPi type_ = do
 -- Constraints
 --------------
 
+type Constraints t = [Constraint t]
+
 data Constraint t
-  = Conj [Constraint t]
-  | JMEq (Ctx t)
+  = JMEq (Ctx t)
          (Type t) (Term t)
          (Type t) (Term t)
 
-instance Monoid (Constraint t) where
-  mempty = Conj []
-
-  Conj cs1 `mappend` Conj cs2 = Conj (cs1 ++ cs2)
-  Conj cs1 `mappend` c2       = Conj (c2 : cs1)
-  c1       `mappend` Conj cs2 = Conj (c1 : cs2)
-  c1       `mappend` c2       = Conj [c1, c2]
-
--- Pretty printing Constraints
+jmEq :: Ctx t -> Type t -> Term t -> Type t -> Term t -> Constraints t
+jmEq ctx type1 t1 type2 t2 = [JMEq ctx type1 t1 type2 t2]
 
 instance PrettyM Constraint where
   prettyM c = case c of
@@ -204,10 +200,6 @@ instance PrettyM Constraint where
            group (group (t1Doc <+> ":" <+> type1Doc)) //
            hang 2 "=" //
            group (group (t2Doc <+> ":" <+> type2Doc)))
-    Conj cs -> do
-      csDoc <- mapM prettyM cs
-      return $
-        "Conj" //> PP.list csDoc
 
 -- Clauses invertibility
 ------------------------
