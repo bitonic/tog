@@ -14,8 +14,8 @@ class MetaVars t where
   metaVars' :: (IsTerm f, MonadTerm f m) => t f -> m (HS.HashSet MetaVar)
 
 instance MetaVars Elim where
-  metaVars' (Proj _ _) = return mempty
-  metaVars' (Apply t)  = metaVars t
+  metaVars' (Proj  _) = return mempty
+  metaVars' (Apply t) = metaVars t
 
 instance MetaVars Tel.Tel where
   metaVars' Tel.Empty                 = return mempty

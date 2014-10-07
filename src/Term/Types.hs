@@ -17,6 +17,7 @@ module Term.Types
   , MetaVar(..)
     -- * Terms
   , TermView(..)
+  , Projection(..)
   , Head(..)
   , Elim(..)
   , Field(..)
@@ -174,26 +175,33 @@ instance Hashable Head
 -- to functions, or projections applied to records.
 data Elim t
     = Apply t
-    | Proj Name Field
+    | Proj !Projection
     deriving (Eq, Show, Generic)
 
 instance (Hashable t) => Hashable (Elim t)
 
+data Projection = Projection'
+  { pName  :: !Name
+  , pField :: !Field
+  } deriving (Eq, Show, Generic)
+
+instance Hashable Projection
+
 mapElim :: (t -> t) -> Elim t -> Elim t
-mapElim f (Apply t)  = Apply $ f t
-mapElim _ (Proj n f) = Proj n f
+mapElim f (Apply t) = Apply $ f t
+mapElim _ (Proj p)  = Proj p
 
 mapElimM :: Monad m => (t -> m t) -> Elim t -> m (Elim t)
-mapElimM f (Apply t)  = Apply `liftM` f t
-mapElimM _ (Proj n f) = return $ Proj n f
+mapElimM f (Apply t) = Apply `liftM` f t
+mapElimM _ (Proj p)  = return $ Proj p
 
-foldElim :: (t -> a) -> (Name -> Field -> a) -> Elim t -> a
-foldElim f _ (Apply t)  = f t
-foldElim _ g (Proj n f) = g n f
+foldElim :: (t -> a) -> (Projection -> a) -> Elim t -> a
+foldElim f _ (Apply t) = f t
+foldElim _ g (Proj p)  = g p
 
 elimEq :: (IsTerm t, MonadTerm t m) => Elim t -> Elim t -> m Bool
-elimEq (Apply t1)   (Apply t2)   = termEq t1 t2
-elimEq (Proj n1 f1) (Proj n2 f2) = return $ n1 == n2 && f1 == f2
+elimEq (Apply t1) (Apply t2) = termEq t1 t2
+elimEq (Proj p1)  (Proj p2)  = return $ p1 == p2
 elimEq _            _            = return False
 
 elimsEq :: (IsTerm t, MonadTerm t m) => [Elim t] -> [Elim t] -> m Bool
@@ -235,7 +243,7 @@ metaVars t = do
     Con _ elims        -> mconcat <$> mapM metaVars elims
   where
     metaVarsElim (Apply t') = metaVars t'
-    metaVarsElim (Proj _ _) = return mempty
+    metaVarsElim (Proj _)   = return mempty
 
     metaVarsHead (Meta mv) = return $ HS.singleton mv
     metaVarsHead _         = return mempty
@@ -368,10 +376,10 @@ eliminate t elims = do
   case (tView, elims) of
     (_, []) ->
         return t
-    (Con _c args, Proj _ field : es) ->
-        if unField field >= length args
+    (Con _c args, Proj proj : es) ->
+        if unField (pField proj) >= length args
         then error "eliminate: Bad elimination"
-        else eliminate (args !! unField field) es
+        else eliminate (args !! unField (pField proj)) es
     (Lam body, Apply argument : es) -> do
         body' <- instantiate body argument
         eliminate body' es
@@ -485,7 +493,7 @@ data ConstantKind
   -- when we encounter them.
   | Data [Name]
   -- ^ A data type, with constructors.
-  | Record Name [(Name, Field)]
+  | Record Name [Projection]
   -- ^ A record, with its constructors and projections.
   deriving (Eq, Show, Typeable)
 

@@ -33,5 +33,5 @@ instantiateMetaVars t = do
     App h els ->
       app h =<< mapM goElim els
   where
-    goElim (Proj n field) = return $ Proj n field
-    goElim (Apply t')     = Apply <$> instantiateMetaVars t'
+    goElim (Proj p)   = return $ Proj p
+    goElim (Apply t') = Apply <$> instantiateMetaVars t'

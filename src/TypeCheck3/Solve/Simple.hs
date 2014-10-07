@@ -251,7 +251,7 @@ etaExpand (ctx, type0, t1, t2) = do
               case tView of
                 Con _ _ -> return Nothing
                 _       -> do
-                  ts <- mapM (\(n, ix) -> eliminate t [Proj n ix]) projs
+                  ts <- mapM (\p -> eliminate t [Proj p]) projs
                   Just <$> con dataCon ts
             _ ->
               return Nothing
@@ -448,7 +448,7 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
           Just cod' -> do
             res2 <- checkEqualSpine' ctx cod' mbH' elims1 elims2
             return (res1 <> res2)
-      (Proj proj projIx, Proj proj' projIx') | proj == proj' && projIx == projIx' -> do
+      (Proj proj, Proj proj') | proj == proj' -> do
           let Just h = mbH
           (h', type') <- applyProjection proj h type_
           checkEqualSpine' ctx type' (Just h') elims1 elims2
@@ -594,7 +594,7 @@ etaExpandVar tyCon type_ tel = do
   let Just tyConPars = mapM isApply tyConPars0
   appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
   (dataConPars, _) <- assert ("etaExpandVar, unrollPiWithNames:" <+>) $
-    unrollPiWithNames appliedDataConType (map fst projs)
+    unrollPiWithNames appliedDataConType (map pName projs)
   dataConT <- con dataCon =<< mapM var (Ctx.vars dataConPars)
   let weakenBy = max 0 $ Ctx.length dataConPars - 1
   tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 weakenBy tel

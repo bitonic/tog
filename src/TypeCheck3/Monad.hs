@@ -217,8 +217,8 @@ addDataCon c d args tel t = addDefinition c (DataCon d args tel t)
 
 addProjection
     :: (IsTerm t)
-    => Name -> Field -> Name -> Tel.Tel (Type t) -> Type t -> TC t s ()
-addProjection f n r tel t = addDefinition f (Projection n r tel t)
+    => Projection -> Name -> Tel.Tel (Type t) -> Type t -> TC t s ()
+addProjection p r tel t = addDefinition (pName p) (Projection (pField p) r tel t)
 
 addClauses
     :: (IsTerm t) => Name -> Closed (Invertible t) -> TC t s ()

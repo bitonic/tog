@@ -187,15 +187,15 @@ addProjections
     -- over the types of the previous fields and the self variable.
     -> CheckM t ()
 addProjections tyCon tyConPars self fields0 =
-    go $ zip fields0 $ map Field [0,1..]
+    go $ zipWith Projection' fields0 $ map Field [0,1..]
   where
     go fields fieldTypes = case (fields, fieldTypes) of
       ([], Tel.Empty) ->
         return ()
-      ((field, ix) : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
+      (proj : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
         endType <- (`pi` fieldType) =<< Ctx.app (def tyCon []) tyConPars
-        addProjection field ix tyCon (Tel.tel tyConPars) endType
-        (go fields' <=< Tel.instantiate fieldTypes') =<< app (Var self) [Proj field ix]
+        addProjection proj tyCon (Tel.tel tyConPars) endType
+        (go fields' <=< Tel.instantiate fieldTypes') =<< app (Var self) [Proj proj]
       (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
 
 checkFunDef :: (IsTerm t) => Name -> [A.Clause] -> CheckM t ()

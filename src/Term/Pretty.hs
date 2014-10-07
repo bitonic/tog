@@ -32,8 +32,8 @@ class PrettyM f where
   prettyM :: (IsTerm t, MonadTerm t m) => f t -> m PP.Doc
 
 instance PrettyM Elim where
-  prettyM (Proj n _) = return $ PP.pretty $ A.Proj n
-  prettyM (Apply t)  = PP.pretty . A.Apply <$> internalToTerm t
+  prettyM (Proj p)  = return $ PP.pretty $ A.Proj $ pName p
+  prettyM (Apply t) = PP.pretty . A.Apply <$> internalToTerm t
 
 instance PrettyM Definition where
   prettyM (Constant Postulate type_) =
@@ -47,7 +47,7 @@ instance PrettyM Definition where
     return $ "record" <+> typeDoc <+> "where" $$>
              "constructor" <+> PP.pretty dataCon $$
              "field" $$>
-             PP.vcat (map (PP.pretty . fst) fields)
+             PP.vcat (map (PP.pretty . pName) fields)
   prettyM (DataCon tyCon _ pars type_) = do
     typeDoc <- prettyTelWithTerm pars type_
     return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
@@ -126,8 +126,10 @@ internalToTerm t0 = do
         Nothing -> do
           n <- getAbsName_ cod
           A.Pi n <$> internalToTerm dom <*> internalToTerm cod
-        Just cod' -> do
-          A.Fun <$> internalToTerm dom <*> internalToTerm cod'
+        Just _ -> do
+          -- Note that we do not use the cod on purpose: we don't want
+          -- to screw up the De Bruijn numbering.
+          A.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
       A.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
     Refl ->
@@ -142,4 +144,4 @@ internalToTerm t0 = do
             Def f -> A.Def f
             J -> A.J A.noSrcLoc
             Meta mv -> A.Var (A.Name (A.srcLoc mv) (PP.render mv))
-      A.App h' <$> mapM (foldElim (\t -> A.Apply <$> internalToTerm t) (\n _ -> return $ A.Proj n)) args
+      A.App h' <$> mapM (foldElim (\t -> A.Apply <$> internalToTerm t) (return . A.Proj . pName)) args

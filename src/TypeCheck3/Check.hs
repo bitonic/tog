@@ -65,7 +65,7 @@ checkSpine
 checkSpine _ _ [] type_ =
   return (type_)
 checkSpine ctx h (el : els) type_ = case el of
-  Proj proj _ -> do
+  Proj proj -> do
     (h', type') <- applyProjection proj h type_
     checkSpine ctx h' els type'
   Apply arg -> do
@@ -77,16 +77,15 @@ checkSpine ctx h (el : els) type_ = case el of
 
 applyProjection
   :: (IsTerm t)
-  => Name
-  -- ^ Name of the projection
+  => Projection
   -> Term t
   -- ^ Head
   -> Type t
   -- ^ Type of the head
   -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
-  Projection projIx tyCon projTypeTel projType <- getDefinition proj
-  h' <- eliminate h [Proj proj projIx]
+  Projection _ tyCon projTypeTel projType <- getDefinition $ pName proj
+  h' <- eliminate h [Proj proj]
   tyConArgs <- matchTyCon tyCon type_
   appliedProjType <-  Tel.substs projTypeTel projType tyConArgs
   appliedProjTypeView <- whnfView appliedProjType
@@ -218,7 +217,7 @@ etaExpand (ctx, type_, t1, t2) = do
               case tView of
                 Con _ _ -> return t
                 _       -> do
-                  ts <- mapM (\(n, ix) -> eliminate t [Proj n ix]) projs
+                  ts <- mapM (\p -> eliminate t [Proj p]) projs
                   con dataCon ts
             _ ->
               return return
@@ -286,7 +285,7 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       cod' <-  instantiate cod arg1
       mbH' <- traverse (`eliminate` [Apply arg1]) mbH
       checkEqualSpine ctx cod' mbH' elims1 elims2
-    (Proj proj projIx, Proj proj' projIx') | proj == proj' && projIx == projIx' -> do
+    (Proj proj, Proj proj') | proj == proj' -> do
       let Just h = mbH
       (h', type') <- applyProjection proj h type_
       checkEqualSpine ctx type' (Just h') elims1 elims2

@@ -169,8 +169,9 @@ elaborateApp ctx type_ h (elims :< A.Apply arg) = atSrcLoc arg $ do
   t <- eliminate f [Apply arg']
   mvT <- addMetaVarInCtx ctx type_
   return (mvT, jmEq ctx type_ mvT type' t <> constrF <> constrArg)
-elaborateApp ctx type_ h (elims :< A.Proj proj) = atSrcLoc proj $ do
-  Projection projIx tyCon projTypeTel projType <- getDefinition proj
+elaborateApp ctx type_ h (elims :< A.Proj projName) = atSrcLoc projName $ do
+  Projection projIx tyCon projTypeTel projType <- getDefinition projName
+  let proj = Projection' projName projIx
   tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType
   typeRec <- app (Def tyCon) (map Apply tyConArgs)
@@ -178,6 +179,6 @@ elaborateApp ctx type_ h (elims :< A.Proj proj) = atSrcLoc proj $ do
   type0 <- Tel.substs projTypeTel projType tyConArgs
   Pi _ type1 <- whnfView type0
   type' <- instantiate type1 rec_
-  t <- eliminate rec_ [Proj proj projIx]
+  t <- eliminate rec_ [Proj proj]
   mvT <- addMetaVarInCtx ctx type_
   return (mvT, jmEq ctx type_ mvT type' t <> constrRec)

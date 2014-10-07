@@ -67,7 +67,7 @@ addDefinition sig defName def' = case (defName, def') of
 
     addProjection name tyCon projIx = case getDefinition sig' tyCon of
       Constant (Record dataCon projs) tyConType ->
-        let projs' = projs ++ [(name, projIx)]
+        let projs' = projs ++ [Projection' name projIx]
             defs   = HMS.insert tyCon (Constant (Record dataCon projs') tyConType) (sDefinitions sig')
         in sig'{sDefinitions = defs}
       _ ->

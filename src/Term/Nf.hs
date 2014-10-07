@@ -15,8 +15,8 @@ class Nf t where
   nf' :: (IsTerm f, MonadTerm f m) => t f -> m (t f)
 
 instance Nf Elim where
-  nf' (Proj ix field) = return $ Proj ix field
-  nf' (Apply t)       = Apply <$> nf t
+  nf' (Proj p)  = return $ Proj p
+  nf' (Apply t) = Apply <$> nf t
 
 instance Nf Tel.Tel where
   nf' Tel.Empty                 = return Tel.Empty

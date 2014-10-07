@@ -31,10 +31,10 @@ substEliminate t elims = do
   case (tView, elims) of
     (_, []) ->
         return t
-    (Con _c args, Proj _ field : es) ->
-        if unField field >= length args
+    (Con _c args, Proj proj : es) ->
+        if unField (pField proj) >= length args
         then error "substEliminate: Bad elimination"
-        else substEliminate (args !! unField field) es
+        else substEliminate (args !! unField (pField proj)) es
     (Lam body, Apply argument : es) -> do
         body' <- instantiate body argument
         substEliminate body' es
@@ -183,7 +183,7 @@ genericGetAbsName =
                 Var v -> f v
                 _     -> Nothing
           ((mbN <|>) . msum) <$>
-            mapM (foldElim (go f) (\_ _ -> return Nothing)) els
+            mapM (foldElim (go f) (\_ -> return Nothing)) els
 
 genericStrengthen
   :: (IsTerm t, MonadTerm t m) => Int -> Int -> Abs t -> m (Maybe t)

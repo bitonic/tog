@@ -243,7 +243,7 @@ etaExpandContext (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           appliedDataConType2 <- Tel.substs dataConTypeTel dataConType tyConPars2
           let unrollDataConType t =
                 assert ("etaExpandVar, unrollPiWithNames:" <+>) $
-                unrollPiWithNames t (map fst projs)
+                unrollPiWithNames t (map pName projs)
           -- Get the type of each field
           (dataConPars1, _) <- unrollDataConType appliedDataConType1
           (dataConPars2, _) <- unrollDataConType appliedDataConType2
@@ -258,7 +258,7 @@ etaExpandContext (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           -- Note that the telescopes also need to be weakened,
           -- since we're introducing new variables.
           let telLen = Tel.length tel1
-          let weakenBy = max 0 $ numDataConPars -1
+          let weakenBy = max 0 $ numDataConPars-1
           let adjustTel t x = Tel.subst 0 t =<< Tel.weaken 1 weakenBy x
           tel1' <- adjustTel recordTerm1 tel1
           tel2' <- adjustTel recordTerm1 tel2
@@ -329,7 +329,7 @@ etaExpand (ctx1, type1, t1, ctx2, type2, t2) = do
               case tView of
                 Con _ _ -> return Nothing
                 _       -> do
-                  ts <- mapM (\(n, ix) -> eliminate t [Proj n ix]) projs
+                  ts <- mapM (\p -> eliminate t [Proj p]) projs
                   Just <$> con dataCon ts
             _ ->
               return Nothing
@@ -566,7 +566,7 @@ checkEqualSpine' ctx1 type1 mbH1 (elim1 : elims1) ctx2 type2 mbH2 (elim2 : elims
         mbH2' <- traverse (`eliminate` [Apply arg2]) mbH2
         res2  <- checkEqualSpine' ctx1 cod1' mbH1' elims1 ctx2 cod2' mbH2' elims2
         return $ res1 ++ res2
-      (Proj proj projIx, Proj proj' projIx') | proj == proj' && projIx == projIx' -> do
+      (Proj proj, Proj proj') | proj == proj' -> do
           let Just h1 = mbH1
           (h1', type1') <- applyProjection proj h1 type1
           let Just h2 = mbH2
