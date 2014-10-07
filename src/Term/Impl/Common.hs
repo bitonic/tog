@@ -44,7 +44,7 @@ substEliminate t elims = do
         error $ "substEliminate: Bad elimination"
 
 genericSubstsView
-  :: forall t m. (IsTerm t, MonadTerm t m) => [(Int, t)] -> TermView t -> m t
+  :: forall t m. (IsTerm t, MonadTerm t m) => Substitution t -> TermView t -> m t
 genericSubstsView [] tView = do
   unview tView
 genericSubstsView args tView = do
@@ -78,9 +78,7 @@ genericSubstsView args tView = do
       substs args' t'
 
 genericSubsts
-  :: (IsTerm t, MonadTerm t m) => [(Int, t)] -> t -> m t
-genericSubsts [] t = do
-  return t
+  :: (IsTerm t, MonadTerm t m) => Substitution t -> t -> m t
 genericSubsts args t = do
   tView <- view t
   genericSubstsView args tView

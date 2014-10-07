@@ -497,6 +497,28 @@ etaExpandMetaVar t = do
     Nothing -> do
       return Nothing
 
+-- | @unrollMetaVarArgs t@ checks if @t = α ts@ and for every argument
+-- of the metavar which is a record type it splits it up in separate
+-- arguments, one for each field.
+unrollMetaVarArgs :: (IsTerm t) => Term t -> TC t s (Maybe (Term t))
+unrollMetaVarArgs _ = return Nothing
+-- unrollMetaVarArgs t = runMaybeT $ do
+--   App (Meta mv) elims <- lift $ whnfView t
+--   lift $ do
+--     (ctx, mvType) <- unrollPi =<< getMetaVarType mv
+--     error "TODO"
+--     -- (ctx', oldToNew, newToOld) <- etaExpandContext ctx
+    
+
+-- -- | Eta expand all the types in the context, and returns a
+-- -- substitution from the old context environment into the new, and one
+-- -- from the new into the old.
+-- etaExpandContext
+--   :: (IsTerm t)
+--   => Ctx t
+--   -> TC t s (Ctx t, Substitution t, Substitution t)
+-- etaExpandContext = error "TODO etaExpandContext"
+
 -- Non-metas stuff
 ------------------------------------------------------------------------
 

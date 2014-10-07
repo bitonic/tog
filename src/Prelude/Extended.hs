@@ -45,6 +45,7 @@ module Prelude.Extended
   , mplus
   , any
   , MonadIO(..)
+  , foldlM
   ) where
 
 import Prelude ()

@@ -143,7 +143,14 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           "y:" //> yDoc
   debugBracket msg $ do
     runCheckEqual
-      [checkTypeHeads, checkSynEq, etaExpandContext, etaExpandMetaVars, etaExpand, checkMetaVars]
+      [ checkTypeHeads          -- Check that the types are both non-blocked
+      , checkSynEq              -- Optimization: check if the two terms are equal
+      , etaExpand               -- Eta expand the terms
+      , etaExpandContext        -- Expand all record types things in the context
+      , etaExpandMetaVars       -- Expand the term if they're metas
+      , unrollMetaVarsArgs      -- Removes record-type arguments from metas
+      , checkMetaVars           -- Assign/intersect metavariables if needed
+      ]
       compareTerms
       (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0)
   where
@@ -279,6 +286,14 @@ etaExpandMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
   -- instantiate `α' to `tt'.
   t1' <- fromMaybe t1 <$> etaExpandMetaVar t1
   t2' <- fromMaybe t2 <$> etaExpandMetaVar t2
+  keepGoing (ctx1, type1, t1', ctx2, type2, t2')
+
+unrollMetaVarsArgs
+  :: (IsTerm t)
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
+unrollMetaVarsArgs (ctx1, type1, t1, ctx2, type2, t2) = do
+  t1' <- fromMaybe t1 <$> unrollMetaVarArgs t1
+  t2' <- fromMaybe t2 <$> unrollMetaVarArgs t2
   keepGoing (ctx1, type1, t1', ctx2, type2, t2')
 
 etaExpand

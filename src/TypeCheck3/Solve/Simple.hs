@@ -164,7 +164,12 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
           "y:" //> yDoc
   debugBracket msg $ do
     runCheckEqual
-      [checkSynEq, etaExpandMetaVars, etaExpand, checkMetaVars]
+      [ checkSynEq              -- Optimization: check if the two terms are equal
+      , etaExpandMetaVars       -- Expand the term if they're metas
+      , unrollMetaVarsArgs      -- Removes record-typed arguments from metas
+      , etaExpand               -- Expand the terms
+      , checkMetaVars           -- Assign/intersect metavariables if needed
+      ]
       compareTerms
       (ctx0, type0, t1_0, t2_0)
   where
@@ -202,6 +207,14 @@ etaExpandMetaVars (ctx, type_, t1, t2) = do
   -- instantiate `α' to `tt'.
   t1' <- fromMaybe t1 <$> etaExpandMetaVar t1
   t2' <- fromMaybe t2 <$> etaExpandMetaVar t2
+  keepGoing (ctx, type_, t1', t2')
+
+unrollMetaVarsArgs
+  :: (IsTerm t)
+  => CheckEqual t -> TC t s (CheckEqualProgress t)
+unrollMetaVarsArgs (ctx, type_, t1, t2) = do
+  t1' <- fromMaybe t1 <$> unrollMetaVarArgs t1
+  t2' <- fromMaybe t2 <$> unrollMetaVarArgs t2
   keepGoing (ctx, type_, t1', t2')
 
 etaExpand
@@ -469,8 +482,8 @@ metaAssign ctx0 type0 mv elims0 t0 = do
       else do
         ctxDoc <- prettyM ctx
         return $ "** New context:" //> ctxDoc
-    type_ <- sub type0
-    t <- sub t0
+    type_ <- applyActions sub type0
+    t <- applyActions sub t0
     debug $ do
       typeDoc <- prettyTermM type_
       tDoc <- prettyTermM t
@@ -539,7 +552,7 @@ etaExpandVars
   -- ^ Context we're in
   -> [Elim t]
   -- ^ Eliminators on the MetaVar
-  -> TC t s (Ctx t, [Elim t], t -> TC t s t)
+  -> TC t s (Ctx t, [Elim t], [TermAction t])
   -- ^ Returns the new context, the new eliminators, and a substituting
   -- action to update terms to the new context.
 etaExpandVars ctx0 elims0 = do
@@ -553,27 +566,27 @@ etaExpandVars ctx0 elims0 = do
     mbVar <- collectProjectedVar elims1
     case mbVar of
       Nothing ->
-        return (ctx0, elims1, \t -> return t)
+        return (ctx0, elims1, [])
       Just (v, tyCon) -> do
         debug_ $ "** Found var" <+> PP.pretty v <+> "with tyCon" <+> PP.pretty tyCon
         let (ctx1, type_, tel) = splitContext ctx0 v
         (tel', sub) <- etaExpandVar tyCon type_ tel
-        elims2 <- mapM (mapElimM sub) elims1
+        elims2 <- mapM (mapElimM (applyActions sub)) elims1
         (ctx2, elims3, sub') <- etaExpandVars (ctx1 Ctx.++ Tel.unTel tel') elims2
-        return (ctx2, elims3, (sub >=> sub'))
+        return (ctx2, elims3, sub ++ sub')
 
 -- | Expands a record-typed variable ranging over the given 'Tel.Tel',
 -- returning a new telescope ranging over all the fields of the record
 -- type and the old telescope with the variable substituted with a
 -- constructed record, and a substitution for the old variable.
 etaExpandVar
-  :: (IsTerm t, MonadTerm t m)
+  :: (IsTerm t)
   => Name
   -- ^ The type constructor of the record type.
   -> Type t
   -- ^ The type of the variable we're expanding.
   -> Tel.Tel t
-  -> TC t s (Tel.Tel t, t -> m t)
+  -> TC t s (Tel.Tel t, [TermAction t])
 etaExpandVar tyCon type_ tel = do
   Constant (Record dataCon projs) _ <- getDefinition tyCon
   DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
@@ -587,7 +600,7 @@ etaExpandVar tyCon type_ tel = do
   tel' <- Tel.subst 0 dataConT =<< Tel.weaken 1 weakenBy tel
   let telLen = Tel.length tel'
   dataConT' <- weaken_ telLen dataConT
-  let sub t = subst telLen dataConT' =<< weaken (telLen + 1) weakenBy t
+  let sub = [Weaken (telLen+1) weakenBy, Substs [(telLen, dataConT')]]
   return (dataConPars Tel.++ tel', sub)
 
 compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)

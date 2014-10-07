@@ -41,6 +41,11 @@ module Term.Types
   , isBlocked
   , ignoreBlocking
   , blockedEq
+    -- ** Substitutions and Actions
+  , Substitution
+  , TermAction(..)
+  , applyAction
+  , applyActions
     -- ** Utilities
   , var
   , lam
@@ -257,7 +262,9 @@ class (Typeable t, Show t) => IsTerm t where
     strengthen
       :: MonadTerm t m => Int -> Int -> Abs t -> m (Maybe t)
 
-    substs :: MonadTerm t m => [(Int, t)] -> t -> m t
+    -- | Applies the substitution from left to right (first
+    -- substitutes the first element, and so on).
+    substs :: MonadTerm t m => Substitution t -> t -> m t
 
     instantiate :: (MonadTerm t m, IsTerm t) => Abs t -> t -> m t
     instantiate t arg = do
@@ -447,8 +454,10 @@ patternBindings (ConP _ pats) = patternsBindings pats
 patternsBindings :: [Pattern] -> Int
 patternsBindings = sum . map patternBindings
 
-instantiateClauseBody :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [t] -> m t
-instantiateClauseBody body args = substs (zip [0..] $ reverse args) body
+instantiateClauseBody
+  :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
+instantiateClauseBody body args =
+  substs (zip [0..] $ reverse args) body
 
 -- Definition
 ------------------------------------------------------------------------
@@ -538,3 +547,23 @@ instance Show MetaVar where
 
 instance A.HasSrcLoc MetaVar where
   srcLoc = mvSrcLoc
+
+-- Substitutions and Actions
+------------------------------------------------------------------------
+
+type Substitution t = [(Int, Term t)]
+
+data TermAction t
+  = Substs (Substitution t)
+  | Weaken Int Int
+
+applyAction
+  :: (IsTerm t, MonadTerm t m) => TermAction t -> Term t -> m (Term t)
+applyAction a t = case a of
+  Substs sub     -> substs sub t
+  Weaken from by -> weaken from by t
+
+-- | Applies some actions, first one first.
+applyActions
+  :: (IsTerm t, MonadTerm t m) => [TermAction t] -> Term t -> m (Term t)
+applyActions as t = foldlM (\t' a -> applyAction a t') t as
