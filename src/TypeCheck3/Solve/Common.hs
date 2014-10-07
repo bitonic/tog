@@ -19,7 +19,7 @@ import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
 
--- Unification stuff which is common amongst the solvers.
+-- Pruning
 ------------------------------------------------------------------------
 
 -- | @pruneTerm vs t@ tries to remove all the variables that are not
@@ -191,6 +191,9 @@ shouldKill vs t = runMaybeT $ do
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
 
+-- Inverting metavars
+------------------------------------------------------------------------
+
 -- | An inversion is a substitution from to be used in the term we're
 --   trying to instantiate a metavariable with. So if we have @α v₁ ⋯
 --   vₙ = t@ we want to produce an inversion that makes sure that @t@
@@ -356,7 +359,8 @@ applyInvertMetaSubst sub t0 =
           Left v' -> return $ Left v'
           Right t -> Right <$> weaken_ 1 t
 
-    go :: (Var -> TC t s (Either Var (Term t))) -> Term t -> TC t s (TermTraverse Var t)
+    go :: (Var -> TC t s (Either Var (Term t))) -> Term t
+       -> TC t s (TermTraverse Var t)
     go invert t = do
       tView <- whnfView t
       case tView of
@@ -397,6 +401,9 @@ applyInvertMetaSubst sub t0 =
               sequenceA $ app J <$> resElims
             (Meta mv, _) ->
               sequenceA $ app (Meta mv) <$> resElims
+
+-- η-expansion of context variables
+------------------------------------------------------------------------
 
 -- | Checks whether an eliminator is a a projected variables (because
 --   we can expand those).
@@ -465,6 +472,9 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
       guard $ n == n' && f == f'
       lift $ nf =<< app h (init elims)
 
+-- Various
+------------------------------------------------------------------------
+
 -- | @killArgs α kills@ instantiates @α@ so that it discards the
 --   arguments indicated by @kills@.
 killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (Closed (Term t))
@@ -500,13 +510,28 @@ etaExpandMetaVar t = do
 -- | @unrollMetaVarArgs t@ checks if @t = α ts@ and for every argument
 -- of the metavar which is a record type it splits it up in separate
 -- arguments, one for each field.
-unrollMetaVarArgs :: (IsTerm t) => Term t -> TC t s (Maybe (Term t))
-unrollMetaVarArgs _ = return Nothing
+unrollMetaVarArgs
+  :: forall t s. (IsTerm t) => Term t -> TC t s (Maybe (Term t))
+unrollMetaVarArgs t = return Nothing
+
 -- unrollMetaVarArgs t = runMaybeT $ do
---   App (Meta mv) elims <- lift $ whnfView t
---   lift $ do
---     (ctx, mvType) <- unrollPi =<< getMetaVarType mv
---     error "TODO"
+--   App (Meta mv) _ <- lift $ whnfView t
+--   (ctx, mvType) <- lift $ unrollPi =<< getMetaVarType mv
+--   (True, args0, newMvType) <- lift $ go (Tel.tel ctx) mvType
+--   let args = toList args0
+--   newMv <- lift $ addMetaVar newMvType
+--   mvT <- lift $ lambdaAbstract (length args) =<< app (Meta newMv) (map Apply args)
+--   lift $ instantiateMetaVar mv mvT
+--   -- Now we return the old type, which normalized will give the new
+--   -- mv.
+--   return t
+--   where
+--     go :: Tel.Tel t -> Type t -> TC t s (Bool, Bwd (Term t), Type t)
+--     go Tel.Empty type_ = do
+--       return (False, B0, type_)
+--     go (Tel.Cons (n, dom) cod) type_ = do
+--       (changed, args, type') <- go cod type_
+--       error "TODO"
 --     -- (ctx', oldToNew, newToOld) <- etaExpandContext ctx
     
 
@@ -518,9 +543,6 @@ unrollMetaVarArgs _ = return Nothing
 --   => Ctx t
 --   -> TC t s (Ctx t, Substitution t, Substitution t)
 -- etaExpandContext = error "TODO etaExpandContext"
-
--- Non-metas stuff
-------------------------------------------------------------------------
 
 -- | @intersectVars us vs@ checks whether all relevant elements in @us@
 --   and @vs@ are variables, and if yes, returns a prune list which says
@@ -598,9 +620,6 @@ applyProjection proj h type_ = do
   Pi _ endType <- whnfView appliedProjType
   endType' <- instantiate endType h
   return (h', endType')
-
--- Miscellanea
-------------------------------------------------------------------------
 
 headType
   :: (IsTerm t)

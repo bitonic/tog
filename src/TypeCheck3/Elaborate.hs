@@ -9,6 +9,7 @@ module TypeCheck3.Elaborate
 
 import           Prelude                          hiding (mapM_, pi)
 
+import qualified Data.Bwd                         as Bwd
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
 import           Term
@@ -87,7 +88,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         t <- con dataCon dataConArgs
         return (mvT, waitForUnifiedType type' t <> constrDataConArgs)
       A.App h elims -> do
-        elaborateApp' ctx type_ h (reverse elims)
+        elaborateApp' ctx type_ h (Bwd.fromList elims)
 
 -- | Takes a telescope in the form of a Pi-type and replaces all it's
 -- elements with metavariables.
@@ -137,7 +138,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 
 elaborateApp'
   :: (IsTerm t)
-  => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraints t)
+  => Ctx t -> Type t -> A.Head -> Bwd A.Elim -> ElabM t (Term t, Constraints t)
 elaborateApp' ctx type_ h elims = do
   let msg = do
         ctxDoc <- prettyM ctx
@@ -152,12 +153,12 @@ elaborateApp' ctx type_ h elims = do
 
 elaborateApp
   :: (IsTerm t)
-  => Ctx t -> Type t -> A.Head -> [A.Elim] -> ElabM t (Term t, Constraints t)
-elaborateApp ctx type_ h [] = atSrcLoc h $ do
+  => Ctx t -> Type t -> A.Head -> Bwd A.Elim -> ElabM t (Term t, Constraints t)
+elaborateApp ctx type_ h B0 = atSrcLoc h $ do
   (t, hType) <- inferHead ctx h
   mvT <- addMetaVarInCtx ctx type_
   return (mvT, jmEq ctx type_ mvT hType t)
-elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
+elaborateApp ctx type_ h (elims :< A.Apply arg) = atSrcLoc arg $ do
   dom <- addMetaVarInCtx ctx set
   -- TODO better name here
   cod <- addMetaVarInCtx (Ctx.Snoc ctx ("_", dom)) set
@@ -168,7 +169,7 @@ elaborateApp ctx type_ h (A.Apply arg : elims) = atSrcLoc arg $ do
   t <- eliminate f [Apply arg']
   mvT <- addMetaVarInCtx ctx type_
   return (mvT, jmEq ctx type_ mvT type' t <> constrF <> constrArg)
-elaborateApp ctx type_ h (A.Proj proj : elims) = atSrcLoc proj $ do
+elaborateApp ctx type_ h (elims :< A.Proj proj) = atSrcLoc proj $ do
   Projection projIx tyCon projTypeTel projType <- getDefinition proj
   tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType

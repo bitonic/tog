@@ -17,6 +17,8 @@ module PrettyPrint
   , prettyApp
   ) where
 
+import           Data.Bwd                         (Bwd)
+import           Data.Foldable                    (toList)
 import           Data.String                      (IsString(fromString))
 import qualified Text.PrettyPrint.Leijen          as PP
 import           Text.PrettyPrint.Leijen          hiding ((<$>), (<$$>), renderPretty, renderCompact, Pretty(..), list, parens, tupled)
@@ -131,6 +133,9 @@ instance (Pretty a,Pretty b,Pretty c) => Pretty (a,b,c) where
 instance Pretty a => Pretty (Maybe a) where
   pretty Nothing        = empty
   pretty (Just x)       = pretty x
+
+instance Pretty a => Pretty (Bwd a) where
+  pretty = pretty . toList
 
 prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
 prettyApp _ h []   = h

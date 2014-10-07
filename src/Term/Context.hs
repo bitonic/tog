@@ -86,11 +86,11 @@ getVar v ctx = do
 
 -- | Collects all the variables in the 'Ctx'.
 vars :: forall t. (IsTerm t) => Ctx (Type t) -> [Var]
-vars = reverse . go 0
+vars = toList . go 0
   where
-    go :: Int -> Ctx (Type t) -> [Var]
-    go _  Empty                = []
-    go ix (Snoc ctx (name, _)) = V (named name ix) : go (ix + 1) ctx
+    go :: Int -> Ctx (Type t) -> Bwd Var
+    go _  Empty                = B0
+    go ix (Snoc ctx (name, _)) = go (ix + 1) ctx :< V (named name ix)
 
 -- | Creates a 'Pi' type containing all the types in the 'Ctx' and
 -- terminating with the provided 't'.

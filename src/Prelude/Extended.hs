@@ -46,6 +46,8 @@ module Prelude.Extended
   , any
   , MonadIO(..)
   , foldlM
+  , Bwd(..)
+  , toList
   ) where
 
 import Prelude ()
@@ -67,3 +69,4 @@ import GHC.Generics
 import Control.Monad.Trans
 import Debug.Trace
 import Data.String
+import Data.Bwd
