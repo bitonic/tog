@@ -561,34 +561,14 @@ unrollMetaVarArgs t = do
             else do
               mapM (app (Var v) . map Proj) projsPaths
 
-    prettyTree = PP.pretty . treePaths
-
-    prettyMetaVarArgs :: MetaVarArgs -> PP.Doc
-    prettyMetaVarArgs = PP.list . map f
-      where
-        f Nothing       = "NO"
-        f (Just (v, t)) = PP.pretty (v, PP.pretty (map prettyTree t))
-
     go :: Tel.Tel t -> Type t -> TC t s (Bool, MetaVarArgs, Type t)
     go Tel.Empty type_ = do
       return (False, [], type_)
     go (Tel.Cons (n, dom) tel) type0 = do
-      debug $ do
-        domDoc <- prettyTermM dom
-        telDoc <- prettyM tel
-        typeDoc <- prettyTermM type0
-        return $
-          "** Doing" $$
-          "dom:" //> domDoc $$
-          "tel:" //> telDoc $$
-          "type:" //> typeDoc
       let fallback = do
             (changed, args, type1) <- go tel type0
             let argVar = weakenVar_ (length args) $ boundVar n
             type2 <- pi dom type1
-            debug $ do
-              let argDoc = prettyMetaVarArgs (Just (argVar, []) : args)
-              return $ "** Returning" //> argDoc
             return (changed, Just (argVar, []) : args, type2)
       domView <- whnfView dom
       case domView of
@@ -612,9 +592,6 @@ unrollMetaVarArgs t = do
               (_, args, type2) <- go (dataConPars Tel.++ tel') type1
               if null projs
                 then do
-                  debug $ do
-                    let argDoc = prettyMetaVarArgs (Nothing : args)
-                    return $ "** Returning" //> argDoc
                   return (True, Nothing : args, type2)
                 else do
                   let (argsL, argsR) = splitAt (length projs) args
@@ -624,9 +601,6 @@ unrollMetaVarArgs t = do
                                | (proj, Just (_, projs')) <- zip projs argsL
                                ]
                              )
-                  debug $ do
-                    let argDoc = prettyMetaVarArgs (Just argL : args)
-                    return $ "** Returning" //> argDoc
                   return (True, Just argL : argsR, type2)
             _ -> do
               fallback
