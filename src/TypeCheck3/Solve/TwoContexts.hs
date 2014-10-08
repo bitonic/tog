@@ -146,7 +146,7 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
       [ checkTypeHeads          -- Check that the types are both non-blocked
       , checkSynEq              -- Optimization: check if the two terms are equal
       , etaExpand               -- Eta expand the terms
-      , etaExpandContext        -- Expand all record types things in the context
+      , etaExpandContexts       -- Expand all record types things in the context
       , etaExpandMetaVars       -- Expand the term if they're metas
       , unrollMetaVarsArgs      -- Removes record-type arguments from metas
       , checkMetaVars           -- Assign/intersect metavariables if needed
@@ -189,10 +189,10 @@ checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
       then done []
       else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
 
-etaExpandContext
+etaExpandContexts
   :: forall t s. (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
-etaExpandContext (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
+etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
   debugBracket_ "*** Eta-expanding context" $ do
     (tel1, type1, t1, tel2, type2, t2) <-
       go (Tel.tel ctx1_0) type1_0 t1_0 (Tel.tel ctx2_0) type2_0 t2_0

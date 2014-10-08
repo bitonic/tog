@@ -40,7 +40,7 @@ substEliminate t elims = do
         substEliminate body' es
     (App h es1, es2) ->
         app h (es1 ++ es2)
-    (_, _) ->
+    (_, _) -> do
         error $ "substEliminate: Bad elimination"
 
 genericSubstsView

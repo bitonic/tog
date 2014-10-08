@@ -187,6 +187,9 @@ data Projection = Projection'
 
 instance Hashable Projection
 
+instance PP.Pretty Projection where
+  pretty = PP.pretty . pName
+
 mapElim :: (t -> t) -> Elim t -> Elim t
 mapElim f (Apply t) = Apply $ f t
 mapElim _ (Proj p)  = Proj p

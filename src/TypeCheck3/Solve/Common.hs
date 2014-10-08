@@ -7,6 +7,7 @@ import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Syntax.Internal                  (Name)
+import           Data.Tree                        (Tree(Node), rootLabel, subForest, Forest)
 
 
 import           Prelude.Extended
@@ -403,76 +404,6 @@ applyInvertMetaSubst sub t0 =
             (Meta mv, _) ->
               sequenceA $ app (Meta mv) <$> resElims
 
--- η-expansion of context variables
-------------------------------------------------------------------------
-
--- | Checks whether an eliminator is a a projected variables (because
---   we can expand those).
-isProjectedVar :: (IsTerm t) => Elim t -> MaybeT (TC t s) (Var, Name)
-isProjectedVar elim = do
-  Apply t <- return elim
-  App (Var v) vElims <- lift $ whnfView t
-  projName : _ <- forM vElims $ \vElim -> do
-    Proj proj <- return vElim
-    return $ pName proj
-  return (v, projName)
-
--- | Scans a list of 'Elim's looking for an 'Elim' composed of projected
--- variable.
-collectProjectedVar
-  :: (IsTerm t) => [Elim t] -> TC t s (Maybe (Var, Name))
-collectProjectedVar elims = runMaybeT $ do
-  (v, projName) <- msum $ map isProjectedVar elims
-  tyConDef <- lift $ getDefinition projName
-  let Projection _ tyCon _ _ = tyConDef
-  return (v, tyCon)
-
--- | Divides a context at the given variable.
-splitContext
-  :: Ctx t -> Var -> (Ctx t, Type t, Tel.Tel t)
-splitContext ctx00 v0 = go ctx00 (varIndex v0) Tel.Empty
-  where
-    go ctx0 ix0 tel = case (ctx0, ix0) of
-      (Ctx.Empty, _) ->
-        error "impossible.splitContext: var out of scope"
-      (Ctx.Snoc ctx (n', type_), ix) ->
-        if ix > 0
-        then go ctx (ix - 1) (Tel.Cons (n', type_) tel)
-        else (ctx, type_, tel)
-
-etaContractElim :: (IsTerm t) => Elim t -> TC t s (Elim t)
-etaContractElim (Apply t) = Apply <$> etaContract t
-etaContractElim (Proj p)  = return $ Proj p
-
--- | η-contracts a term (both records and lambdas).
-etaContract :: (IsTerm t) => t -> TC t s t
-etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
-  t0View <- lift $ whnfView t0
-  case t0View of
-    -- TODO it should be possible to do it also for constructors
-    Lam body -> do
-      App h elims@(_:_) <- lift $ whnfView =<< etaContract body
-      Apply t <- return $ last elims
-      App (Var v) [] <- lift $ whnfView t
-      guard $ varIndex v == 0
-      Just t' <- lift $ strengthen_ 1 =<< app h (init elims)
-      return t'
-    Con dataCon args -> do
-      DataCon tyCon _ _ _ <- lift $ getDefinition dataCon
-      Constant (Record _ fields) _ <- lift $ getDefinition tyCon
-      guard $ length args == length fields
-      (t : ts) <- sequence (zipWith isRightProjection fields args)
-      guard =<< (and <$> lift (mapM (termEq t) ts))
-      return t
-    _ ->
-      mzero
-  where
-    isRightProjection proj t = do
-      App h elims@(_ : _) <- lift $ whnfView =<< etaContract t
-      Proj proj' <- return $ last elims
-      guard $ proj == proj'
-      lift $ nf =<< app h (init elims)
-
 -- Various
 ------------------------------------------------------------------------
 
@@ -499,88 +430,208 @@ etaExpandMetaVar t = do
     return (mv, elims, dataCon)
   case mbRecordDataCon of
     Just (mv, elims, dataCon) -> do
-      let msg' = "*** Eta-expanding metavar " <+> PP.pretty mv <+>
-                 "with datacon" <+> PP.pretty dataCon
-      debugBracket_ msg' $ do
+      let msg = do
+            elimsDoc <- prettyListM elims
+            return $
+              "*** etaExpandMetaVar" $$
+              "metavar:" <+> PP.pretty mv $$
+              "datacon:" <+> PP.pretty dataCon $$
+              "elims:" //> elimsDoc
+      debugBracket msg $ do
         mvT <- instantiateDataCon mv dataCon
         mvT' <- eliminate mvT elims
         return $ Just mvT'
     Nothing -> do
       return Nothing
 
-type MetaVarArgs = [(Var, [(Field, Name)])]
+etaExpandContext
+  :: forall t s. (IsTerm t)
+  => Ctx t -> TC t s (Ctx t, [TermAction t])
+etaExpandContext ctx = do
+  debugBracket_ "*** Eta-expanding context" $ do
+    (tel, acts) <- go $ Tel.tel ctx
+    debug $ do
+      if null acts
+        then do
+          return "** No change"
+        else do
+          ctxDoc <- prettyM ctx
+          telDoc <- prettyM tel
+          return $
+            "** Expanded" $$
+            "before:" //> ctxDoc $$
+            "after:" //> telDoc
+    return (Tel.unTel tel, acts)
+  where
+    go Tel.Empty = do
+      return (Tel.Empty, [])
+    go (Tel.Cons (n, arg) tel) = do
+      -- Check if both the type is a record type.
+      mbTyCon <- runMaybeT $ do
+        App (Def tyCon) tyConArgs <- lift $ whnfView arg
+        True <- lift $ isRecordType tyCon
+        let Just tyConPars = mapM isApply tyConArgs
+        return (tyCon, tyConPars)
+      -- If it isn't, then continue through the rest of the
+      -- context.  If it is, split up the variable into the record
+      -- fields.
+      case mbTyCon of
+        Nothing -> do
+          (tel', acts) <- go tel
+          return (Tel.Cons (n, arg) tel', acts)
+        Just (tyCon, tyConPars) -> do
+          Constant (Record dataCon projs) _ <- getDefinition tyCon
+          DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
+          -- Instantiate the tycon pars in the type of the datacon
+          appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
+          -- Get the type of each field
+          (dataConPars, _) <-
+            assert ("etaExpandContext, unrollPiWithNames:" <+>) $
+            unrollPiWithNames appliedDataConType (map pName projs)
+          let numDataConPars = Ctx.length dataConPars
+          -- Build a term with variables representing the fields
+          recordTerm <- con dataCon =<< mapM var (Ctx.vars dataConPars)
+          -- Now we need a telescope with the fields, and then the
+          -- telescope that we already had, but with the variable that
+          -- stood for arg replaced with the record term.
+          --
+          -- Note that the telescopes also need to be weakened,
+          -- since we're introducing new variables.
+          let telLen = Tel.length tel
+          let weakenBy = max 0 $ numDataConPars-1
+          tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
+          recordTerm' <- weaken_ telLen recordTerm
+          let acts = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm')]]
+          -- Now continue.
+          (tel'', acts') <- go (dataConPars Tel.++ tel')
+          return (tel'', acts ++ acts')
 
-{-# WARNING unrollMetaVarArgs "Remove duplication with TwoContexts.etaExpandContext and Simple.etaExpandVars." #-}
+type MetaVarArgs = [Maybe (Var, Forest Projection)]
+
+{-# WARNING unrollMetaVarArgs "Remove duplication with etaExpandContext and TwoContext.etaExpandContexts." #-}
 -- | @unrollMetaVarArgs t@ checks if @t = α ts@ and for every argument
 -- of the metavar which is a record type it splits it up in separate
 -- arguments, one for each field.
 unrollMetaVarArgs
   :: forall t s. (IsTerm t) => Term t -> TC t s (Maybe (Term t))
-unrollMetaVarArgs _ = return Nothing
--- unrollMetaVarArgs t = do
---   let msg = do
---         tDoc <- prettyTermM t
---         return $
---           "*** unrollMetaVarArgs" $$
---           "term:" //> tDoc
---   debugBracket msg $ runMaybeT $ do
---     App (Meta mv) _ <- lift $ whnfView t
---     (ctx, mvType) <- lift $ unrollPi =<< getMetaVarType mv
---     (True, args0, newMvType) <- lift $ go (Tel.tel ctx) mvType
---     error "TODO"
---     -- newMv <- lift $ addMetaVar newMvType
---     -- mvT <- lift $ lambdaAbstract (length args) =<< app (Meta newMv) (map Apply args)
---     -- lift $ debug $ do
---     --   mvTypeDoc <- prettyTermM =<< Ctx.pi ctx mvType
---     --   newMvTypeDoc <- prettyTermM newMvType
---     --   mvTDoc <- prettyTermM mvT
---     --   return $
---     --     "** Unrolled" $$
---     --     "old type:" //> mvTypeDoc $$
---     --     "new type:" //> newMvTypeDoc $$
---     --     "term:" //> mvTDoc
---     -- lift $ instantiateMetaVar mv mvT
---     -- -- Now we return the old type, which normalized will give the new
---     -- -- mv.
---     -- return t
---   where
---     go :: Tel.Tel t -> Type t -> TC t s (Bool, MetaVarArgs, Type t)
---     go Tel.Empty type_ = do
---       return (False, [], type_)
---     go (Tel.Cons (n, dom) tel) type0 = do
---       let fallback = do
---             (changed, args, type1) <- go tel type0
---             arg <- weaken_ (length args) =<< var (boundVar n)
---             type2 <- pi dom type1
---             return (changed, (arg, []) : args, type2)
---       domView <- whnfView dom
---       case domView of
---         App (Def tyCon) elims -> do
---           tyConDef <- getDefinition tyCon
---           case tyConDef of
---             Constant (Record dataCon projs) _ -> do
---               let Just tyConPars = mapM isApply elims
---               DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
---               appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
---               (dataConPars, _) <-
---                 assert ("unrollMetaVarArgs, unrollPiWithNames:" <+>) $
---                 unrollPiWithNames appliedDataConType (map pName projs)
---               let numDataConPars = Ctx.length dataConPars
---               recordTerm <- con dataCon =<< mapM var (Ctx.vars dataConPars)
---               let telLen = Tel.length tel
---               let weakenBy = max 0 $ numDataConPars-1
---               tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
---               type1 <- subst telLen recordTerm =<< weaken (telLen+1) weakenBy type0
---               error "TODO"
---               -- (_, args, type2) <- go (dataConPars Tel.++ tel') type1
---               -- let args' = drop numDataConPars args
---               -- let argVar = weakenVar_ (length args') $ boundVar n
---               -- argsL <- forM projs $ \(p, f) -> app (Var argVar) [Proj p f]
---               -- return (True, argsL ++ args', type2)
---             _ -> do
---               fallback
---         _ -> do
---           fallback
+unrollMetaVarArgs t = do
+  let msg = do
+        tDoc <- prettyTermM t
+        return $
+          "*** unrollMetaVarArgs" $$
+          "term:" //> tDoc
+  debugBracket msg $ runMaybeT $ do
+    App (Meta mv) _ <- lift $ whnfView t
+    (ctx, mvType) <- lift $ unrollPi =<< getMetaVarType mv
+    (True, args0, newMvType) <- lift $ go (Tel.tel ctx) mvType
+    lift $ do
+      let abstractions = length args0
+      args <- toArgs args0
+      newMv <- addMetaVar newMvType
+      mvT <- lambdaAbstract abstractions =<< app (Meta newMv) (map Apply args)
+      debug $ do
+        mvTypeDoc <- prettyTermM =<< Ctx.pi ctx mvType
+        newMvTypeDoc <- prettyTermM newMvType
+        mvTDoc <- prettyTermM mvT
+        return $
+          "** Unrolled" $$
+          "old type:" //> mvTypeDoc $$
+          "new type:" //> newMvTypeDoc $$
+          "term:" //> mvTDoc
+      instantiateMetaVar mv mvT
+      -- Now we return the old type, which normalized will give the new
+      -- mv.
+      return t
+  where
+    treePaths :: Tree a -> [[a]]
+    treePaths tr | null (subForest tr) = [[rootLabel tr]]
+    treePaths tr = concatMap (map (rootLabel tr :) . treePaths)  (subForest tr)
+
+    toArgs :: MetaVarArgs -> TC t s [Term t]
+    toArgs args = fmap concat $ forM args $ \mbArg -> do
+      case mbArg of
+        Nothing -> do
+          return []
+        Just (v, projs) -> do
+          let projsPaths = concatMap treePaths projs
+          if null projsPaths
+            then do
+              t' <- app (Var v) []
+              return [t']
+            else do
+              mapM (app (Var v) . map Proj) projsPaths
+
+    prettyTree = PP.pretty . treePaths
+
+    prettyMetaVarArgs :: MetaVarArgs -> PP.Doc
+    prettyMetaVarArgs = PP.list . map f
+      where
+        f Nothing       = "NO"
+        f (Just (v, t)) = PP.pretty (v, PP.pretty (map prettyTree t))
+
+    go :: Tel.Tel t -> Type t -> TC t s (Bool, MetaVarArgs, Type t)
+    go Tel.Empty type_ = do
+      return (False, [], type_)
+    go (Tel.Cons (n, dom) tel) type0 = do
+      debug $ do
+        domDoc <- prettyTermM dom
+        telDoc <- prettyM tel
+        typeDoc <- prettyTermM type0
+        return $
+          "** Doing" $$
+          "dom:" //> domDoc $$
+          "tel:" //> telDoc $$
+          "type:" //> typeDoc
+      let fallback = do
+            (changed, args, type1) <- go tel type0
+            let argVar = weakenVar_ (length args) $ boundVar n
+            type2 <- pi dom type1
+            debug $ do
+              let argDoc = prettyMetaVarArgs (Just (argVar, []) : args)
+              return $ "** Returning" //> argDoc
+            return (changed, Just (argVar, []) : args, type2)
+      domView <- whnfView dom
+      case domView of
+        App (Def tyCon) elims -> do
+          tyConDef <- getDefinition tyCon
+          case tyConDef of
+            Constant (Record dataCon projs) _ -> do
+              let Just tyConPars = mapM isApply elims
+              DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
+              appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
+              (dataConPars, _) <-
+                assert ("unrollMetaVarArgs, unrollPiWithNames:" <+>) $
+                unrollPiWithNames appliedDataConType (map pName projs)
+              let numDataConPars = Ctx.length dataConPars
+              recordTerm <- con dataCon =<< mapM var (Ctx.vars dataConPars)
+              let telLen = Tel.length tel
+              let weakenBy = max 0 $ numDataConPars-1
+              tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
+              recordTerm' <- weaken_ telLen recordTerm
+              type1 <- subst telLen recordTerm' =<< weaken (telLen+1) weakenBy type0
+              (_, args, type2) <- go (dataConPars Tel.++ tel') type1
+              if null projs
+                then do
+                  debug $ do
+                    let argDoc = prettyMetaVarArgs (Nothing : args)
+                    return $ "** Returning" //> argDoc
+                  return (True, Nothing : args, type2)
+                else do
+                  let (argsL, argsR) = splitAt (length projs) args
+                  let argVar = weakenVar_ (length argsR) $ boundVar n
+                  let argL = ( argVar
+                             , [ Node proj projs'
+                               | (proj, Just (_, projs')) <- zip projs argsL
+                               ]
+                             )
+                  debug $ do
+                    let argDoc = prettyMetaVarArgs (Just argL : args)
+                    return $ "** Returning" //> argDoc
+                  return (True, Just argL : argsR, type2)
+            _ -> do
+              fallback
+        _ -> do
+          fallback
 
 -- -- | Eta expand all the types in the context, and returns a
 -- -- substitution from the old context environment into the new, and one
