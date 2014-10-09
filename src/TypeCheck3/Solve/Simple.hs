@@ -148,7 +148,6 @@ done = return . Done
 keepGoing :: CheckEqual t -> TC t s (CheckEqualProgress t)
 keepGoing = return . KeepGoing
 
-{-# WARNING checkEqual "Revise order of execution of various phases." #-}
 checkEqual
   :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
 checkEqual (ctx0, type0, t1_0, t2_0) = do
@@ -166,10 +165,10 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
   debugBracket msg $ do
     runCheckEqual
       [ checkSynEq              -- Optimization: check if the two terms are equal
-      , etaExpandMetaVars       -- Expand the term if they're metas
-      , unrollMetaVarsArgs      -- Removes record-typed arguments from metas
       , etaExpandContext'       -- Expand all record types things in the context
       , etaExpand               -- Expand the terms
+      , unrollMetaVarsArgs      -- Removes record-typed arguments from metas
+      , etaExpandMetaVars       -- Expand the term if they're metas
       , checkMetaVars           -- Assign/intersect metavariables if needed
       ]
       compareTerms
@@ -187,16 +186,21 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
 checkSynEq
   :: (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
-checkSynEq (ctx, type_, t1, t2) = do
-  debugBracket_ "*** Syntactic check" $ do
-    -- Optimization: try with a simple syntactic check first.
-    t1' <- ignoreBlocking =<< whnf t1
-    t2' <- ignoreBlocking =<< whnf t2
-    -- TODO add option to skip this check
-    eq <- termEq t1' t2'
-    if eq
-      then done []
-      else keepGoing (ctx, type_, t1', t2')
+checkSynEq args@(ctx, type_, t1, t2) = do
+  disabled <- confDisableSynEquality <$> readConf
+  if disabled
+    then do
+      keepGoing args
+    else do
+      debugBracket_ "*** Syntactic check" $ do
+        -- Optimization: try with a simple syntactic check first.
+        t1' <- ignoreBlocking =<< whnf t1
+        t2' <- ignoreBlocking =<< whnf t2
+        -- TODO add option to skip this check
+        eq <- termEq t1' t2'
+        if eq
+          then done []
+          else keepGoing (ctx, type_, t1', t2')
 
 etaExpandMetaVars
   :: (IsTerm t)

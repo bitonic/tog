@@ -145,10 +145,10 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
     runCheckEqual
       [ checkTypeHeads          -- Check that the types are both non-blocked
       , checkSynEq              -- Optimization: check if the two terms are equal
-      , etaExpand               -- Eta expand the terms
       , etaExpandContexts       -- Expand all record types things in the context
-      , etaExpandMetaVars       -- Expand the term if they're metas
+      , etaExpand               -- Eta expand the terms
       , unrollMetaVarsArgs      -- Removes record-type arguments from metas
+      , etaExpandMetaVars       -- Expand the term if they're metas
       , checkMetaVars           -- Assign/intersect metavariables if needed
       ]
       compareTerms
@@ -178,16 +178,21 @@ checkTypeHeads args@(ctx1, type1, t1, ctx2, type2, t2) = do
 checkSynEq
   :: (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
-checkSynEq (ctx1, type1, t1, ctx2, type2, t2) = do
-  debugBracket_ "*** Syntactic check" $ do
-    -- Optimization: try with a simple syntactic check first.
-    t1' <- ignoreBlocking =<< whnf t1
-    t2' <- ignoreBlocking =<< whnf t2
-    -- TODO add option to skip this check
-    eq <- termEq t1' t2'
-    if eq
-      then done []
-      else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
+checkSynEq args@(ctx1, type1, t1, ctx2, type2, t2) = do
+  disabled <- confDisableSynEquality <$> readConf
+  if disabled
+    then do
+      keepGoing args
+    else do
+      debugBracket_ "*** Syntactic check" $ do
+        -- Optimization: try with a simple syntactic check first.
+        t1' <- ignoreBlocking =<< whnf t1
+        t2' <- ignoreBlocking =<< whnf t2
+        -- TODO add option to skip this check
+        eq <- termEq t1' t2'
+        if eq
+          then done []
+          else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
 
 etaExpandContexts
   :: forall t s. (IsTerm t)
