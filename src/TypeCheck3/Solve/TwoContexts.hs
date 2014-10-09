@@ -723,11 +723,3 @@ instance PrettyM Constraint where
           "type:" //> typeDoc $$
           "term:" //> termDoc $$
           "metavar:" //> PP.pretty mv
-    where
-      prettyMbApp mbH elims = do
-        hdoc <- case mbH of
-          Nothing -> return "[]"
-          Just t  -> do tDoc <- prettyTermM t
-                        return $ group "[" // tDoc // "]"
-        elimsDoc <- mapM prettyM elims
-        return $ PP.prettyApp 4 hdoc elimsDoc
