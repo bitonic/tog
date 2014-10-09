@@ -23,7 +23,7 @@ parseTypeCheckConf = Conf
       )
   <*> strOption
       ( long "solver" <> value "S" <>
-        help "Available solvers: S (Simple), TC (TwoContexts)."
+        help "Available solvers: S (Simple), H (Hetero), TC (TwoContexts)."
       )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
@@ -69,7 +69,7 @@ parseTypeCheckConf = Conf
 parseMain :: Parser (IO ())
 parseMain =
   typeCheck
-    <$> argument Just (metavar "FILE")
+    <$> argument str (metavar "FILE")
     <*> parseInteractive
     <*> parseTypeCheckConf
   where

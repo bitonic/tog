@@ -43,6 +43,7 @@ import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
 
+import           Conf
 import           Prelude.Extended
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
@@ -50,6 +51,8 @@ import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSr
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
+import qualified Term.Context                     as Ctx
+import {-# SOURCE #-} qualified TypeCheck3.Check  as Check
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -246,15 +249,21 @@ addMetaVar type_ = do
   return mv
 
 instantiateMetaVar
-  :: (IsTerm t) => MetaVar -> Closed (Term t) -> TC t s ()
+  :: (IsTerm t)
+  => MetaVar -> Closed (Term t) -> TC t s ()
 instantiateMetaVar mv t = do
   let msg = do
         tDoc <- prettyTermM t
         return $
           "*** instantiateMetaVar" <+> PP.pretty mv $$
           tDoc
-  debug msg
-  modify_ $ \ts -> ts{tsSignature = Sig.instantiateMetaVar (tsSignature ts) mv t}
+  debugBracket msg $ do
+    check <- confCheckMetaVarConsistency <$> readConf
+    when check $ do
+      mvType <- getMetaVarType mv
+      debug_ $ "*** instantiateMetaVar'"
+      assert ("instantiateMetaVar" <+>) $ Check.check Ctx.Empty t mvType
+    modify_ $ \ts -> ts{tsSignature = Sig.instantiateMetaVar (tsSignature ts) mv t}
 
 getMetaVarType
   :: (IsTerm t) => MetaVar -> TC t s (Closed (Type t))

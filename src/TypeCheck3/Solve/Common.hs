@@ -607,15 +607,6 @@ unrollMetaVarArgs t = do
         _ -> do
           fallback
 
--- -- | Eta expand all the types in the context, and returns a
--- -- substitution from the old context environment into the new, and one
--- -- from the new into the old.
--- etaExpandContext
---   :: (IsTerm t)
---   => Ctx t
---   -> TC t s (Ctx t, Substitution t, Substitution t)
--- etaExpandContext = error "TODO etaExpandContext"
-
 -- | @intersectVars us vs@ checks whether all relevant elements in @us@
 --   and @vs@ are variables, and if yes, returns a prune list which says
 --   @True@ for arguments which are different and can be pruned.

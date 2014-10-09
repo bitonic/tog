@@ -13,6 +13,7 @@ import           Term
 import           TypeCheck3.Monad
 import           TypeCheck3.Common
 import qualified TypeCheck3.Solve.Simple          as Simple
+import qualified TypeCheck3.Solve.Hetero          as Hetero
 import qualified TypeCheck3.Solve.TwoContexts     as TwoContexts
 
 data SolveState t = forall solveState. (PrettyM solveState) => SolveState
@@ -27,6 +28,10 @@ initSolveState = do
     "S" ->
       return $ SolveState{ sState = Simple.initSolveState
                          , sSolve = Simple.solve
+                         }
+    "H" ->
+      return $ SolveState{ sState = Hetero.initSolveState
+                         , sSolve = Hetero.solve
                          }
     "TC" ->
       return $ SolveState{ sState = TwoContexts.initSolveState

@@ -405,7 +405,10 @@ checkMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
         Nothing -> do
           syntacticEqualityOrPostpone $ HS.singleton mv
         Just kills -> do
-          Done <$> (checkedInstantiateMetaVar mv =<< killArgs mv kills)
+          mvType <- getMetaVarType mv
+          newMv <- addMetaVar mvType
+          instantiateMetaVar mv =<< killArgs newMv kills
+          done []
     (MetaVarHead mv elims, _) -> do
       metaAssign ctx1 type1 mv elims ctx2 type2 t2
     (_, MetaVarHead mv elims) -> do
