@@ -38,8 +38,6 @@ type Constraints t = [(BlockingMetas, Constraint t)]
 
 data Constraint t
   = Unify (Ctx t) (Type t) (Term t) (Ctx t) (Type t) (Term t)
-  | UnifySpine (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
-               (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)]
   | CheckAndInstantiate (Type t) (Term t) MetaVar
 
 constraints :: (IsTerm t) => Common.Constraint t -> [Constraint t]
@@ -89,8 +87,6 @@ solveConstraint constr0 = do
     case constr0 of
       Unify ctx1 type1 t1 ctx2 type2 t2 -> do
         checkEqual (ctx1, type1, t1, ctx2, type2, t2)
-      UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
-        checkEqualSpine' ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2
       CheckAndInstantiate type_ term mv -> do
         checkAndInstantiate type_ term mv
 
@@ -715,17 +711,6 @@ instance PrettyM Constraint where
         ctx2Doc <- prettyM ctx2
         type2Doc <- prettyArgM type2
         t2Doc <- prettyArgM t2
-        return $ group $
-          group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
-          hang 2 "=" //
-          group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
-      UnifySpine ctx1 type1 mbH1 elims1 ctx2 type2 mbH2 elims2 -> do
-        ctx1Doc <- prettyM ctx1
-        type1Doc <- prettyArgM type1
-        t1Doc <- prettyMbApp mbH1 elims1
-        ctx2Doc <- prettyM ctx2
-        type2Doc <- prettyArgM type2
-        t2Doc <- prettyMbApp mbH2 elims2
         return $ group $
           group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
           hang 2 "=" //
