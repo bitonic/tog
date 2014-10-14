@@ -340,7 +340,7 @@ checkMetaVars (ctx, type1, t1, type2, t2) = do
     (MetaVarHead mv elims, _) -> do
       done =<< metaAssign ctx type1 mv elims type2 t2
     (_, MetaVarHead mv elims) -> do
-      done =<< metaAssign ctx type1 mv elims type2 t1
+      done =<< metaAssign ctx type2 mv elims type1 t1
     (BlockedOn mvs1 _ _, BlockedOn mvs2 _ _) -> do
       -- Both blocked, and we already checked for syntactic equality,
       -- let's try syntactic equality when normalized.
@@ -348,7 +348,7 @@ checkMetaVars (ctx, type1, t1, type2, t2) = do
     (BlockedOn mvs f elims, _) -> do
       done =<< checkEqualBlockedOn ctx type1 mvs f elims type2 t2
     (_, BlockedOn mvs f elims) -> do
-      done =<< checkEqualBlockedOn ctx type1 mvs f elims type2 t1
+      done =<< checkEqualBlockedOn ctx type2 mvs f elims type1 t1
     (NotBlocked _, NotBlocked _) -> do
       keepGoing (ctx, type1, t1', type2, t2')
 
