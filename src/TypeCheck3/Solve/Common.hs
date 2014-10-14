@@ -486,7 +486,7 @@ etaExpandContext ctx = do
           appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
           -- Get the type of each field
           (dataConPars, _) <-
-            assert ("etaExpandContext, unrollPiWithNames:" <+>) $
+            assert_ ("etaExpandContext, unrollPiWithNames:" <+>) $
             unrollPiWithNames appliedDataConType (map pName projs)
           let numDataConPars = Ctx.length dataConPars
           -- Build a term with variables representing the fields

@@ -243,7 +243,7 @@ etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           appliedDataConType1 <- Tel.substs dataConTypeTel dataConType tyConPars1
           appliedDataConType2 <- Tel.substs dataConTypeTel dataConType tyConPars2
           let unrollDataConType t =
-                assert ("etaExpandVar, unrollPiWithNames:" <+>) $
+                assert_ ("etaExpandVar, unrollPiWithNames:" <+>) $
                 unrollPiWithNames t (map pName projs)
           -- Get the type of each field
           (dataConPars1, _) <- unrollDataConType appliedDataConType1

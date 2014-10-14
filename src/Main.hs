@@ -81,10 +81,12 @@ parseMain =
 
     typeCheck file interactive conf = do
       writeConf conf
-      checkFile file
-        (\err -> putStrLn (PP.render err) >> exitFailure)
-        (\ts -> when interactive $
-                Haskeline.runInputT interactSettings (interact ts))
+      checkFile file $ \(ts, mbErr) -> do
+        forM_ mbErr $ \err -> do
+          putStrLn (PP.render err)
+          unless interactive exitFailure
+        when interactive $
+          Haskeline.runInputT interactSettings (interact ts)
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"
@@ -106,19 +108,17 @@ parseMain =
 
 checkFile
   :: FilePath
-  -> (PP.Doc -> IO a)
-  -> (forall t. (IsTerm t) => TCState' t -> IO a)
+  -> (forall t. (IsTerm t) => (TCState' t, Maybe PP.Doc) -> IO a)
   -> IO a
-checkFile file handle ret = do
+checkFile file ret = do
   mbErr <- runExceptT $ do
     s   <- lift $ readFile file
     raw <- exceptShowErr "Parse" $ parseProgram s
     exceptShowErr "Scope" $ scopeCheckProgram raw
   case mbErr of
-    Left err  -> handle err
-    Right int -> checkProgram int $ \mbErr' -> case mbErr' of
-                   Left err -> handle $ showError "Type" err
-                   Right ts -> ret ts
+    Left err  -> emptyTCState' $ \s -> ret (s, Just err)
+    Right int -> checkProgram int $ \(ts, mbErr') ->
+                 ret (ts, showError "Type" <$> mbErr')
   where
     showError errType err =
       PP.text errType <+> "error: " $$ PP.nest 2 err

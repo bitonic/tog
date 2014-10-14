@@ -4,8 +4,9 @@
 module TypeCheck3
   ( -- * Global state
     TCState'
-  , -- * Program checking
-    checkProgram
+  , emptyTCState'
+    -- * Program checking
+  , checkProgram
     -- * Interactive mode
   , Command
   , parseCommand
@@ -295,9 +296,14 @@ checkPattern funName synPat type_ = case synPat of
 
 type TCState' t = TCState t (CheckState t)
 
+emptyTCState' :: (forall t. (IsTerm t) => TCState' t -> IO a) -> IO a
+emptyTCState' ret = do
+  dummyS :: CheckState Simple <- initCheckState
+  ret $ initTCState dummyS
+
 checkProgram
   :: [A.Decl]
-  -> (forall t. (IsTerm t) => Either PP.Doc (TCState' t) -> IO a) -> IO a
+  -> (forall t. (IsTerm t) => (TCState' t, Maybe PP.Doc) -> IO a) -> IO a
 checkProgram decls ret = do
   tt <- confTermType <$> readConf
   case tt of
@@ -306,11 +312,12 @@ checkProgram decls ret = do
     -- "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  decls cmds ret
     "H"  -> checkProgram' (Proxy :: Proxy Hashed)      decls ret
     -- "SUSP" -> checkProgram' (Proxy :: Proxy Suspension) decls cmds ret
-    type_ -> ret (Left ("Invalid term type" <+> PP.text type_) :: Either PP.Doc (TCState' Simple))
+    type_ -> emptyTCState' $ \dummyS -> do
+      ret (dummyS, Just ("Invalid term type" <+> PP.text type_))
 
 checkProgram'
     :: forall t a. (IsTerm t)
-    => Proxy t -> [A.Decl] -> (Either PP.Doc (TCState' t) -> IO a) -> IO a
+    => Proxy t -> [A.Decl] -> ((TCState' t, Maybe PP.Doc) -> IO a) -> IO a
 checkProgram' _ decls0 ret = do
     quiet <- confQuiet <$> readConf
     unless quiet $ do
@@ -318,15 +325,15 @@ checkProgram' _ decls0 ret = do
       putStrLn "-- Checking declarations"
       drawLine
     s <- initCheckState
-    ret =<< runExceptT (goDecls (initTCState s) decls0)
+    ret =<< goDecls (initTCState s) decls0
   where
-    goDecls :: TCState' t -> [A.Decl] -> ExceptT PP.Doc IO (TCState' t)
+    goDecls :: TCState' t -> [A.Decl] -> IO (TCState' t, Maybe PP.Doc)
     goDecls ts [] = do
-      ts <$ checkState ts
+      (ts,) <$> checkState ts
     goDecls ts (decl : decls) = do
       quiet <- confQuiet <$> readConf
       cdebug <- confDebug <$> readConf
-      unless quiet $ lift $ do
+      unless quiet $ do
         putStrLn $ render decl
         let separate = case decl of
               A.TypeSig (A.Sig n _) -> case decls of
@@ -338,16 +345,18 @@ checkProgram' _ decls0 ret = do
               _ ->
                 not $ null decls
         when separate $ putStrLn ""
-      ((), ts') <- ExceptT $ runTC (not quiet && cdebug) ts $ checkDecl decl
-      goDecls ts' decls
+      (mbErr, ts') <- runTC (not quiet && cdebug) ts $ checkDecl decl
+      case mbErr of
+        Left err -> return (ts', Just err)
+        Right () -> goDecls ts' decls
 
     -- TODO change for this to work in TC
-    checkState :: TCState' t -> ExceptT PP.Doc IO ()
+    checkState :: TCState' t -> IO (Maybe PP.Doc)
     checkState ts = do
       let sig = tsSignature ts
-      unsolvedMvs <- lift $ runTermM sig $ metaVars' sig
+      unsolvedMvs <- runTermM sig $ metaVars' sig
       quiet <- confQuiet <$> readConf
-      unless quiet $ lift $ do
+      unless quiet $ do
         mvNoSummary <- confNoMetaVarsSummary <$> readConf
         mvReport <- confMetaVarsReport <$> readConf
         mvOnlyUnsolved <- confMetaVarsOnlyUnsolved <$> readConf
@@ -377,8 +386,9 @@ checkProgram' _ decls0 ret = do
           drawLine
           putStrLn . render =<< runTermM sig (prettyM (tsState ts ^. csSolveState))
         drawLine
-      unless (HS.null unsolvedMvs) $ do
-        throwE $ "Unsolved metas: " <+> PP.pretty (HS.toList unsolvedMvs)
+      return $ if HS.null unsolvedMvs
+               then Nothing
+               else Just $ "Unsolved metas: " <+> PP.pretty (HS.toList unsolvedMvs)
 
     drawLine =
       putStrLn "------------------------------------------------------------------------"
@@ -429,8 +439,8 @@ runCommand ts cmd =
       prettyM =<< L.use csSolveState
   where
     runTC' m = do
-      mbErr <- runTC False ts m
+      (mbErr, _) <- runTC False ts m
       let doc = case mbErr of
-                  Left err       -> "Error:" //> err
-                  Right (doc0, _) -> doc0
+                  Left err   -> "Error:" //> err
+                  Right doc0 -> doc0
       return (doc, ts)

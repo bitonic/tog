@@ -13,6 +13,7 @@ module TypeCheck3.Monad
   , typeError
   , fatalError
   , assert
+  , assert_
     -- ** Source location
   , atSrcLoc
     -- ** Definition handling
@@ -38,7 +39,6 @@ module TypeCheck3.Monad
   , debug_
   ) where
 
-import           Control.Exception.Base           (throwIO, try, Exception)
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
@@ -66,7 +66,7 @@ import {-# SOURCE #-} qualified TypeCheck3.Check  as Check
 -- Moreover, it lets us suspend computations waiting on a 'MetaVar' to
 -- be instantiated, or on another suspended computation to be completed.
 -- See 'ProblemId' and related functions.
-newtype TC t s a = TC {unTC :: (TCEnv, TCState t s) -> IO (TCState t s, a)}
+newtype TC t s a = TC {unTC :: (TCEnv, TCState t s) -> IO (TCState t s, Either TCErr a)}
   deriving (Functor)
 
 instance Applicative (TC t s) where
@@ -74,15 +74,17 @@ instance Applicative (TC t s) where
   (<*>) = ap
 
 instance Monad (TC t s) where
-  return x = TC $ \(_, ts) -> return (ts, x)
+  return x = TC $ \(_, ts) -> return (ts, Right x)
 
   TC m >>= f =
     TC $ \s@(te, _) -> do
-      (ts, x) <- m s
-      unTC (f x) (te, ts)
+      (ts, mbX) <- m s
+      case mbX of
+        Right x -> unTC (f x) (te, ts)
+        Left e  -> return (ts, Left e)
 
 instance MonadIO (TC t s) where
-  liftIO m = TC $ \(_, ts) -> (ts,) <$> m
+  liftIO m = TC $ \(_, ts) -> (ts,) . Right <$> m
 
 instance MonadTerm t (TC t s) where
   askSignature = tsSignature <$> get
@@ -90,21 +92,21 @@ instance MonadTerm t (TC t s) where
 catchTC
   :: TC t s a -> TC t s (Either PP.Doc a)
 catchTC m = TC $ \(te, ts) -> do
-  mbErr <- try $ unTC m (te, ts)
-  case mbErr of
-    Left (e :: TCErr) -> return (ts, Left (PP.pretty e))
-    Right (ts', x)    -> return (ts', Right x)
+  (ts', mbErr) <- unTC m (te, ts)
+  return $ case mbErr of
+    Left e  -> (ts', Right (Left (PP.pretty e)))
+    Right x -> (ts', Right (Right x))
 
 -- | Takes a 'TCState' and a computation on a closed context and
 -- produces an error or a result with a new state.
 runTC :: (IsTerm t)
       => Bool -> TCState t s
-      -> TC t s a -> IO (Either PP.Doc (a, TCState t s))
+      -> TC t s a -> IO (Either PP.Doc a, TCState t s)
 runTC debug' ts (TC m) = do
-  mbErr <- try $ m (initEnv{teDebug = if debug' then Just initDebug else Nothing}, ts)
+  mbErr <- m (initEnv{teDebug = if debug' then Just initDebug else Nothing}, ts)
   return $ case mbErr of
-    Left (e :: TCErr) -> Left $ PP.pretty e
-    Right (ts', x)    -> Right (x, ts')
+    (ts', Left e)  -> (Left (PP.pretty e), ts')
+    (ts', Right x) -> (Right x, ts')
 
 data TCEnv = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
@@ -154,8 +156,6 @@ instance PP.Pretty TCErr where
 instance Show TCErr where
   show = PP.render
 
-instance Exception TCErr
-
 -- Errors
 ------------------------------------------------------------------------
 
@@ -168,7 +168,7 @@ typeError err = do
       "** About to throw error" $$
       "error:" //> err $$
       "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
-  TC $ \(te, _) -> throwIO $ DocErr (teCurrentSrcLoc te) err
+  TC $ \(te, ts) -> return (ts, Left (DocErr (teCurrentSrcLoc te) err))
 
 fatalError :: String -> TC t s b
 fatalError s = do
@@ -180,12 +180,15 @@ fatalError s = do
       "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (dStackTrace d))
   error s
 
-assert :: (PP.Doc -> PP.Doc) -> TC t s a -> TC t s a
+assert :: (PP.Doc -> TC t s PP.Doc) -> TC t s a -> TC t s a
 assert msg m = do
   mbErr <- catchTC m
   case mbErr of
-    Left err -> fatalError $ PP.render $ msg err
+    Left err -> fatalError . PP.render =<< msg err
     Right x  -> return x
+
+assert_ :: (PP.Doc -> PP.Doc) -> TC t s a -> TC t s a
+assert_ msg = assert (return . msg)
 
 -- SrcLoc
 ------------------------------------------------------------------------
@@ -261,8 +264,17 @@ instantiateMetaVar mv t = do
     check <- confCheckMetaVarConsistency <$> readConf
     when check $ do
       mvType <- getMetaVarType mv
-      debug_ $ "*** instantiateMetaVar'"
-      assert ("instantiateMetaVar" <+>) $ Check.check Ctx.Empty t mvType
+      debug_ $ "*** instantiateMetaVar"
+      let msg' err = do
+            tDoc <- prettyTermM t
+            mvTypeDoc <- prettyTermM mvType
+            return $
+               "Inconsistent meta" $$
+               "metavar:" <+> PP.pretty mv $$
+               "type:" //> mvTypeDoc $$
+               "term:" //> tDoc $$
+               "err:" //> err
+      assert msg' $ Check.check Ctx.Empty t mvType
     modify_ $ \ts -> ts{tsSignature = Sig.instantiateMetaVar (tsSignature ts) mv t}
 
 getMetaVarType
@@ -304,7 +316,7 @@ debugBracket_ :: PP.Doc -> TC t s a -> TC t s a
 debugBracket_ doc = debugBracket (return doc)
 
 assertDoc :: TC t s PP.Doc -> TC t s PP.Doc
-assertDoc = assert ("assertDoc: the doc action got an error:" <+>)
+assertDoc = assert_ ("assertDoc: the doc action got an error:" <+>)
 
 debug :: TC t s PP.Doc -> TC t s ()
 debug docM = do
@@ -318,7 +330,7 @@ debug docM = do
         let s  = PP.renderPretty 100 doc
         let pad = replicate (dDepth d * _ERROR_INDENT) ' '
         hPutStr stderr $ unlines $ map (pad ++) $ lines s
-        return (ts, ())
+        return (ts, Right ())
 
 debug_ :: PP.Doc -> TC t s ()
 debug_ doc = debug (return doc)
@@ -340,24 +352,27 @@ mapTC l (TC m) = TC $ \(te, ts) -> do
 -- environment and signature and debug state.
 nestTC :: s' -> TC t s' a -> TC t s (a, s')
 nestTC s (TC m) = TC $ \(te, ts) -> do
-  (ts', x) <- m (te, s <$ ts)
-  return (tsState ts <$ ts', (x, tsState ts'))
+  (ts', mbX) <- m (te, s <$ ts)
+  let ts'' = tsState ts <$ ts'
+  return $ case mbX of
+    Left e  -> (ts'', Left e)
+    Right x -> (ts'', Right (x, tsState ts'))
 
 -- Utils
 ------------------------------------------------------------------------
 
 modify :: (TCState t s -> (TCState t s, a)) -> TC t s a
 modify f = TC $ \(_, ts) ->
-  let (ts', x) = f ts in return (ts', x)
+  let (ts', x) = f ts in return (ts', Right x)
 
 modify_ :: (TCState t s -> TCState t s) -> TC t s ()
 modify_ f = modify $ \ts -> (f ts, ())
 
 get :: TC t s (TCState t s)
-get = TC $ \(_, ts) -> return (ts, ts)
+get = TC $ \(_, ts) -> return (ts, Right ts)
 
 ask :: TC t s (TCEnv)
-ask = TC $ \(te, ts) -> return (ts, te)
+ask = TC $ \(te, ts) -> return (ts, Right te)
 
 local :: TCEnv -> TC t s a -> TC t s a
 local te (TC m) = TC $ \(_, ts) -> m (te, ts)
