@@ -17,10 +17,10 @@ import           Prelude                          hiding (abs, pi)
 
 import           Control.Lens                     ((^.))
 import qualified Control.Lens                     as L
-import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT, throwE)
 import           Data.Proxy                       (Proxy(Proxy))
 import qualified Data.HashSet                     as HS
 import qualified Data.HashMap.Strict              as HMS
+import           Safe                             (readMay)
 import qualified Text.ParserCombinators.ReadP     as ReadP
 
 import           Conf
@@ -400,24 +400,34 @@ data Command
   = TypeOf A.Expr
   | Normalize A.Expr
   | ShowConstraints
+  | ShowMeta MetaVar
   deriving (Eq, Show)
 
 parseCommand :: TCState' t -> String -> Either PP.Doc Command
-parseCommand ts s = runReadP $
+parseCommand ts s0 = runReadP $
   (do void $ ReadP.string ":t "
-      return (\s' -> TypeOf <$> parseAndScopeCheck s')) <|>
+      return (\s -> TypeOf <$> parseAndScopeCheck s)) <|>
   (do void $ ReadP.string ":n "
-      return (\s' -> Normalize <$> parseAndScopeCheck s')) <|>
+      return (\s -> Normalize <$> parseAndScopeCheck s)) <|>
   (do void $ ReadP.string ":c"
       ReadP.eof
-      return (\_ -> Right ShowConstraints))
+      return (\_ -> Right ShowConstraints)) <|>
+  (do void $ ReadP.string ":mv"
+      return (\s -> ShowMeta <$> parseMetaVar s))
   where
     scope = Sig.toScope $ tsSignature ts
 
     parseAndScopeCheck = parseExpr >=> A.scopeCheckExpr scope
 
+    parseMetaVar s =
+      case readMay s of
+        Just mv ->
+          Right MetaVar{mvId = mv, mvSrcLoc = A.noSrcLoc}
+        _ ->
+          Left $ "Invalid metavar id" <+> PP.text s
+
     runReadP :: ReadP.ReadP (String -> Either PP.Doc Command) -> Either PP.Doc Command
-    runReadP p = case ReadP.readP_to_S p s of
+    runReadP p = case ReadP.readP_to_S p s0 of
       []            -> Left "Unrecognised command"
       ((f, s') : _) -> f s'
 
@@ -437,6 +447,16 @@ runCommand ts cmd =
         "term:" //> tDoc
     ShowConstraints -> runTC' $ do
       prettyM =<< L.use csSolveState
+    ShowMeta mv -> runTC' $ do
+      mvType <- getMetaVarType mv
+      mbMvBody <- getMetaVarBody mv
+      mvTypeDoc <- prettyTermM mvType
+      mvBodyDoc <- case mbMvBody of
+        Nothing   -> return "?"
+        Just body -> prettyTermM body
+      return $
+        PP.pretty mv <+> ":" <+> mvTypeDoc $$
+        PP.pretty mv <+> "=" <+> mvBodyDoc
   where
     runTC' m = do
       (mbErr, _) <- runTC False ts m
