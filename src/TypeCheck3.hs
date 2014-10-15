@@ -401,19 +401,23 @@ data Command
   | Normalize A.Expr
   | ShowConstraints
   | ShowMeta MetaVar
+  | Help
   deriving (Eq, Show)
 
 parseCommand :: TCState' t -> String -> Either PP.Doc Command
 parseCommand ts s0 = runReadP $
-  (do void $ ReadP.string ":t "
+  (do void $ ReadP.string ":t " <|> ReadP.string ":type "
       return (\s -> TypeOf <$> parseAndScopeCheck s)) <|>
-  (do void $ ReadP.string ":n "
+  (do void $ ReadP.string ":n " <|> ReadP.string ":normalize "
       return (\s -> Normalize <$> parseAndScopeCheck s)) <|>
-  (do void $ ReadP.string ":c"
+  (do void $ ReadP.string ":c" <|> ReadP.string ":constraints"
       ReadP.eof
       return (\_ -> Right ShowConstraints)) <|>
-  (do void $ ReadP.string ":mv"
-      return (\s -> ShowMeta <$> parseMetaVar s))
+  (do void $ ReadP.string ":mv" <|> ReadP.string ":metavar "
+      return (\s -> ShowMeta <$> parseMetaVar s)) <|>
+  (do void $ ReadP.string ":h" <|> ReadP.string ":help"
+      ReadP.eof
+      return (\_ -> Right Help))
   where
     scope = Sig.toScope $ tsSignature ts
 
@@ -457,6 +461,13 @@ runCommand ts cmd =
       return $
         PP.pretty mv <+> ":" <+> mvTypeDoc $$
         PP.pretty mv <+> "=" <+> mvBodyDoc
+    Help -> runTC' $ do
+      return $
+        ":t [EXPR], :type [EXPR]\t\tTypecheck an expression" $$
+        ":n [EXPR], :normalize [EXPR]\tTypecheck and normalize an expression" $$
+        ":c, :constraints\t\tShow unsolved constraints" $$
+        ":mv [ID], metavar [ID]\t\tDisplay type and body (if instantiated) of a metavariable" $$
+        ":h, :help\t\t\tDisplay this message"
   where
     runTC' m = do
       (mbErr, _) <- runTC False ts m
