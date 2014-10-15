@@ -3,6 +3,18 @@ dist/
 *.agdai
 modules.pdf
 TAGS
+papers/*.aux
+papers/*.log
+papers/*.nav
+papers/*.nav
+papers/*.out
+papers/*.ptb
+papers/*.snm
+papers/talk.tex
+papers/*.toc
+papers/*.bbl
+papers/*.blg
+papers/*.pdf
 
 *~
 \#*\#
