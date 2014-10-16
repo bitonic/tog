@@ -13,13 +13,17 @@ position token Name ((letter | '_') (letter | digit | '-' | '\'' | '_')*) ;
 
 separator Decl ";";
 
-TypeSig.   Decl  ::= Name ":" Expr;
+TypeSig.   Decl  ::= TypeSig;
 FunDef.    Decl  ::= Name [Pattern1] "=" Expr Where;
 Data.      Decl  ::= "data" Name Params DataBody;
 Record.    Decl  ::= "record" Name Params RecordBody;
 Open.      Decl  ::= "open" Name;
 Import.    Decl  ::= "open" "import" Name;
-Postulate. Decl ::= "postulate" "{" [Decl] "}";
+Postulate. Decl  ::= "postulate" "{" [TypeSig] "}";
+
+separator TypeSig ";";
+
+Sig. TypeSig ::= Name ":" Expr;
 
 Where.   Where ::= "where" "{" [Decl] "}";
 NoWhere. Where ::= ;
@@ -74,4 +78,3 @@ separator nonempty Name "";
 
 comment "--";
 comment "{-" "-}";
-

@@ -230,11 +230,11 @@ addClauses
     :: (IsTerm t) => Name -> Closed (Invertible t) -> TC t s ()
 addClauses f clauses = do
   def' <- getDefinition f
-  let ext (Constant Postulate a) = return $ Function a clauses
-      ext (Function _ _)         = fatalError $ "TC.addClause: clause `" ++ show f ++ "' already added."
-      ext (Constant k _)         = fatalError $ "TC.addClause: constant `" ++ show k ++ "'"
-      ext DataCon{}              = fatalError $ "TC.addClause: constructor"
-      ext Projection{}           = fatalError $ "TC.addClause: projection"
+  let ext (Constant TypeSig a) = return $ Function a clauses
+      ext (Function _ _)       = fatalError $ "TC.addClause: clause `" ++ show f ++ "' already added."
+      ext (Constant k _)       = fatalError $ "TC.addClause: constant `" ++ show k ++ "'"
+      ext DataCon{}            = fatalError $ "TC.addClause: constructor"
+      ext Projection{}         = fatalError $ "TC.addClause: projection"
   addDefinition f =<< ext def'
 
 addMetaVar :: (IsTerm t) => Closed (Type t) -> TC t s MetaVar

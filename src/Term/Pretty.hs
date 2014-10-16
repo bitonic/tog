@@ -36,7 +36,10 @@ instance PrettyM Elim where
   prettyM (Apply t) = PP.pretty . A.Apply <$> internalToTerm t
 
 instance PrettyM Definition where
-  prettyM (Constant Postulate type_) =
+  prettyM (Constant Postulate type_) = do
+    typeDoc <- prettyTermM type_
+    return $ "postulate" //> typeDoc
+  prettyM (Constant TypeSig type_) = do
     prettyTermM type_
   prettyM (Constant (Data dataCons) type_) = do
     typeDoc <- prettyTermM type_

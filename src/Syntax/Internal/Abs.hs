@@ -36,6 +36,7 @@ instance Hashable Name where
 type Program = [Decl]
 
 data Decl = TypeSig TypeSig
+          | Postulate TypeSig
           | FunDef  Name [Clause]
           | DataDef Name [Name] [TypeSig]
           | RecDef  Name [Name] Name [TypeSig]
@@ -88,6 +89,7 @@ instance HasSrcLoc Name where
 instance HasSrcLoc Decl where
   srcLoc d = case d of
     TypeSig sig    -> srcLoc sig
+    Postulate sig  -> srcLoc sig
     FunDef x _     -> srcLoc x
     DataDef x _ _  -> srcLoc x
     RecDef x _ _ _ -> srcLoc x
@@ -164,6 +166,8 @@ instance Pretty Decl where
   pretty d = case d of
     TypeSig sig ->
       pretty sig
+    Postulate sig ->
+      text "postulate" $$> pretty sig
     FunDef f clauses ->
       vcat $ map (prettyClause f) clauses
     DataDef d xs cs ->

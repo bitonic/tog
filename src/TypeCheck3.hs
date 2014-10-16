@@ -65,6 +65,7 @@ checkDecl decl = do
   debugBracket_ ("*** checkDecl" $$ PP.pretty decl) $ atSrcLoc decl $ do
     case decl of
       A.TypeSig sig      -> checkTypeSig sig
+      A.Postulate sig    -> checkPostulate sig
       A.DataDef d xs cs  -> checkData d xs cs
       A.RecDef d xs c fs -> checkRec d xs c fs
       A.FunDef f clauses -> checkFunDef f clauses
@@ -92,6 +93,11 @@ checkExpr ctx synT type_ = do
 
 checkTypeSig :: (IsTerm t) => A.TypeSig -> CheckM t ()
 checkTypeSig (A.Sig name absType) = do
+    type_ <- checkExpr Ctx.Empty absType set
+    addConstant name TypeSig type_
+
+checkPostulate :: (IsTerm t) => A.TypeSig -> CheckM t ()
+checkPostulate (A.Sig name absType) = do
     type_ <- checkExpr Ctx.Empty absType set
     addConstant name Postulate type_
 
@@ -201,10 +207,16 @@ addProjections tyCon tyConPars self fields0 =
 
 checkFunDef :: (IsTerm t) => Name -> [A.Clause] -> CheckM t ()
 checkFunDef fun synClauses = do
-    funType <- definitionType =<< getDefinition fun
-    clauses <- mapM (checkClause fun funType) synClauses
-    inv <- checkInvertibility clauses
-    addClauses fun inv
+    funDef <- getDefinition fun
+    case funDef of
+      Constant TypeSig funType -> do
+        clauses <- mapM (checkClause fun funType) synClauses
+        inv <- checkInvertibility clauses
+        addClauses fun inv
+      Constant Postulate _ -> do
+        typeError $ "Cannot give body to postulate" <+> PP.pretty fun
+      _ -> do
+        fatalError "impossible.checkFunDef"
 
 checkClause
   :: (IsTerm t)

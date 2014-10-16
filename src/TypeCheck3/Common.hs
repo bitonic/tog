@@ -213,17 +213,25 @@ termHead t = do
       return $ case fDef of
         Constant Data{}      _ -> Just $ DefHead f
         Constant Record{}    _ -> Just $ DefHead f
-        -- TODO here we can't return 'Just' because we don't know if the
-        -- postulate is going to be instantiated afterwards.  Ideally we'd
-        -- have a "postulate" keyword to avoid this.
-        Constant Postulate{} _ -> Nothing
-        _                      -> Nothing
+        Constant Postulate{} _ -> Just $ DefHead f
+        Constant TypeSig{} _   -> Nothing
+        DataCon{}              -> Nothing
+        Function{}             -> Nothing
+        Projection{}           -> Nothing
+    App{} -> do
+      return Nothing
     Con f _ ->
       return $ Just $ DefHead f
-    Pi _ _ ->
+    Pi{} ->
       return $ Just $ PiHead
-    _ ->
-      return $ Nothing
+    Lam{} ->
+      return Nothing
+    Refl{} ->
+      return Nothing
+    Set{} ->
+      return Nothing
+    Equal{} ->
+      return Nothing
 
 checkInvertibility
   :: (IsTerm t) => [Closed (Clause t)] -> TC t s (Closed (Invertible t))

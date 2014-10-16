@@ -201,12 +201,14 @@ checkDecls :: [C.Decl] -> CCheck [Decl]
 checkDecls ds0 ret = case ds0 of
   [] ->
     ret []
-  C.Postulate ds1 : ds2 ->
-    checkDecls (ds1 ++ ds2) ret
-  C.TypeSig x e : ds -> do
-    (n, a) <- checkScheme e
-    bindName (mkDefInfo x n) $ \x -> checkDecls ds $ \ds' ->
-      ret (TypeSig (Sig x a) : ds')
+  C.Postulate [] : ds ->
+    checkDecls ds ret
+  C.Postulate (sig0 : sigs) : ds ->
+    checkTypeSig sig0 $ \sig -> checkDecls (C.Postulate sigs : ds) $ \ds' ->
+      ret (Postulate sig : ds')
+  C.TypeSig sig0 : ds -> do
+    checkTypeSig sig0 $ \sig -> checkDecls ds $ \ds' ->
+      ret (TypeSig sig : ds')
   C.Data x pars (C.NoDataBody set) : ds | Just ps <- isParamDecl pars -> do
     dataOrRecDecl x ps set ds
   C.Record x pars (C.NoRecordBody set) : ds | Just ps <- isParamDecl pars -> do
@@ -272,6 +274,11 @@ checkDecls ds0 ret = case ds0 of
       ([], d)
 
     sameName (C.Name (_, f1)) (C.Name (_, f2)) = f1 == f2
+
+checkTypeSig :: C.TypeSig -> CCheck TypeSig
+checkTypeSig (C.Sig x e) ret = do
+  (n, a) <- checkScheme e
+  bindName (mkDefInfo x n) $ \x -> ret (Sig x a)
 
 checkFields :: [NameInfo] -> [C.Constr] -> CCheck [TypeSig]
 checkFields ps fs ret = mapC bindName ps $ \_ -> do
@@ -530,11 +537,14 @@ instance HasSrcLoc C.Binding where
   srcLoc (C.HBind (x:_) _) = srcLoc x
   srcLoc b = error $ "binding no names: " ++ show b
 
+instance HasSrcLoc C.TypeSig where
+  srcLoc (C.Sig x _) = srcLoc x
+
 instance HasSrcLoc C.Decl where
   srcLoc d = case d of
     C.Postulate (d:ds) -> srcLoc d
     C.Postulate []     -> noSrcLoc
-    C.TypeSig x _      -> srcLoc x
+    C.TypeSig x        -> srcLoc x
     C.Data x _ _       -> srcLoc x
     C.Record x _ _     -> srcLoc x
     C.FunDef x _ _ _   -> srcLoc x

@@ -477,8 +477,9 @@ data Definition t
 
 data ConstantKind
   = Postulate
-  -- ^ Note that 'Postulates' might not be forever, since we add clauses
-  -- when we encounter them.
+  | TypeSig
+  -- ^ A 'TypeSig' is like a 'Postulate', but it can eventually be
+  -- instantiated.
   | Data [Name]
   -- ^ A data type, with constructors.
   | Record Name [Projection]
@@ -494,10 +495,10 @@ data Invertible t
   -- anywhere else in the list.
 
 -- | A 'TermHead' is an injective type- or data-former.
---
--- TODO Also include postulates when we have them to be explicit.
-data TermHead = PiHead | DefHead Name
-    deriving (Eq, Show)
+data TermHead
+  = PiHead
+  | DefHead Name
+  deriving (Eq, Show)
 
 instance PP.Pretty TermHead where
   pretty = PP.text . show
@@ -505,11 +506,6 @@ instance PP.Pretty TermHead where
 ignoreInvertible :: Invertible t -> [Clause t]
 ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
-
--- mapInvertible :: (Clause t v -> Clause t' v')
---               -> Invertible t v -> Invertible t' v'
--- mapInvertible f (NotInvertible clauses) = NotInvertible $ map f clauses
--- mapInvertible f (Invertible injClauses) = Invertible $ map (second f) injClauses
 
 definitionToNameInfo :: A.Name -> Definition t -> A.NameInfo
 definitionToNameInfo n (Constant _ _)       = A.DefName n 0

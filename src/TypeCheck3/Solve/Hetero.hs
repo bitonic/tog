@@ -19,7 +19,6 @@ import           PrettyPrint                      (($$), (<+>), (//>), (//), gro
 import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Context                     (Ctx)
-import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
