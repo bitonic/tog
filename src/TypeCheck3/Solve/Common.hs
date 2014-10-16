@@ -417,32 +417,73 @@ killArgs newMv kills = do
   body <- metaVar newMv . map Apply =<< mapM var vs
   foldl' (\body' _ -> lam =<< body') (return body) kills
 
--- | @etaExpandMetaVar t@ checks if @t = α ts@ and @α : Δ -> D ⋯@,
---   where D is a record type constructor, and if that's the case
---   instantiates @α@ with the appropriate data constructor.
-etaExpandMetaVar :: (IsTerm t) => Term t -> TC t s (Maybe (Term t))
-etaExpandMetaVar t = do
-  mbRecordDataCon <- runMaybeT $ do
-    App (Meta mv) elims <- lift $ whnfView t
-    (_, mvType) <- lift $ unrollPi =<< getMetaVarType mv
-    App (Def tyCon) _ <- lift $ whnfView mvType
-    Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
-    return (mv, elims, dataCon)
-  case mbRecordDataCon of
-    Just (mv, elims, dataCon) -> do
-      let msg = do
-            elimsDoc <- prettyListM elims
-            return $
-              "*** etaExpandMetaVar" $$
-              "metavar:" <+> PP.pretty mv $$
-              "datacon:" <+> PP.pretty dataCon $$
-              "elims:" //> elimsDoc
-      debugBracket msg $ do
-        mvT <- instantiateDataCon mv dataCon
-        mvT' <- eliminate mvT elims
-        return $ Just mvT'
-    Nothing -> do
-      return Nothing
+-- | @etaExpand A t@ η-expands term @t@.
+--
+-- Moreover, if @t = α ts@ and @A = D us@ where @D@ is some record type,
+-- it will instantiate @α@ accordingly.
+etaExpand :: forall t s. (IsTerm t) => Type t -> Term t -> TC t s (Term t)
+etaExpand type_ t = do
+  let fallback = do
+        debug_ "** Didn't expand"
+        return t
+  let expanded t' = do
+        debug $ do
+          t'Doc <- prettyTermM t'
+          return $
+            "** Expanded to" //> t'Doc
+        return t'
+  let msg = do
+        typeDoc <- prettyTermM type_
+        tDoc <- prettyTermM t
+        return $
+          "*** etaExpand" $$
+          "type:" //> typeDoc $$
+          "term:" //> tDoc
+  debugBracket msg $ do
+    typeView <- whnfView type_
+    case typeView of
+      App (Def tyCon) _ -> do
+        tyConDef <- getDefinition tyCon
+        case tyConDef of
+          Constant (Record dataCon projs) _ -> do
+            tView <- whnfView t
+            case tView of
+              -- If it's meta-headed and record-typed, instantiate the
+              -- meta.
+              App (Meta mv) elims -> do
+                let msg' = do
+                      elimsDoc <- prettyListM elims
+                      return $
+                        "** Expanding meta" $$
+                        "metavar:" <+> PP.pretty mv $$
+                        "datacon:" <+> PP.pretty dataCon $$
+                        "elims:" //> elimsDoc
+                debugBracket msg' $ do
+                  mvT <- instantiateDataCon mv dataCon
+                  mvT' <- eliminate mvT elims
+                  return mvT'
+              -- Optimization: if it's already of the right shape, do nothing
+              Con _ _ -> do
+                fallback
+              _ -> do
+                ts <- mapM (\p -> eliminate t [Proj p]) projs
+                expanded =<< con dataCon ts
+          _ -> do
+            fallback
+      Pi _ cod -> do
+        name <- getAbsName_ cod
+        v <- var $ boundVar name
+        tView <- whnfView t
+        -- Expand only if it's not a λ-function
+        case tView of
+          Lam _ -> do
+            fallback
+          _ -> do
+            t' <- weaken_ 1 t
+            t'' <- lam =<< eliminate t' [Apply v]
+            expanded t''
+      _ -> do
+        fallback
 
 etaExpandContext
   :: forall t s. (IsTerm t)

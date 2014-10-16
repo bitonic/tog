@@ -401,7 +401,7 @@ def :: (IsTerm t, MonadTerm t m) => Name -> [Elim t] -> m t
 def f = unview . App (Def f)
 
 con :: (IsTerm t, MonadTerm t m) => Name -> [t] -> m t
-con c args = unview (Con c args)
+con c args = unview $ Con c args
 
 -- TermTraverse
 ------------------------------------------------------------------------

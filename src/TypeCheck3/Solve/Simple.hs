@@ -166,9 +166,8 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
     runCheckEqual
       [ checkSynEq              -- Optimization: check if the two terms are equal
       , etaExpandContext'       -- Expand all record types things in the context
-      , etaExpand               -- Expand the terms
+      , etaExpand'              -- Expand the terms
       , unrollMetaVarsArgs      -- Removes record-typed arguments from metas
-      , etaExpandMetaVars       -- Expand the term if they're metas
       , checkMetaVars           -- Assign/intersect metavariables if needed
       ]
       compareTerms
@@ -201,19 +200,6 @@ checkSynEq args@(ctx, type_, t1, t2) = do
         if eq
           then done []
           else keepGoing (ctx, type_, t1', t2')
-
-etaExpandMetaVars
-  :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
-etaExpandMetaVars (ctx, type_, t1, t2) = do
-  -- Try to eta-expand the metavariable first.  We do this before
-  -- expanding the terms because if we expand the terms first we might
-  -- "lose" some metavariables.  Consider the case where we have `α :
-  -- Unit'.  This would get expanded to `tt : Unit', but then we don't
-  -- instantiate `α' to `tt'.
-  t1' <- fromMaybe t1 <$> etaExpandMetaVar t1
-  t2' <- fromMaybe t2 <$> etaExpandMetaVar t2
-  keepGoing (ctx, type_, t1', t2')
 
 unrollMetaVarsArgs
   :: (IsTerm t)
@@ -248,55 +234,14 @@ etaExpandContext' (ctx, type_, t1, t2) = do
       "t2':" //> t2'Doc
   keepGoing (ctx', type', t1', t2')
 
-etaExpand
+etaExpand'
   :: (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
-etaExpand (ctx, type0, t1, t2) = do
+etaExpand' (ctx, type0, t1, t2) = do
   debugBracket_ "*** Eta expansion" $ do
-    -- TODO compute expanding function once
-    t1' <- expandOrDont "x" type0 t1
-    t2' <- expandOrDont "y" type0 t2
+    t1' <- etaExpand type0 t1
+    t2' <- etaExpand type0 t2
     keepGoing (ctx, type0, t1', t2')
-  where
-    expandOrDont desc type_ t = do
-      mbT <- expand type_ t
-      case mbT of
-        Nothing -> do
-          debug_ $ "** Couldn't expand" <+> desc
-          return t
-        Just t' -> do
-          debug $ do
-            tDoc <- prettyTermM t'
-            return $
-              "** Expanded" <+> desc <+> "to" //> tDoc
-          return t'
-
-    expand type_ t = do
-      typeView <- whnfView type_
-      case typeView of
-        App (Def tyCon) _ -> do
-          tyConDef <- getDefinition tyCon
-          case tyConDef of
-            Constant (Record dataCon projs) _ -> do
-              tView <- whnfView t
-              case tView of
-                Con _ _ -> return Nothing
-                _       -> do
-                  ts <- mapM (\p -> eliminate t [Proj p]) projs
-                  Just <$> con dataCon ts
-            _ ->
-              return Nothing
-        Pi _ codomain -> do
-          name <- getAbsName_ codomain
-          v <- var $ boundVar name
-          tView <- whnfView t
-          case tView of
-            Lam _ -> return Nothing
-            _     -> do t' <- weaken_ 1 t
-                        t'' <- lam =<< eliminate t' [Apply v]
-                        return $ Just t''
-        _ ->
-          return Nothing
 
 checkMetaVars
   :: (IsTerm t)
