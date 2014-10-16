@@ -499,9 +499,18 @@ etaExpandContext ctx = do
           -- since we're introducing new variables.
           let telLen = Tel.length tel
           let weakenBy = max 0 $ numDataConPars-1
-          tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
-          recordTerm' <- weaken_ telLen recordTerm
-          let acts = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm')]]
+          -- If weakenBy < 0, we're dealing with a unit type.
+          (tel', recordTerm', acts) <- if weakenBy < 0
+            then do
+              Just tel' <- Tel.strengthen_ 1 =<< Tel.subst 0 recordTerm tel
+              recordTerm' <- weaken_ telLen recordTerm
+              let acts = [Substs [(telLen, recordTerm')], Strengthen telLen 1]
+              return (tel', recordTerm', acts)
+            else do
+              tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
+              recordTerm' <- weaken_ telLen recordTerm
+              let acts = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm')]]
+              return (tel', recordTerm', acts)
           -- Now continue.
           (tel'', acts') <- go (dataConPars Tel.++ tel')
           return (tel'', acts ++ acts')
@@ -580,20 +589,25 @@ unrollMetaVarArgs t = do
               DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
               appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
               (dataConPars, _) <-
-                assert ("unrollMetaVarArgs, unrollPiWithNames:" <+>) $
+                assert_ ("unrollMetaVarArgs, unrollPiWithNames:" <+>) $
                 unrollPiWithNames appliedDataConType (map pName projs)
               let numDataConPars = Ctx.length dataConPars
               recordTerm <- con dataCon =<< mapM var (Ctx.vars dataConPars)
               let telLen = Tel.length tel
-              let weakenBy = max 0 $ numDataConPars-1
-              tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
-              recordTerm' <- weaken_ telLen recordTerm
-              type1 <- subst telLen recordTerm' =<< weaken (telLen+1) weakenBy type0
-              (_, args, type2) <- go (dataConPars Tel.++ tel') type1
-              if null projs
+              let weakenBy = numDataConPars-1
+              if weakenBy < 0
+                -- This means that the type was unit.
                 then do
+                  Just tel' <- Tel.strengthen_ 1 =<< Tel.subst 0 recordTerm tel
+                  recordTerm' <- weaken_ telLen recordTerm
+                  Just type1 <- strengthen telLen 1 =<< subst telLen recordTerm' type0
+                  (_, args, type2) <- go (dataConPars Tel.++ tel') type1
                   return (True, Nothing : args, type2)
                 else do
+                  tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
+                  recordTerm' <- weaken_ telLen recordTerm
+                  type1 <- subst telLen recordTerm' =<< weaken (telLen+1) weakenBy type0
+                  (_, args, type2) <- go (dataConPars Tel.++ tel') type1
                   let (argsL, argsR) = splitAt (length projs) args
                   let argVar = weakenVar_ (length argsR) $ boundVar n
                   let argL = ( argVar

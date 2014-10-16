@@ -195,8 +195,11 @@ etaExpandContexts
   => CheckEqual t -> TC t s (CheckEqualProgress t)
 etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
   debugBracket_ "*** Eta-expanding context" $ do
-    (tel1, type1, t1, tel2, type2, t2) <-
-      go (Tel.tel ctx1_0) type1_0 t1_0 (Tel.tel ctx2_0) type2_0 t2_0
+    (tel1, acts1, tel2, acts2) <- go (Tel.tel ctx1_0) (Tel.tel ctx2_0)
+    type1 <- applyActions acts1 type1_0
+    t1 <- applyActions acts1 t1_0
+    type2 <- applyActions acts2 type2_0
+    t2 <- applyActions acts2 t2_0
     debug $ do
       if (Tel.length tel1 /= Ctx.length ctx1_0)
         then do
@@ -214,9 +217,11 @@ etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           return "** No change"
     keepGoing (Tel.unTel tel1, type1, t1, Tel.unTel tel2, type2, t2)
   where
-    go Tel.Empty type1 t1 Tel.Empty type2 t2 = do
-      return (Tel.Empty, type1, t1, Tel.Empty, type2, t2)
-    go (Tel.Cons (n1, arg1) tel1) type1 t1 (Tel.Cons (n2, arg2) tel2) type2 t2 = do
+    go :: Tel.Tel t -> Tel.Tel t
+       -> TC t s (Tel.Tel t, [TermAction t], Tel.Tel t, [TermAction t])
+    go Tel.Empty Tel.Empty = do
+      return (Tel.Empty, [], Tel.Empty, [])
+    go (Tel.Cons (n1, arg1) tel1) (Tel.Cons (n2, arg2) tel2) = do
       -- Check if both types are record types.
       mbTyCon <- runMaybeT $ do
         App (Def tyCon) tyConArgs1 <- lift $ whnfView arg1
@@ -232,10 +237,8 @@ etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
       -- fields.
       case mbTyCon of
         Nothing -> do
-          (tel1', type1', t1', tel2', type2', t2') <- go tel1 type1 t1 tel2 type2 t2
-          return ( Tel.Cons (n1, arg1) tel1', type1', t1',
-                   Tel.Cons (n2, arg2) tel2', type2', t2'
-                 )
+          (tel1', acts1, tel2', acts2) <- go tel1 tel2
+          return (Tel.Cons (n1, arg1) tel1', acts1, Tel.Cons (n2, arg2) tel2', acts2)
         Just (tyCon, tyConPars1, tyConPars2) -> do
           Constant (Record dataCon projs) _ <- getDefinition tyCon
           DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
@@ -259,21 +262,27 @@ etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
           -- Note that the telescopes also need to be weakened,
           -- since we're introducing new variables.
           let telLen = Tel.length tel1
-          let weakenBy = max 0 $ numDataConPars-1
-          let adjustTel t x = Tel.subst 0 t =<< Tel.weaken 1 weakenBy x
-          tel1' <- adjustTel recordTerm1 tel1
-          tel2' <- adjustTel recordTerm1 tel2
-          let adjustTerm t x = do
-                t' <- weaken_ telLen t
-                subst telLen t' =<< weaken (telLen+1) weakenBy x
-          t1' <- adjustTerm recordTerm1 t1
-          type1' <- adjustTerm recordTerm1 type1
-          t2' <- adjustTerm recordTerm2 t2
-          type2' <- adjustTerm recordTerm2 type2
-          -- Now continue.
-          go (dataConPars1 Tel.++ tel1') type1' t1'
-             (dataConPars1 Tel.++ tel2') type2' t2'
-    go _ _ _ _ _ _ = do
+          let weakenBy = numDataConPars-1
+          -- If weakenBy < 0, we're dealing with a unit type.
+          (tel1', acts1, tel2', acts2) <- if weakenBy < 0
+            then do
+              let adjustTel t x = Tel.strengthen_ 1 =<< Tel.subst 0 t x
+              Just tel1' <- adjustTel recordTerm1 tel1
+              Just tel2' <- adjustTel recordTerm1 tel2
+              let acts1 = [Strengthen telLen 1, Substs [(telLen, recordTerm1)]]
+              let acts2 = [Strengthen telLen 1, Substs [(telLen, recordTerm2)]]
+              return (tel1', acts1, tel2', acts2)
+            else do
+              let adjustTel t x = Tel.subst 0 t =<< Tel.weaken 1 weakenBy x
+              tel1' <- adjustTel recordTerm1 tel1
+              tel2' <- adjustTel recordTerm1 tel2
+              let acts1 = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm1)]]
+              let acts2 = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm2)]]
+              return (tel1', acts1, tel2', acts2)
+          (tel1'', acts1', tel2'', acts2') <-
+            go (dataConPars1 Tel.++ tel1') (dataConPars1 Tel.++ tel2')
+          return (tel1'', acts1 ++ acts1', tel2'', acts2 ++ acts2')
+    go _ _ = do
       fatalError "etaExpandContext: different lengthts"
 
 etaExpandMetaVars

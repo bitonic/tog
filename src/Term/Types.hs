@@ -567,12 +567,16 @@ type Substitution t = [(Int, Term t)]
 data TermAction t
   = Substs (Substitution t)
   | Weaken Int Int
+  | Strengthen Int Int
+  -- ^ Will fail if it can't be strengthened.
 
 applyAction
   :: (IsTerm t, MonadTerm t m) => TermAction t -> Term t -> m (Term t)
 applyAction a t = case a of
-  Substs sub     -> substs sub t
-  Weaken from by -> weaken from by t
+  Substs sub         -> substs sub t
+  Weaken from by     -> weaken from by t
+  Strengthen from by -> do Just t' <- strengthen from by t
+                           return t'
 
 -- | Applies some actions, first one first.
 applyActions
