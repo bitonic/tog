@@ -173,7 +173,7 @@ instance Hashable Head
 data Elim t
     = Apply t
     | Proj !Projection
-    deriving (Eq, Show, Generic, Foldable, Traversable)
+    deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
 
 instance (Hashable t) => Hashable (Elim t)
 
