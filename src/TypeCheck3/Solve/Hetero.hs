@@ -20,13 +20,12 @@ import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
-
 import qualified Term.Telescope                   as Tel
+import qualified TypeCheck3.Check                 as Check
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
 import           TypeCheck3.Monad
 import           TypeCheck3.Solve.Common
-import qualified TypeCheck3.Check                 as Check
 
 -- These definitions should be in every Solve module
 ----------------------------------------------------
@@ -242,21 +241,24 @@ etaExpandContext' (ctx, type1, t1, type2, t2) = do
   type2' <- applyActions acts type2
   t2' <- applyActions acts t2
   unless (null acts) $ debug $ do
-    -- typeDoc <- prettyTermM type_
-    -- type'Doc <- prettyTermM type'
+    type1Doc <- prettyTermM type1
+    type1'Doc <- prettyTermM type1'
     t1Doc <- prettyTermM t1
     t1'Doc <- prettyTermM t1'
+    type2Doc <- prettyTermM type2
+    type2'Doc <- prettyTermM type2'
     t2Doc <- prettyTermM t2
     t2'Doc <- prettyTermM t2'
-    return $ "TODO"
-    -- return $
-    --   "*** etaExpandContext'" $$
-    --   "type:" //> typeDoc $$
-    --   "type':" //> type'Doc $$
-    --   "t1:" //> t1Doc $$
-    --   "t1':" //> t1'Doc $$
-    --   "t2:" //> t2Doc $$
-    --   "t2':" //> t2'Doc
+    return $
+      "*** etaExpandContext'" $$
+      "type1:" //> type1Doc $$
+      "type1':" //> type1'Doc $$
+      "t1:" //> t1Doc $$
+      "t1':" //> t1'Doc $$
+      "type2:" //> type2Doc $$
+      "type2':" //> type2'Doc $$
+      "t2:" //> t2Doc $$
+      "t2':" //> t2'Doc
   keepGoing (ctx', type1', t1', type2', t2')
 
 etaExpand
@@ -641,36 +643,40 @@ compareTerms (ctx, type1, t1, type2, t2) = do
 
 instance PrettyM Constraint where
   prettyM c0 = do
-    return "TODO Constraint"
-    -- case fromMaybe c0 (simplify c0) of
-    --   Unify ctx type_ t1 t2 -> do
-    --     ctxDoc <- prettyM ctx
-    --     typeDoc <- prettyTermM type_
-    --     t1Doc <- prettyTermM t1
-    --     t2Doc <- prettyTermM t2
-    --     return $ group $
-    --       ctxDoc <+> "|-" //
-    --       group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
-    --   c1 :>>: c2 -> do
-    --     c1Doc <- prettyM c1
-    --     c2Doc <- prettyM c2
-    --     return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
-    --   Conj cs -> do
-    --     csDoc <- mapM prettyM cs
-    --     return $
-    --       "Conj" //> PP.list csDoc
-    --   UnifySpine ctx type_ mbH elims1 elims2 -> do
-    --     ctxDoc <- prettyM ctx
-    --     typeDoc <- prettyTermM type_
-    --     hDoc <- case mbH of
-    --       Nothing -> return "no head"
-    --       Just h  -> prettyTermM h
-    --     elims1Doc <- prettyListM elims1
-    --     elims2Doc <- prettyListM elims2
-    --     return $
-    --       "UnifySpine" $$
-    --       "ctx:" //> ctxDoc $$
-    --       "type:" //> typeDoc $$
-    --       "h:" //> hDoc $$
-    --       "elims1:" //> elims1Doc $$
-    --       "elims2:" //> elims2Doc
+    case fromMaybe c0 (simplify c0) of
+      Unify ctx type1 t1 type2 t2 -> do
+        ctxDoc <- prettyM ctx
+        type1Doc <- prettyTermM type1
+        t1Doc <- prettyTermM t1
+        type2Doc <- prettyTermM type2
+        t2Doc <- prettyTermM t2
+        return $ group $
+          ctxDoc <+> "|-" //
+          group (t1Doc // ":" // type1Doc // hang 2 "=" // t2Doc // ":" // type2Doc)
+      c1 :>>: c2 -> do
+        c1Doc <- prettyM c1
+        c2Doc <- prettyM c2
+        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+      Conj cs -> do
+        csDoc <- mapM prettyM cs
+        return $
+          "Conj" //> PP.list csDoc
+      UnifySpine ctx type1 mbH1 elims1 type2 mbH2 elims2 -> do
+        let prettyMbH Nothing  = return "no head"
+            prettyMbH (Just h) = prettyTermM h
+        ctxDoc <- prettyM ctx
+        type1Doc <- prettyTermM type1
+        h1Doc <- prettyMbH mbH1
+        elims1Doc <- prettyListM elims1
+        type2Doc <- prettyTermM type2
+        h2Doc <- prettyMbH mbH2
+        elims2Doc <- prettyListM elims2
+        return $
+          "UnifySpine" $$
+          "ctx:" //> ctxDoc $$
+          "type1:" //> type1Doc $$
+          "h1:" //> h1Doc $$
+          "elims1:" //> elims1Doc $$
+          "type2:" //> type2Doc $$
+          "h2:" //> h2Doc $$
+          "elims2:" //> elims2Doc

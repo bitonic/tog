@@ -22,9 +22,9 @@ import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
+import qualified TypeCheck3.Check                 as Check
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
-import qualified TypeCheck3.Check                 as Check
 import           TypeCheck3.Monad
 import           TypeCheck3.Solve.Common
 
@@ -152,7 +152,8 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
   where
     runCheckEqual actions0 finally args = do
       case actions0 of
-        []                 -> finally args
+        [] -> do
+          finally args
         (action : actions) -> do
           constrsOrArgs <- action args
           case constrsOrArgs of
@@ -171,6 +172,7 @@ checkTypeHeads args@(ctx1, type1, t1, ctx2, type2, t2) = do
     Nothing  -> keepGoing args
     Just mvs -> done [(mvs, Unify ctx1 type1 t1 ctx2 type2 t2)]
 
+-- | Optimization: check if the terms are syntactically equal.
 checkSynEq
   :: (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
@@ -190,6 +192,7 @@ checkSynEq args@(ctx1, type1, t1, ctx2, type2, t2) = do
           then done []
           else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
 
+-- | η-expand all the record-typed things in the context.
 etaExpandContexts
   :: forall t s. (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
