@@ -21,7 +21,6 @@ import           Term
 import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import qualified TypeCheck3.Check                 as Check
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
 import           TypeCheck3.Monad
@@ -680,3 +679,9 @@ instance PrettyM Constraint where
           "type2:" //> type2Doc $$
           "h2:" //> h2Doc $$
           "elims2:" //> elims2Doc
+      InstantiateMetaVar mv t -> do
+        tDoc <- prettyTermM t
+        return $
+          "InstantiateMetaVar" $$
+          "metavar:" <+> PP.pretty mv $$
+          "term:" //> tDoc

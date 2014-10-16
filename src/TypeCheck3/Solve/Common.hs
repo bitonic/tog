@@ -500,17 +500,17 @@ etaExpandContext ctx = do
           let telLen = Tel.length tel
           let weakenBy = max 0 $ numDataConPars-1
           -- If weakenBy < 0, we're dealing with a unit type.
-          (tel', recordTerm', acts) <- if weakenBy < 0
+          (tel', acts) <- if weakenBy < 0
             then do
               Just tel' <- Tel.strengthen_ 1 =<< Tel.subst 0 recordTerm tel
               recordTerm' <- weaken_ telLen recordTerm
               let acts = [Substs [(telLen, recordTerm')], Strengthen telLen 1]
-              return (tel', recordTerm', acts)
+              return (tel', acts)
             else do
               tel' <- Tel.subst 0 recordTerm =<< Tel.weaken 1 weakenBy tel
               recordTerm' <- weaken_ telLen recordTerm
               let acts = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm')]]
-              return (tel', recordTerm', acts)
+              return (tel', acts)
           -- Now continue.
           (tel'', acts') <- go (dataConPars Tel.++ tel')
           return (tel'', acts ++ acts')
