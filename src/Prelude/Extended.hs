@@ -48,6 +48,7 @@ module Prelude.Extended
   , foldlM
   , Bwd(..)
   , toList
+  , fold
   ) where
 
 import Prelude ()

@@ -11,10 +11,12 @@ module Term.Impl.Common
   , matchClause
   ) where
 
-import           Prelude                          hiding (pi, foldr)
+import           Prelude                          hiding (pi, foldr, mapM, sequence)
 
+import           Control.Lens                     (firstOf)
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
+import           Data.Traversable                 (mapM, sequence)
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
@@ -62,7 +64,7 @@ genericSubstsView args tView = do
     Set ->
       return set
     App h els  -> do
-      els' <- mapM (mapElimM (substs args)) els
+      els' <- mapM (mapM (substs args)) els
       case h of
         Var v   -> case lookup (varIndex v) args of
                      Nothing  -> app (Var v) els'
@@ -182,8 +184,8 @@ genericGetAbsName =
           let mbN = case h of
                 Var v -> f v
                 _     -> Nothing
-          ((mbN <|>) . msum) <$>
-            mapM (foldElim (go f) (\_ -> return Nothing)) els
+          els' <- forM els $ fmap (join . firstOf traverse) . traverse (go f)
+          return $ mbN <|> msum els'
 
 genericStrengthen
   :: (IsTerm t, MonadTerm t m) => Int -> Int -> Abs t -> m (Maybe t)
@@ -215,7 +217,7 @@ genericStrengthen from0 by = runMaybeT . go from0
           h' <- MaybeT $ return $ case h of
             Var v -> Var <$> strengthenVar from by v
             _     -> Just h
-          els' <- mapM (mapElimM (go from)) els
+          els' <- mapM (mapM (go from)) els
           lift $ app h' els'
 
 genericNf :: forall t m. (IsTerm t, MonadTerm t m) => t -> m t
@@ -318,7 +320,7 @@ genericWeaken from by t = do
     Set ->
       return set
     App h els  -> do
-      els' <- mapM (mapElimM (weaken from by)) els
+      els' <- mapM (mapM (weaken from by)) els
       case h of
         Var v   -> let v' = if varIndex v >= from
                             then weakenVar from by v

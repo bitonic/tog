@@ -21,9 +21,6 @@ module Term.Types
   , Head(..)
   , Elim(..)
   , Field(..)
-  , mapElim
-  , mapElimM
-  , foldElim
   , elimEq
   , elimsEq
     -- ** Metavars
@@ -176,7 +173,7 @@ instance Hashable Head
 data Elim t
     = Apply t
     | Proj !Projection
-    deriving (Eq, Show, Generic)
+    deriving (Eq, Show, Generic, Foldable, Traversable)
 
 instance (Hashable t) => Hashable (Elim t)
 
@@ -189,18 +186,6 @@ instance Hashable Projection
 
 instance PP.Pretty Projection where
   pretty = PP.pretty . pName
-
-mapElim :: (t -> t) -> Elim t -> Elim t
-mapElim f (Apply t) = Apply $ f t
-mapElim _ (Proj p)  = Proj p
-
-mapElimM :: Monad m => (t -> m t) -> Elim t -> m (Elim t)
-mapElimM f (Apply t) = Apply `liftM` f t
-mapElimM _ (Proj p)  = return $ Proj p
-
-foldElim :: (t -> a) -> (Projection -> a) -> Elim t -> a
-foldElim f _ (Apply t) = f t
-foldElim _ g (Proj p)  = g p
 
 elimEq :: (IsTerm t, MonadTerm t m) => Elim t -> Elim t -> m Bool
 elimEq (Apply t1) (Apply t2) = termEq t1 t2

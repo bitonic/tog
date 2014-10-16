@@ -144,4 +144,7 @@ internalToTerm t0 = do
             Def f -> A.Def f
             J -> A.J A.noSrcLoc
             Meta mv -> A.Var (A.Name (A.srcLoc mv) (PP.render mv))
-      A.App h' <$> mapM (foldElim (\t -> A.Apply <$> internalToTerm t) (return . A.Proj . pName)) args
+      args' <- forM args $ \arg -> case arg of
+        Apply t -> A.Apply <$> internalToTerm t
+        Proj p  -> return $ A.Proj $ pName p
+      return $ A.App h' args'
