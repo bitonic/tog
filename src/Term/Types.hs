@@ -55,6 +55,8 @@ module Term.Types
   , con
     -- * TermTraverse
   , TermTraverse(..)
+  , TermTraverse'
+  , ttFoldFail
     -- * Definition
   , Definition(..)
   , ConstantKind(..)
@@ -180,7 +182,7 @@ instance (Hashable t) => Hashable (Elim t)
 data Projection = Projection'
   { pName  :: !Name
   , pField :: !Field
-  } deriving (Eq, Show, Generic)
+  } deriving (Eq, Ord, Show, Generic)
 
 instance Hashable Projection
 
@@ -425,6 +427,15 @@ instance Applicative (TermTraverse err) where
     TTMetaVars mvs1 <*> TTMetaVars mvs2  = TTMetaVars (mvs1 <> mvs2)
     TTMetaVars _    <*> TTFail v         = TTFail v
     TTFail v        <*> _                = TTFail v
+
+type TermTraverse' = TermTraverse ()
+
+ttFoldFail
+  :: (err -> HS.HashSet MetaVar) -> TermTraverse err a
+  -> Either (HS.HashSet MetaVar) a
+ttFoldFail _ (TTOK x)         = Right x
+ttFoldFail f (TTFail err)     = Left $ f err
+ttFoldFail _ (TTMetaVars mvs) = Left mvs
 
 -- Clauses
 ------------------------------------------------------------------------
