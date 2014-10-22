@@ -23,8 +23,7 @@ all: dist/build/tog/tog
 # The sed is to work around a GHC bug that makes the tag generating
 # thing crash when it gets a LINE pragma whose file it can't find.
 TAGS: $(bnfc_output) $(hs_sources) $(alex_file).hs $(happy_file).hs
-	find ./bnfc -type f -exec sed -i '' -e '/{-# LINE/d' {} \;
-	echo ":l Main\n:etags" | ghci
+	hasktags -e src bnfc
 
 .PHONY: clean
 clean:

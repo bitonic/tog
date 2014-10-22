@@ -10,11 +10,12 @@ papers/*.nav
 papers/*.out
 papers/*.ptb
 papers/*.snm
-papers/talk.tex
 papers/*.toc
 papers/*.bbl
+papers/*.bib
 papers/*.blg
 papers/*.pdf
+papers/talk.tex
 
 *~
 \#*\#
