@@ -11,7 +11,7 @@ import           Conf
 import           Prelude.Extended                 hiding ((<>))
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>), (<>))
 import qualified PrettyPrint                      as PP
-import qualified Syntax.Internal                  as A
+import qualified Syntax.Internal                  as SI
 import           Term.Types
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
@@ -32,8 +32,8 @@ class PrettyM f where
   prettyM :: (IsTerm t, MonadTerm t m) => f t -> m PP.Doc
 
 instance PrettyM Elim where
-  prettyM (Proj p)  = return $ PP.pretty $ A.Proj $ pName p
-  prettyM (Apply t) = PP.pretty . A.Apply <$> internalToTerm t
+  prettyM (Proj p)  = return $ PP.pretty $ SI.Proj $ pName p
+  prettyM (Apply t) = PP.pretty . SI.Apply <$> internalToTerm t
 
 instance PrettyM Definition where
   prettyM (Constant Postulate type_) = do
@@ -111,43 +111,43 @@ prettyApp :: PP.Pretty a => Int -> PP.Doc -> [a] -> PP.Doc
 prettyApp _ h []   = h
 prettyApp p h args = PP.condParens (p > 3) $ h </> PP.fillSep (map (PP.prettyPrec 4) args)
 
--- To A.Expr
+-- To SI.Expr
 ------------------------------------------------------------------------
 
 internalToTerm
-  :: (IsTerm t, MonadTerm t m) => t -> m A.Expr
+  :: (IsTerm t, MonadTerm t m) => t -> m SI.Expr
 internalToTerm t0 = do
   dontNormalize <- confDontNormalizePP <$> readConf
   tView <- view =<< if dontNormalize then return t0 else nf t0
   case tView of
     Lam body -> do
       n <- getAbsName_ body
-      A.Lam n <$> internalToTerm body
+      SI.Lam n <$> internalToTerm body
     Pi dom cod -> do
       mbCod <- strengthen_ 1 cod
       case mbCod of
         Nothing -> do
           n <- getAbsName_ cod
-          A.Pi n <$> internalToTerm dom <*> internalToTerm cod
+          SI.Pi n <$> internalToTerm dom <*> internalToTerm cod
         Just _ -> do
           -- Note that we do not use the cod on purpose: we don't want
           -- to screw up the De Bruijn numbering.
-          A.Fun <$> internalToTerm dom <*> internalToTerm cod
+          SI.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
-      A.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
+      SI.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
     Refl ->
-      return $ A.Refl A.noSrcLoc
+      return $ SI.Refl SI.noSrcLoc
     Con dataCon args ->
-      A.Con dataCon <$> mapM internalToTerm args
+      SI.Con dataCon <$> mapM internalToTerm args
     Set ->
-      return $ A.Set A.noSrcLoc
+      return $ SI.Set SI.noSrcLoc
     App h args -> do
       let h' = case h of
-            Var v -> A.Var (A.name (PP.render v))
-            Def f -> A.Def f
-            J -> A.J A.noSrcLoc
-            Meta mv -> A.Var (A.Name (A.srcLoc mv) (PP.render mv))
+            Var v -> SI.Var (SI.name (PP.render v))
+            Def f -> SI.Def f
+            J -> SI.J SI.noSrcLoc
+            Meta mv -> SI.Var (SI.Name (SI.srcLoc mv) (PP.render mv))
       args' <- forM args $ \arg -> case arg of
-        Apply t -> A.Apply <$> internalToTerm t
-        Proj p  -> return $ A.Proj $ pName p
-      return $ A.App h' args'
+        Apply t -> SI.Apply <$> internalToTerm t
+        Proj p  -> return $ SI.Proj $ pName p
+      return $ SI.App h' args'

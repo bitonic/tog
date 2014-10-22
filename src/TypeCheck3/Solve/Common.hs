@@ -6,10 +6,9 @@ import           Prelude                          hiding (any, pi)
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
-import           Syntax.Internal                  (Name)
 import           Data.Tree                        (Tree(Node), rootLabel, subForest, Forest)
 
-
+import           Syntax
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP

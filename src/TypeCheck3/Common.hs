@@ -22,8 +22,8 @@ module TypeCheck3.Common
 import           Prelude                          hiding (abs, pi)
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name)
-import qualified Syntax.Internal                  as A
+import           Syntax
+import qualified Syntax.Internal                  as SI
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
@@ -43,7 +43,7 @@ data CheckError t
     | OccursCheckFailed MetaVar (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord A.Pattern Name -- Record type constructor
+    | PatternMatchOnRecord SI.Pattern Name -- Record type constructor
 
 checkError :: (IsTerm t) => CheckError t -> TC t s a
 checkError err = typeError =<< renderError err

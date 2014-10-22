@@ -22,7 +22,7 @@ module Term.Signature
 import qualified Data.HashMap.Strict              as HMS
 import qualified Data.Map.Strict                  as Map
 
-import qualified Syntax.Internal                  as A
+import           Syntax
 import           Term.Synonyms
 import           Term.Types
 import           PrettyPrint                      (render)
@@ -30,7 +30,7 @@ import           PrettyPrint                      (render)
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
 data Signature t = Signature
-    { sigDefinitions    :: HMS.HashMap A.Name (Closed (Definition t))
+    { sigDefinitions    :: HMS.HashMap Name (Closed (Definition t))
     , sigMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
     , sigMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
     -- ^ INVARIANT: Every 'MetaVar' in 'sMetaBodies' is also in
@@ -43,7 +43,7 @@ empty = Signature HMS.empty HMS.empty HMS.empty 0
 
 -- | Gets a definition for the given name.  Fails if no definition can
 -- be found.
-getDefinition :: Signature t -> A.Name -> Closed (Definition t)
+getDefinition :: Signature t -> Name -> Closed (Definition t)
 getDefinition sig name =
     case HMS.lookup name (sigDefinitions sig) of
       Nothing   -> error $ "impossible.getDefinition: not found " ++ show name
@@ -54,10 +54,10 @@ getDefinition sig name =
 -- In the case of a new 'Projection' or 'DataCon', the definition of the
 -- type constructor will be updated with the new information.  Fails if
 -- the definition for the type constructor is not present.
-addDefinition_ :: Signature t -> A.Name -> Closed (Definition t) -> Signature t
+addDefinition_ :: Signature t -> Name -> Closed (Definition t) -> Signature t
 addDefinition_ sig name def' = addDefinition sig name def'
 
-addDefinition :: Signature t -> A.Name -> Closed (Definition t) -> Signature t
+addDefinition :: Signature t -> Name -> Closed (Definition t) -> Signature t
 addDefinition sig defName def' = case (defName, def') of
     (name, Projection projIx tyCon _ _) -> addProjection name tyCon projIx
     (name, DataCon tyCon _ _ _)         -> addDataCon name tyCon
@@ -86,7 +86,7 @@ addDefinition sig defName def' = case (defName, def') of
       _ ->
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a data type"
 
-definedNames :: Signature t -> [A.Name]
+definedNames :: Signature t -> [Name]
 definedNames = HMS.keys . sigDefinitions
 
 -- | Gets the type of a 'MetaVar'.  Fails if the 'MetaVar' if not
@@ -102,13 +102,13 @@ getMetaVarBody :: Signature t -> MetaVar -> Maybe (Closed (Term t))
 getMetaVarBody sig mv = HMS.lookup mv (sigMetasBodies sig)
 
 -- | Creates a new 'MetaVar' with the provided type.
-addMetaVar :: Signature t -> A.SrcLoc -> Closed (Type t) -> (MetaVar, Signature t)
-addMetaVar sig srcLoc type_ =
+addMetaVar :: Signature t -> SrcLoc -> Closed (Type t) -> (MetaVar, Signature t)
+addMetaVar sig loc type_ =
     (mv, sig{ sigMetasTypes = HMS.insert mv type_ (sigMetasTypes sig)
             , sigMetasCount = sigMetasCount sig + 1
             })
   where
-    mv = MetaVar (sigMetasCount sig) srcLoc
+    mv = MetaVar (sigMetasCount sig) loc
 
 -- | Instantiates the given 'MetaVar' with the given body.  Fails if no
 -- type is present for the 'MetaVar'.
@@ -134,7 +134,8 @@ metaVarsTypes = sigMetasTypes
 metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (Closed (Term t))
 metaVarsBodies = sigMetasBodies
 
-toScope :: Signature t -> A.Scope
-toScope = A.Scope . Map.fromList . map f . HMS.toList . sigDefinitions
+toScope :: Signature t -> Scope
+toScope = Scope . Map.fromList . map f . HMS.toList . sigDefinitions
   where
-    f (n, def') = (A.nameString n, definitionToNameInfo n def')
+    f (n, def') = (nameString n, definitionToNameInfo n def')
+
