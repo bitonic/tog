@@ -18,7 +18,6 @@ import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
 import qualified PrettyPrint                      as PP
 import           Term
-import           Term.Context                     (Ctx)
 
 import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common

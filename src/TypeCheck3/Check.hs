@@ -4,7 +4,6 @@ module TypeCheck3.Check (check, definitionallyEqual) where
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import           Term
-import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           PrettyPrint                      (($$), (//>), render)

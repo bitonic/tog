@@ -13,7 +13,6 @@ import qualified Data.Bwd                         as Bwd
 import           Prelude.Extended
 import qualified Syntax.Internal                  as A
 import           Term
-import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common

@@ -14,7 +14,6 @@ import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           Term
-import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel

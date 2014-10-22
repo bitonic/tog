@@ -25,7 +25,6 @@ import           Prelude.Extended
 import           Syntax.Internal                  (Name)
 import qualified Syntax.Internal                  as A
 import           Term
-import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           PrettyPrint                      (($$), (<+>), (//>), group, (//), hang)

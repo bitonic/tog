@@ -4,7 +4,6 @@ module Basic where
 open import Prelude
 
 data List (A : Set) : Set
-
 data List A where
   nil  : List A
   cons : A -> List A -> List A

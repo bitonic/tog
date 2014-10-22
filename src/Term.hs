@@ -7,6 +7,9 @@ module Term
   , module Term.FreeVars
   , module Term.Nf
   , module Term.MetaVars
+  , Ctx
+  , Tel
+  , Signature
   ) where
 
 import Term.Types
@@ -17,3 +20,6 @@ import Term.Utils
 import Term.FreeVars
 import Term.Nf
 import Term.MetaVars
+import Term.Context (Ctx)
+import Term.Telescope (Tel)
+import Term.Signature (Signature)
