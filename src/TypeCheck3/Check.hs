@@ -1,12 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Check (check, definitionallyEqual) where
+module TypeCheck3.Check
+  ( check
+  , definitionallyEqual
+  , instantiateMetaVar
+  ) where
 
 import           Prelude.Extended
-import           Syntax.Internal                  (Name)
+import           Conf
+import           Syntax
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import           PrettyPrint                      (($$), (//>), render)
+import           PrettyPrint                      ((<+>), ($$), (//>), render)
+import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 import           TypeCheck3.Common
 
@@ -20,10 +26,9 @@ check ctx t type_ = do
         tDoc <- prettyTermM t
         typeDoc <- prettyTermM type_
         return $
-          "*** check" $$
           "t:" //> tDoc $$
           "type:" //> typeDoc
-  debugBracket msg $ do
+  debugSection "check" msg $ do
     tView <- whnfView t
     case tView of
       Con dataCon args -> do
@@ -100,11 +105,7 @@ infer
   :: (IsTerm t)
   => Ctx t -> Term t -> TC t s (Type t)
 infer ctx t = do
-  let msg = do
-        tDoc <- prettyTermM t
-        return $
-          "** infer:" //> tDoc
-  debugBracket msg $ do
+  debugBracket "infer" (prettyTermM t) $ do
     tView <- whnfView t
     case tView of
       Set ->
@@ -175,11 +176,11 @@ checkEqual x@(_, type_, t1, t2) = do
         t1Doc <- prettyTermM t1
         t2Doc <- prettyTermM t2
         return $
-          "*** definitionallyEqual" $$
           "type:" //> typeDoc $$
           "t1:" //> t1Doc $$
           "t2:" //> t2Doc
-  debugBracket msg $ runCheckEqual [checkSynEq, etaExpand] compareTerms x
+  debugSection "defEqual" msg $
+    runCheckEqual [checkSynEq, etaExpand] compareTerms x
   where
     runCheckEqual [] finally x' = do
       finally x'
@@ -292,3 +293,26 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
 checkEqualSpine _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 type_ elims2
+
+-- Safe metavar instantiation
+------------------------------------------------------------------------
+
+instantiateMetaVar
+  :: (IsTerm t)
+  => MetaVar -> Closed (Term t) -> TC t s ()
+instantiateMetaVar mv t = do
+  debugBracket "instantiateMeta" (prettyTermM t) $ do
+    checkConsistency <- confCheckMetaVarConsistency <$> readConf
+    when checkConsistency $ do
+      mvType <- getMetaVarType mv
+      let msg err = do
+            tDoc <- prettyTermM t
+            mvTypeDoc <- prettyTermM mvType
+            return $
+               "Inconsistent meta" $$
+               "metavar:" <+> PP.pretty mv $$
+               "type:" //> mvTypeDoc $$
+               "term:" //> tDoc $$
+               "err:" //> err
+      assert msg $ check Ctx.Empty t mvType
+    uncheckedInstantiateMetaVar mv t

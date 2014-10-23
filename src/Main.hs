@@ -3,8 +3,10 @@ import           Prelude                          hiding (interact)
 
 import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Options.Applicative
+import           Options.Applicative.Types
 import           System.Exit                      (exitFailure)
 import qualified System.Console.Haskeline         as Haskeline
+import           Data.List.Split                  (splitOn)
 
 import           Conf
 import           PrettyPrint                      ((<+>), ($$))
@@ -25,6 +27,12 @@ parseTypeCheckConf = Conf
       ( long "solver" <> value "S" <>
         help "Available solvers: S (Simple), H (Hetero), TC (TwoContexts)."
       )
+  <*> debugLabelsOption
+      ( long "debug" <> short 's' <> value [] <>
+        help "Select debug labels to print."
+      )
+  <*> switch
+      (long "stackTrace" <> short 's' <> help "Print debug output")
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch
@@ -48,8 +56,6 @@ parseTypeCheckConf = Conf
         help "Print a detailed report of the unsolved problems."
       )
   <*> switch
-      (long "debug" <> short 'd' <> help "Print debug output")
-  <*> switch
       ( long "checkMetaVarConsistency" <>
         help "Check consistency of instantiated term of a metavar and its type."
       )
@@ -65,6 +71,11 @@ parseTypeCheckConf = Conf
       ( long "dontNormalizePP" <>
         help "Don't normalize terms before pretty printing them"
       )
+
+debugLabelsOption :: Mod OptionFields [[String]] -> Parser [[String]]
+debugLabelsOption = option $ do
+  s <- readerAsk
+  return $ map (filter (not . null) . splitOn ".") $ splitOn "|" s
 
 parseMain :: Parser (IO ())
 parseMain =

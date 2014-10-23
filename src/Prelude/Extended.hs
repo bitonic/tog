@@ -49,6 +49,8 @@ module Prelude.Extended
   , Bwd(..)
   , toList
   , fold
+  , intersperse
+  , isPrefixOf
   ) where
 
 import Prelude ()

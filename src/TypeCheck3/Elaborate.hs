@@ -39,10 +39,9 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         typeDoc <- prettyTermM type_
         let absTDoc = PP.pretty absT
         return $
-          "*** elaborate" $$
           "type:" //> typeDoc $$
           "t:" //> absTDoc
-  debugBracket msg $ do
+  debugSection "elaborate" msg $ do
     -- Don't create this here, it might not be necessary.
     mvT <- addMetaVarInCtx ctx type_
     let waitForUnifiedType type' t = jmEq ctx type_ mvT type' t
@@ -143,12 +142,11 @@ elaborateApp' ctx type_ h elims = do
         ctxDoc <- prettyM ctx
         typeDoc <- prettyTermM type_
         return $
-          "*** elaborateApp" $$
           "ctx:" //> ctxDoc $$
           "typeDoc:" //> typeDoc $$
           "head:" //> PP.pretty h $$
           "elims:" //> PP.pretty elims
-  debugBracket msg $ elaborateApp ctx type_ h elims
+  debugBracket "elaborateApp" msg $ elaborateApp ctx type_ h elims
 
 elaborateApp
   :: (IsTerm t)

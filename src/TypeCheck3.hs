@@ -30,7 +30,6 @@ import qualified Syntax.Internal                  as A
 import           Syntax.Raw                       (parseExpr)
 import           Term
 import qualified Term.Signature                   as Sig
-import           Term.Context                     (Ctx)
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
 import           Term.Impl
@@ -62,7 +61,7 @@ type CheckM t = TC t (CheckState t)
 
 checkDecl :: (IsTerm t) => A.Decl -> CheckM t ()
 checkDecl decl = do
-  debugBracket_ ("*** checkDecl" $$ PP.pretty decl) $ atSrcLoc decl $ do
+  debugSection_ "checkDecl" (PP.pretty decl) $ atSrcLoc decl $ do
     case decl of
       A.TypeSig sig      -> checkTypeSig sig
       A.Postulate sig    -> checkPostulate sig
@@ -82,11 +81,9 @@ checkExpr
   :: (IsTerm t)
   => Ctx t -> A.Expr -> Type t -> CheckM t (Term t)
 checkExpr ctx synT type_ = do
-  debugBracket_ "*** checkExpr" $ do
+  debugBracket_ "checkExpr" "" $ do
     (t, constrs) <- mapTC csElaborateState $ elaborate ctx type_ synT
-    debug $ do
-      constrDoc <- PP.list <$> mapM prettyM constrs
-      return $ "** Constraint:" //> constrDoc
+    debug "constraints" $ PP.list <$> mapM prettyM constrs
     mapTC csSolveState $ mapM_ solve constrs
     check ctx t type_
     return t
@@ -227,9 +224,8 @@ checkClause fun funType (A.Clause synPats synClauseBody) = do
   (ctx, pats, _, clauseType) <- checkPatterns fun synPats funType
   let msg = do
         ctxDoc <- prettyM ctx
-        return $ "*** checkClause" $$
-                 "context:" //> ctxDoc
-  debugBracket msg $ do
+        return $ "context:" //> ctxDoc
+  debugBracket "checkClause" msg $ do
     clauseBody <- checkExpr ctx synClauseBody clauseType
     -- This is an optimization: we want to remove as many MetaVars
     -- as possible so that we'll avoid recomputing things.
@@ -344,7 +340,6 @@ checkProgram' _ decls0 ret = do
       (ts,) <$> checkState ts
     goDecls ts (decl : decls) = do
       quiet <- confQuiet <$> readConf
-      cdebug <- confDebug <$> readConf
       unless quiet $ do
         putStrLn $ render decl
         let separate = case decl of
@@ -357,7 +352,7 @@ checkProgram' _ decls0 ret = do
               _ ->
                 not $ null decls
         when separate $ putStrLn ""
-      (mbErr, ts') <- runTC (not quiet && cdebug) ts $ checkDecl decl
+      (mbErr, ts') <- runTC_ ts $ checkDecl decl
       case mbErr of
         Left err -> return (ts', Just err)
         Right () -> goDecls ts' decls
@@ -482,7 +477,7 @@ runCommand ts cmd =
         ":h, :help\t\t\tDisplay this message"
   where
     runTC' m = do
-      (mbErr, _) <- runTC False ts m
+      (mbErr, _) <- runTC (TCConf True False []) ts m
       let doc = case mbErr of
                   Left err   -> "Error:" //> err
                   Right doc0 -> doc0

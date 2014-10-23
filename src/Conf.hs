@@ -11,13 +11,14 @@ import           Data.IORef                       (IORef, newIORef, atomicModify
 data Conf = Conf
   { confTermType                :: String
   , confSolver                  :: String
+  , confDebugLabels             :: [[String]]
+  , confStackTrace              :: Bool
   , confQuiet                   :: Bool
   , confNoMetaVarsSummary       :: Bool
   , confMetaVarsReport          :: Bool
   , confMetaVarsOnlyUnsolved    :: Bool
   , confNoProblemsSummary       :: Bool
   , confProblemsReport          :: Bool
-  , confDebug                   :: Bool
   , confCheckMetaVarConsistency :: Bool
   , confFastGetAbsName          :: Bool
   , confDisableSynEquality      :: Bool
@@ -25,7 +26,7 @@ data Conf = Conf
   }
 
 defaultConf :: Conf
-defaultConf = Conf "S" "Simple" False False False False False False False False False False False
+defaultConf = Conf "S" "Simple" [] False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
 confRef :: IORef (Maybe Conf)
@@ -37,7 +38,7 @@ writeConf conf = do
     Nothing -> (Just conf, True)
     Just c  -> (Just c,    False)
   unless ok $ error "writeConf: already written."
-    
+
 readConf :: (MonadIO m) => m Conf
 readConf = do
   mbConf <- liftIO $ readIORef confRef

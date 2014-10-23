@@ -23,6 +23,7 @@ import qualified Term.Telescope                   as Tel
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
 import           TypeCheck3.Monad
+import           TypeCheck3.Check
 import           TypeCheck3.Solve.Common
 
 -- These definitions should be in every Solve module
@@ -68,10 +69,9 @@ initSolveState = SolveState []
 
 solve :: forall t. (IsTerm t) => Common.Constraint t -> TC t (SolveState t) ()
 solve c = do
-  debugBracket_ "*** solve" $ do
-    SolveState constrs0 <- get
-    constrs <- go False [] ((mempty, constraint c) : constrs0)
-    put $ SolveState constrs
+  SolveState constrs0 <- get
+  constrs <- go False [] ((mempty, constraint c) : constrs0)
+  put $ SolveState constrs
   where
     go :: Bool -> Constraints t -> Constraints t -> TC t s (Constraints t)
     go progress constrs [] = do
@@ -93,9 +93,8 @@ solveConstraint constr0 = do
   let msg = do
         constrDoc <- prettyM constr0
         return $
-          "*** solveConstraint" $$
           "constraint:" //> constrDoc
-  debugBracket msg $ do
+  debugSection "solveConstraint" msg $ do
     case constr0 of
       Conj constrs -> do
         mconcat <$> forM constrs solveConstraint
@@ -156,12 +155,11 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
         xDoc <- prettyTermM t1_0
         yDoc <- prettyTermM t2_0
         return $
-          "*** checkEqual" $$
           "ctx:" //> ctxDoc $$
           "type:" //> typeDoc $$
           "x:" //> xDoc $$
           "y:" //> yDoc
-  debugBracket msg $ do
+  debugBracket "unify" msg $ do
     runCheckEqual
       [ checkSynEq              -- Optimization: check if the two terms are equal
       , etaExpandContext'       -- Expand all record types things in the context
@@ -190,7 +188,7 @@ checkSynEq args@(ctx, type_, t1, t2) = do
     then do
       keepGoing args
     else do
-      debugBracket_ "*** Syntactic check" $ do
+      debugBracket_ "checkSynEq" "" $ do
         -- Optimization: try with a simple syntactic check first.
         t1' <- ignoreBlocking =<< whnf t1
         t2' <- ignoreBlocking =<< whnf t2
@@ -216,7 +214,7 @@ etaExpandContext' (ctx, type_, t1, t2) = do
   type' <- applyActions acts type_
   t1' <- applyActions acts t1
   t2' <- applyActions acts t2
-  unless (null acts) $ debug $ do
+  whenDebug $ unless (null acts) $ debug "etaExpandContext" $ do
     typeDoc <- prettyTermM type_
     type'Doc <- prettyTermM type'
     t1Doc <- prettyTermM t1
@@ -224,7 +222,6 @@ etaExpandContext' (ctx, type_, t1, t2) = do
     t2Doc <- prettyTermM t2
     t2'Doc <- prettyTermM t2'
     return $
-      "*** etaExpandContext'" $$
       "type:" //> typeDoc $$
       "type':" //> type'Doc $$
       "t1:" //> t1Doc $$
@@ -237,7 +234,7 @@ etaExpand'
   :: (IsTerm t)
   => CheckEqual t -> TC t s (CheckEqualProgress t)
 etaExpand' (ctx, type0, t1, t2) = do
-  debugBracket_ "*** Eta expansion" $ do
+  debugBracket_ "etaExpand" "" $ do
     t1' <- etaExpand type0 t1
     t2' <- etaExpand type0 t2
     keepGoing (ctx, type0, t1', t2')
@@ -257,7 +254,7 @@ checkMetaVars (ctx, type_, t1, t2) = do
         if eq
           then done []
           else do
-            debug_ $ "*** Both sides blocked, waiting for" <+> PP.pretty (HS.toList mvs)
+            debug_ "both sides blocked" $ "waiting for" <+> PP.pretty (HS.toList mvs)
             done [(mvs, Unify ctx type_ t1'' t2'')]
   case (blockedT1, blockedT2) of
     (MetaVarHead mv els1, MetaVarHead mv' els2) | mv == mv' -> do
@@ -293,43 +290,43 @@ checkEqualBlockedOn
   -> Term t
   -> TC t s (Constraints t)
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
-  let msg = "*** Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
+  let msg = "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
             ", trying to invert definition" <+> PP.pretty bh
   t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
-  debugBracket_ msg $ do
+  debugBracket_ "checkEqualBlockedOn" msg $ do
     case bh of
       BlockedOnJ -> do
-        debug_ "** Head is J, couldn't invert."
+        debug_ "head is J, couldn't invert." ""
         fallback t1
       BlockedOnFunction fun1 -> do
         Function _ clauses <- getDefinition fun1
         case clauses of
           NotInvertible _ -> do
-            debug_ "** Couldn't invert."
+            debug_ "couldn't invert." ""
             fallback t1
           Invertible injClauses -> do
             t2View <- whnfView t2
             case t2View of
               App (Def fun2) elims2 | fun1 == fun2 -> do
-                debug_ "** Could invert, and same heads, checking spines."
+                debug_ "could invert, and same heads, checking spines." ""
                 equalSpine (Def fun1) ctx elims1 elims2
               _ -> do
                 t2Head <- termHead =<< unview t2View
                 case t2Head of
                   Nothing -> do
-                    debug_ "** Definition invertible but we don't have a clause head."
+                    debug_ "definition invertible but we don't have a clause head." ""
                     fallback t1
                   Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
-                    debug_ $ "** Inverting on" <+> PP.pretty tHead
+                    debug_ ("inverting on" <+> PP.pretty tHead) ""
                     -- Make the eliminators match the patterns
                     matched <- matchPats pats elims1
                     -- And restart, if we matched something.
                     if matched
                       then do
-                        debug_ $ "** Matched constructor, restarting"
+                        debug_ "matched constructor, restarting" ""
                         checkEqual (ctx, type_, t1, t2)
                       else do
-                        debug_ $ "** Couldn't match constructor"
+                        debug_ "couldn't match constructor" ""
                         fallback t1
                   Just _ -> do
                     checkError $ TermsNotEqual type_ t1 type_ t2
@@ -405,12 +402,11 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
         elims1Doc <- prettyListM $ elim1 : elims1
         elims2Doc <- prettyListM $ elim2 : elims2
         return $
-          "*** checkEqualSpine" $$
           "type:" //> typeDoc $$
           "head:" //> hDoc $$
           "elims1:" //> elims1Doc $$
           "elims2:" //> elims2Doc
-  debugBracket msg $ do
+  debugBracket "checkEqualSpine" msg $ do
     case (elim1, elim2) of
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
@@ -445,17 +441,15 @@ metaAssign ctx type_ mv elims t = do
         elimsDoc <- prettyListM elims
         tDoc <- prettyTermM t
         return $
-          "*** metaAssign" $$
           "assigning metavar:" <+> PP.pretty mv $$
           "of type:" //> mvTypeDoc $$
           "elims:" //> elimsDoc $$
           "to term:" //> tDoc
-  debugBracket msg $ do
-    debug $ do
+  debugBracket "metaAssign" msg $ do
+    debug "type and term after eta-expanding" $ do
       typeDoc <- prettyTermM type_
       tDoc <- prettyTermM t
       return $
-        "** Type and term after eta-expanding vars:" $$
         "type:" //> typeDoc $$
         "term:" //> tDoc
     -- See if we can invert the metavariable
@@ -468,7 +462,7 @@ metaAssign ctx type_ mv elims t = do
           TTFail ()      -> Left $ HS.singleton mv
     case invOrMvs of
       Left mvs -> do
-        debug_ $ "** Couldn't invert"
+        debug_ "couldn't invert" ""
         -- If we can't invert, try to prune the variables not
         -- present on the right from the eliminators.
         t' <- nf t
@@ -487,15 +481,12 @@ metaAssign ctx type_ mv elims t = do
             mvT' <- eliminate mvT elims'
             checkEqual (ctx, type_, mvT', t')
       Right inv -> do
-        debug $ do
+        debug "could invert, now pruning" $ do
           invDoc <- prettyM inv
           return $
-            "** Could invert, now pruning" $$
             "inversion:" //> invDoc
         t1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t
-        debug $ do
-          t1Doc <- prettyTermM t1
-          return $ "** Pruned term:" //> t1Doc
+        debug "pruned term" $ prettyTermM t1
         t2 <- applyInvertMeta inv t1
         case t2 of
           TTOK t' -> do
@@ -505,7 +496,7 @@ metaAssign ctx type_ mv elims t = do
             instantiateMetaVar mv t'
             return []
           TTMetaVars mvs -> do
-            debug_ ("** Inversion blocked on" //> PP.pretty (HS.toList mvs))
+            debug_ ("inversion blocked on" //> PP.pretty (HS.toList mvs)) ""
             mvT <- metaVar mv elims
             return [(mvs, Unify ctx type_ mvT t)]
           TTFail v ->

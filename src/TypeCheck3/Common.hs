@@ -113,10 +113,7 @@ extendContext
   => Ctx (Type t) -> (Name, Type t) -> TC t s (Ctx (Type t))
 extendContext ctx type_ = do
   let ctx' = Ctx.Snoc ctx type_
-  let msg = do
-        ctxDoc <- prettyM ctx'
-        return $ "*** extendContext" $$ ctxDoc
-  debug msg
+  debug "extendContext" $ prettyM ctx'
   return ctx'
 
 -- Miscellanea
