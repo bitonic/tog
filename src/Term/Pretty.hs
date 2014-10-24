@@ -75,14 +75,17 @@ instance PrettyM Tel.Tel where
     Tel.Cons (n0, type0) tel0 -> do
       type0Doc <- prettyTermM type0
       tel0Doc <- go tel0
-      return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc <> PP.linebreak <> tel0Doc
+      return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc <> whichLine tel0 <> tel0Doc
     where
       go Tel.Empty = do
         return "]"
       go (Tel.Cons (n, type_) tel) = do
         typeDoc <- prettyTermM type_
         telDoc <- go tel
-        return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <> PP.linebreak <> telDoc
+        return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <> whichLine tel <> telDoc
+
+      whichLine Tel.Empty = PP.line
+      whichLine _         = PP.linebreak
 
 prettyTelWithTerm
   :: (IsTerm t, MonadTerm t m)
@@ -94,6 +97,24 @@ prettyTelWithTerm tel t =
 
 instance PrettyM Ctx.Ctx where
   prettyM = prettyM . Tel.tel
+
+prettySubstitutionM :: (MonadTerm t m, IsTerm t) => Substitution t -> m PP.Doc
+prettySubstitutionM sub = do
+  let ppPair (i, t) = do
+        tDoc <- prettyTermM t
+        return $ (PP.pretty i <+> "|->") //> tDoc
+  PP.list <$> mapM ppPair sub
+
+instance PrettyM TermAction where
+  prettyM ta0 = case ta0 of
+    Substs sub -> do
+      subDoc <- prettySubstitutionM sub
+      return $
+        "Substs" //> subDoc
+    Weaken from by -> do
+      return $ "Weaken" <+> PP.pretty from <+> PP.pretty by
+    Strengthen from by -> do
+      return $ "Strengthen" <+> PP.pretty from <+> PP.pretty by
 
 prettyListM
   :: (IsTerm t, PrettyM f, MonadTerm t m) => [f t] -> m PP.Doc

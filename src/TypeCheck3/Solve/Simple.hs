@@ -159,12 +159,10 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
           "type:" //> typeDoc $$
           "x:" //> xDoc $$
           "y:" //> yDoc
-  debugBracket "unify" msg $ do
+  debugSection "unify" msg $ do
     runCheckEqual
       [ checkSynEq              -- Optimization: check if the two terms are equal
-      , etaExpandContext'       -- Expand all record types things in the context
       , etaExpand'              -- Expand the terms
-      , unrollMetaVarsArgs      -- Removes record-typed arguments from metas
       , checkMetaVars           -- Assign/intersect metavariables if needed
       ]
       compareTerms
@@ -197,38 +195,6 @@ checkSynEq args@(ctx, type_, t1, t2) = do
         if eq
           then done []
           else keepGoing (ctx, type_, t1', t2')
-
-unrollMetaVarsArgs
-  :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
-unrollMetaVarsArgs (ctx, type_, t1, t2) = do
-  t1' <- fromMaybe t1 <$> unrollMetaVarArgs t1
-  t2' <- fromMaybe t2 <$> unrollMetaVarArgs t2
-  keepGoing (ctx, type_, t1', t2')
-
-etaExpandContext'
-  :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
-etaExpandContext' (ctx, type_, t1, t2) = do
-  (ctx', acts) <- etaExpandContext ctx
-  type' <- applyActions acts type_
-  t1' <- applyActions acts t1
-  t2' <- applyActions acts t2
-  whenDebug $ unless (null acts) $ debug "etaExpandContext" $ do
-    typeDoc <- prettyTermM type_
-    type'Doc <- prettyTermM type'
-    t1Doc <- prettyTermM t1
-    t1'Doc <- prettyTermM t1'
-    t2Doc <- prettyTermM t2
-    t2'Doc <- prettyTermM t2'
-    return $
-      "type:" //> typeDoc $$
-      "type':" //> type'Doc $$
-      "t1:" //> t1Doc $$
-      "t1':" //> t1'Doc $$
-      "t2:" //> t2Doc $$
-      "t2':" //> t2'Doc
-  keepGoing (ctx', type', t1', t2')
 
 etaExpand'
   :: (IsTerm t)
@@ -446,20 +412,8 @@ metaAssign ctx type_ mv elims t = do
           "elims:" //> elimsDoc $$
           "to term:" //> tDoc
   debugBracket "metaAssign" msg $ do
-    debug "type and term after eta-expanding" $ do
-      typeDoc <- prettyTermM type_
-      tDoc <- prettyTermM t
-      return $
-        "type:" //> typeDoc $$
-        "term:" //> tDoc
     -- See if we can invert the metavariable
-    ttInv <- invertMeta elims
-    let invOrMvs = case ttInv of
-          TTOK inv       -> Right inv
-          TTMetaVars mvs -> Left $ HS.insert mv mvs
-          -- TODO here we should also wait on metavars on the right that
-          -- could simplify the problem.
-          TTFail ()      -> Left $ HS.singleton mv
+    invOrMvs <- ttFoldFail (\() -> HS.singleton mv) <$> invertMetaVar_ ctx elims
     case invOrMvs of
       Left mvs -> do
         debug_ "couldn't invert" ""
@@ -480,14 +434,23 @@ metaAssign ctx type_ mv elims t = do
           Just mvT -> do
             mvT' <- eliminate mvT elims'
             checkEqual (ctx, type_, mvT', t')
-      Right inv -> do
-        debug "could invert, now pruning" $ do
-          invDoc <- prettyM inv
+      Right (ctx, acts, inv) -> do
+        t <- applyActions acts t
+        type_ <- applyActions acts type_
+        whenDebug $ unless (null acts) $ debug "could invert, new stuff" $ do
+          tDoc <- prettyTermM t
+          typeDoc <- prettyTermM type_
+          ctxDoc <- prettyM ctx
           return $
-            "inversion:" //> invDoc
-        t1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t
+            "ctx:" //> ctxDoc $$
+            "type:" //> typeDoc $$
+            "term:" //> tDoc
+        debug "could invert" $ do
+          invDoc <- prettyM inv
+          return $ "inversion:" //> invDoc
+        t1 <- pruneTerm (Set.fromList $ invertMetaVarVars inv) t
         debug "pruned term" $ prettyTermM t1
-        t2 <- applyInvertMeta inv t1
+        t2 <- applyInvertMetaVar inv t1
         case t2 of
           TTOK t' -> do
             mvs <- metaVars t'

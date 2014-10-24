@@ -28,7 +28,7 @@ parseTypeCheckConf = Conf
         help "Available solvers: S (Simple), H (Hetero), TC (TwoContexts)."
       )
   <*> debugLabelsOption
-      ( long "debug" <> short 's' <> value [] <>
+      ( long "debug" <> short 'd' <> value [] <>
         help "Select debug labels to print."
       )
   <*> switch
@@ -72,10 +72,23 @@ parseTypeCheckConf = Conf
         help "Don't normalize terms before pretty printing them"
       )
 
-debugLabelsOption :: Mod OptionFields [[String]] -> Parser [[String]]
+debugLabelsOption
+  :: Mod OptionFields [(Bool, [String])]
+  -> Parser [(Bool, [String])]
 debugLabelsOption = option $ do
   s <- readerAsk
-  return $ map (filter (not . null) . splitOn ".") $ splitOn "|" s
+  traceM $ show [ case x of
+                    []       -> (True,  [])
+                    '~' : x' -> (False, splitOn "." x')
+                    x'       -> (True,  splitOn "." x')
+                | x <- splitOn "|" s
+                ]
+  return [ case x of
+             []       -> (True,  [])
+             '~' : x' -> (False, splitOn "." x')
+             x'       -> (True,  splitOn "." x')
+         | x <- splitOn "|" s
+         ]
 
 parseMain :: Parser (IO ())
 parseMain =

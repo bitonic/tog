@@ -51,6 +51,7 @@ module Prelude.Extended
   , fold
   , intersperse
   , isPrefixOf
+  , for
   ) where
 
 import Prelude ()

@@ -106,7 +106,7 @@ catchTC m = TC $ \(te, ts) -> do
 data TCConf = TCConf
   { tccQuiet       :: Bool
   , tccStackTrace  :: Bool
-  , tccDebugLabels :: [[DebugLabel]]
+  , tccDebugLabels :: [(Bool, [DebugLabel])]
   }
 
 -- | Takes a 'TCState' and a computation on a closed context and
@@ -121,7 +121,7 @@ runTC conf ts (TC m) = do
         _ | tccStackTrace conf         -> Just initDebug
         _ | _:_ <- tccDebugLabels conf -> Just initDebug
         _                              -> Nothing
-  mbErr <- m (initEnv{teDebug = mbDebug}, ts)
+  mbErr <- m ((initEnv conf){teDebug = mbDebug}, ts)
   return $ case mbErr of
     (ts', Left e)  -> (Left (PP.pretty e), ts')
     (ts', Right x) -> (Right x, ts')
@@ -139,6 +139,7 @@ runTC_ ts m = do
 
 data TCEnv = TCEnv
     { teCurrentSrcLoc    :: !SrcLoc
+    , teConf             :: !TCConf
     , teDebug            :: !(Maybe Debug)
     }
 
@@ -147,11 +148,8 @@ data DebugFrame = DebugFrame
   , dfLabels :: ![DebugLabel]
   }
 
-prettyDebugLabels :: [DebugLabel] -> PP.Doc
-prettyDebugLabels = PP.text . concat . intersperse "."
-
 instance PP.Pretty DebugFrame where
-  pretty (DebugFrame doc labels) = "***" <+> prettyDebugLabels labels $$ doc
+  pretty (DebugFrame doc labels) = "***" <+> PP.text (head labels) $$ doc
 
 data Debug = Debug
   { dStack  :: ![DebugFrame]
@@ -161,9 +159,10 @@ data Debug = Debug
 initDebug :: Debug
 initDebug = Debug [] []
 
-initEnv :: TCEnv
-initEnv =
+initEnv :: TCConf -> TCEnv
+initEnv tcc =
   TCEnv{ teCurrentSrcLoc = noSrcLoc
+       , teConf          = tcc
        , teDebug         = Nothing
        }
 
@@ -208,15 +207,15 @@ renderStackTrace err dbg =
 typeError :: PP.Doc -> TC t s b
 typeError err = do
   mbDebug <- teDebug <$> ask
-  forM_ mbDebug $ \d ->
-    debug_ "typeError" $ renderStackTrace err d
+  forM_ mbDebug $ \d -> do
+    rawDebug d{dStack = []} ("*** typeError") (renderStackTrace err d)
   TC $ \(te, ts) -> return (ts, Left (DocErr (teCurrentSrcLoc te) err))
 
 fatalError :: String -> TC t s b
 fatalError s = do
   mbDebug <- teDebug <$> ask
   forM_ mbDebug $ \d ->
-    debug_ "fatalError" $ renderStackTrace (PP.text s) d
+    rawDebug d{dStack = []} ("*** fatalError") (renderStackTrace (PP.text s) d)
   error s
 
 assert :: (PP.Doc -> TC t s PP.Doc) -> TC t s a -> TC t s a
@@ -309,7 +308,6 @@ unsafeRemoveMetaVar mv = do
   debug_ "unsafeRemoveMeta" (PP.pretty mv)
   modify_ $ \ts -> ts{tsSignature = Sig.unsafeRemoveMetaVar (tsSignature ts) mv}
 
-
 -- Debugging
 ------------------------------------------------------------------------
 
@@ -321,15 +319,19 @@ type DebugLabel = String
 rawDebug :: Debug -> PP.Doc -> PP.Doc -> TC t s ()
 rawDebug d label doc =
   TC $ \(_, ts) -> do
-    let s  = PP.renderPretty 100 $ ("**" <+> label) $$ doc
+    let s  = PP.renderPretty 100 $ label $$ doc
     let pad = replicate (length (dStack d) * _ERROR_INDENT) ' '
     hPutStr stderr $ unlines $ map (pad ++) $ lines s
     return (ts, Right ())
 
 matchLabels :: [DebugLabel] -> TC t s () -> TC t s ()
-matchLabels labels m = do
-  goodLabels <- confDebugLabels <$> readConf
-  when (any (`isPrefixOf` labels) goodLabels) m
+matchLabels labels0 m = do
+  goodLabels <- tccDebugLabels . teConf <$> ask
+  let labels = reverse labels0
+  let f _      (Just b) = Just b
+      f (b, l) Nothing  = let p = l `isPrefixOf` labels
+                          in if p then Just b else Nothing
+  when (fromMaybe False (foldr f Nothing goodLabels)) m
 
 debugSection :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
 debugSection label docM m = do
@@ -337,9 +339,9 @@ debugSection label docM m = do
   mbD <- forM (teDebug te) $ \d -> do
     let labels = [label]
     doc <- assertDoc docM
-    matchLabels labels $ rawDebug d (PP.text label) doc
+    matchLabels labels $ rawDebug d ("***" <+> PP.text label) doc
     let frame = DebugFrame doc labels
-    return d{dStack = frame : dStack d}
+    return d{dStack = frame : dStack d, dLabels = labels}
   local te{teDebug = mbD} m
 
 debugSection_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
@@ -351,9 +353,9 @@ debugBracket label docM m = do
   mbD <- forM (teDebug te) $ \d -> do
     let labels = label : dLabels d
     doc <- assertDoc docM
-    matchLabels labels $ rawDebug d (PP.text label) doc
+    matchLabels labels $ rawDebug d ("***" <+> PP.text label) doc
     let frame = DebugFrame doc labels
-    return d{dStack = frame : dStack d}
+    return d{dStack = frame : dStack d, dLabels = labels}
   local te{teDebug = mbD} m
 
 debugBracket_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
@@ -369,7 +371,7 @@ debug label docM = do
     let labels = dLabels d
     matchLabels labels $ do
       doc <- assertDoc docM
-      rawDebug d label doc
+      rawDebug d ("**" <+> label) doc
 
 debug_ :: PP.Doc -> PP.Doc -> TC t s ()
 debug_ label doc = debug label (return doc)

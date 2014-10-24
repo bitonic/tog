@@ -47,10 +47,10 @@ infixr 6 //>
 list :: [Doc] -> PP.Doc
 list xs0 = PP.group $ case xs0 of
   []       -> "[]"
-  (x : xs) -> nest 2 ("[" <+> x) <> PP.linebreak <> go xs
+  (x : xs) -> nest 2 ("[" <+> x) <> PP.line <> go xs
   where
     go []       = "]"
-    go (x : xs) = nest 2 ("," <+> x) <> PP.linebreak <> go xs
+    go (x : xs) = nest 2 ("," <+> x) <> PP.line <> go xs
 
 tupled :: [Doc] -> Doc
 tupled = encloseSep lparen rparen (comma <> space)

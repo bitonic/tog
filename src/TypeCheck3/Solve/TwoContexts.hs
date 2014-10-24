@@ -8,7 +8,6 @@ module TypeCheck3.Solve.TwoContexts
 import           Prelude                          hiding (any, pi)
 
 import           Control.Monad.State.Strict       (get, put)
-import           Control.Monad.Trans.Maybe        (runMaybeT)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
@@ -141,9 +140,7 @@ checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
     runCheckEqual
       [ checkTypeHeads          -- Check that the types are both non-blocked
       , checkSynEq              -- Optimization: check if the two terms are equal
-      , etaExpandContexts       -- Expand all record types things in the context
       , etaExpand'              -- Eta expand the terms
-      , unrollMetaVarsArgs      -- Removes record-type arguments from metas
       , checkMetaVars           -- Assign/intersect metavariables if needed
       ]
       compareTerms
@@ -190,110 +187,6 @@ checkSynEq args@(ctx1, type1, t1, ctx2, type2, t2) = do
         if eq
           then done []
           else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
-
--- | η-expand all the record-typed things in the context.
-etaExpandContexts
-  :: forall t s. (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
-etaExpandContexts (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
-  debugBracket_ "*** Eta-expanding context" $ do
-    (tel1, acts1, tel2, acts2) <- go (Tel.tel ctx1_0) (Tel.tel ctx2_0)
-    type1 <- applyActions acts1 type1_0
-    t1 <- applyActions acts1 t1_0
-    type2 <- applyActions acts2 type2_0
-    t2 <- applyActions acts2 t2_0
-    debug $ do
-      if (Tel.length tel1 /= Ctx.length ctx1_0)
-        then do
-          ctx1Doc <- prettyM ctx1_0
-          tel1Doc <- prettyM tel1
-          ctx2Doc <- prettyM ctx2_0
-          tel2Doc <- prettyM tel2
-          return $
-            "** Expanded" $$
-            "before1" //> ctx1Doc $$
-            "after1" //> tel1Doc $$
-            "before2" //> ctx2Doc $$
-            "after2" //> tel2Doc
-        else do
-          return "** No change"
-    keepGoing (Tel.unTel tel1, type1, t1, Tel.unTel tel2, type2, t2)
-  where
-    go :: Tel.Tel t -> Tel.Tel t
-       -> TC t s (Tel.Tel t, [TermAction t], Tel.Tel t, [TermAction t])
-    go Tel.Empty Tel.Empty = do
-      return (Tel.Empty, [], Tel.Empty, [])
-    go (Tel.Cons (n1, arg1) tel1) (Tel.Cons (n2, arg2) tel2) = do
-      -- Check if both types are record types.
-      mbTyCon <- runMaybeT $ do
-        App (Def tyCon) tyConArgs1 <- lift $ whnfView arg1
-        True <- lift $ isRecordType tyCon
-        let Just tyConPars1 = mapM isApply tyConArgs1
-        App (Def tyCon') tyConArgs2 <- lift $ whnfView arg2
-        let Just tyConPars2 = mapM isApply tyConArgs2
-        unless (tyCon == tyCon') $
-          lift $ fatalError "etaExpandContexts: different tycons"
-        return (tyCon, tyConPars1, tyConPars2)
-      -- If the are not, then continue through the rest of the
-      -- context.  If they are, split up the variable into the record
-      -- fields.
-      case mbTyCon of
-        Nothing -> do
-          (tel1', acts1, tel2', acts2) <- go tel1 tel2
-          return (Tel.Cons (n1, arg1) tel1', acts1, Tel.Cons (n2, arg2) tel2', acts2)
-        Just (tyCon, tyConPars1, tyConPars2) -> do
-          Constant (Record dataCon projs) _ <- getDefinition tyCon
-          DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
-          -- Instantiate the tycon pars in the type of the datacon
-          appliedDataConType1 <- Tel.substs dataConTypeTel dataConType tyConPars1
-          appliedDataConType2 <- Tel.substs dataConTypeTel dataConType tyConPars2
-          let unrollDataConType t =
-                assert_ ("etaExpandVar, unrollPiWithNames:" <+>) $
-                unrollPiWithNames t (map pName projs)
-          -- Get the type of each field
-          (dataConPars1, _) <- unrollDataConType appliedDataConType1
-          (dataConPars2, _) <- unrollDataConType appliedDataConType2
-          let numDataConPars = Ctx.length dataConPars1
-          -- Build a term with variables representing the fields
-          recordTerm1 <- con dataCon =<< mapM var (Ctx.vars dataConPars1)
-          recordTerm2 <- con dataCon =<< mapM var (Ctx.vars dataConPars2)
-          -- Now we need a telescope with the fields, and then the
-          -- telescope that we already had, but with the variable that
-          -- stood for arg replaced with the record term.
-          --
-          -- Note that the telescopes also need to be weakened,
-          -- since we're introducing new variables.
-          let telLen = Tel.length tel1
-          let weakenBy = numDataConPars-1
-          -- If weakenBy < 0, we're dealing with a unit type.
-          (tel1', acts1, tel2', acts2) <- if weakenBy < 0
-            then do
-              let adjustTel t x = Tel.strengthen_ 1 =<< Tel.subst 0 t x
-              Just tel1' <- adjustTel recordTerm1 tel1
-              Just tel2' <- adjustTel recordTerm1 tel2
-              let acts1 = [Strengthen telLen 1, Substs [(telLen, recordTerm1)]]
-              let acts2 = [Strengthen telLen 1, Substs [(telLen, recordTerm2)]]
-              return (tel1', acts1, tel2', acts2)
-            else do
-              let adjustTel t x = Tel.subst 0 t =<< Tel.weaken 1 weakenBy x
-              tel1' <- adjustTel recordTerm1 tel1
-              tel2' <- adjustTel recordTerm1 tel2
-              let acts1 = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm1)]]
-              let acts2 = [Weaken (telLen+1) weakenBy, Substs [(telLen, recordTerm2)]]
-              return (tel1', acts1, tel2', acts2)
-          (tel1'', acts1', tel2'', acts2') <-
-            go (dataConPars1 Tel.++ tel1') (dataConPars1 Tel.++ tel2')
-          return (tel1'', acts1 ++ acts1', tel2'', acts2 ++ acts2')
-    go _ _ = do
-      fatalError "etaExpandContext: different lengthts"
-
-unrollMetaVarsArgs
-  :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
-unrollMetaVarsArgs (ctx1, type1, t1, ctx2, type2, t2) = do
-  t1' <- fromMaybe t1 <$> unrollMetaVarArgs t1
-  t2' <- fromMaybe t2 <$> unrollMetaVarArgs t2
-  keepGoing (ctx1, type1, t1', ctx2, type2, t2')
 
 etaExpand'
   :: (IsTerm t)

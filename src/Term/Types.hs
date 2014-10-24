@@ -24,6 +24,7 @@ module Term.Types
   , elimEq
   , elimsEq
     -- ** Metavars
+  , MetaVarSet
   , metaVars
     -- * Term typeclass
   , IsTerm(..)
@@ -57,6 +58,8 @@ module Term.Types
   , TermTraverse(..)
   , TermTraverse'
   , ttFoldFail
+  , TermTraverseT(..)
+  , hoistTT
     -- * Definition
   , Definition(..)
   , ConstantKind(..)
@@ -74,12 +77,13 @@ module Term.Types
 
 import           Prelude                          hiding (pi)
 
+import           Control.Monad.Trans.Class        (MonadTrans)
 import qualified Data.HashSet                     as HS
 
 import           Conf
 import           Prelude.Extended
-import           Syntax.Internal                  (Name)
-import qualified Syntax.Internal                  as A
+import           Syntax
+import qualified Syntax.Internal                  as SI
 import qualified PrettyPrint                      as PP
 import {-# SOURCE #-} qualified Term.Telescope    as Tel
 import           Term.Synonyms
@@ -220,7 +224,9 @@ instance (Hashable t) => Hashable (TermView t)
 -- MetaVars
 -----------
 
-metaVars :: (IsTerm t, MonadTerm t m) => Term t -> m (HS.HashSet MetaVar)
+type MetaVarSet = HS.HashSet MetaVar
+
+metaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet
 metaVars t = do
   tView <- whnfView t
   case tView of
@@ -260,8 +266,7 @@ class (Typeable t, Show t) => IsTerm t where
     strengthen
       :: MonadTerm t m => Int -> Int -> Abs t -> m (Maybe t)
 
-    -- | Applies the substitution from left to right (first
-    -- substitutes the first element, and so on).
+    -- | Applies the substitution to the term.
     substs :: MonadTerm t m => Substitution t -> t -> m t
 
     instantiate :: (MonadTerm t m, IsTerm t) => Abs t -> t -> m t
@@ -312,7 +317,7 @@ data Blocked t
     = NotBlocked t
     | MetaVarHead MetaVar [Elim t]
     -- ^ The term is 'MetaVar'-headed.
-    | BlockedOn (HS.HashSet MetaVar) BlockedHead [Elim t]
+    | BlockedOn MetaVarSet BlockedHead [Elim t]
     -- ^ Returned when some 'MetaVar's are preventing us from reducing a
     -- definition.  The 'BlockedHead' is the head, the 'Elim's the
     -- eliminators stuck on it.
@@ -329,7 +334,7 @@ data BlockedHead
     | BlockedOnJ
     deriving (Eq, Show)
 
-isBlocked :: Blocked t -> Maybe (HS.HashSet MetaVar)
+isBlocked :: Blocked t -> Maybe MetaVarSet
 isBlocked (NotBlocked _)      = Nothing
 isBlocked (MetaVarHead mv _)  = Just $ HS.singleton mv
 isBlocked (BlockedOn mvs _ _) = Just mvs
@@ -414,13 +419,15 @@ con c args = unview $ Con c args
 data TermTraverse err a
     = TTOK a
     | TTFail err
-    | TTMetaVars (HS.HashSet MetaVar)
+    | TTMetaVars MetaVarSet
     deriving (Functor, Foldable, Traversable)
 
-instance Applicative (TermTraverse err) where
+type TermTraverse' = TermTraverse ()
+
+instance Applicative (TermTraverse m) where
     pure = TTOK
 
-    TTOK f          <*> TTOK x           = TTOK (f x)
+    TTOK f          <*> TTOK x           = TTOK $ f x
     TTOK _          <*> TTMetaVars mvs   = TTMetaVars mvs
     TTOK _          <*> TTFail v         = TTFail v
     TTMetaVars mvs  <*> TTOK _           = TTMetaVars mvs
@@ -428,14 +435,43 @@ instance Applicative (TermTraverse err) where
     TTMetaVars _    <*> TTFail v         = TTFail v
     TTFail v        <*> _                = TTFail v
 
-type TermTraverse' = TermTraverse ()
+instance Monad (TermTraverse err) where
+  return = TTOK
+
+  TTOK x         >>= f = f x
+  TTFail err     >>= _ = TTFail err
+  TTMetaVars mvs >>= _ = TTMetaVars mvs
 
 ttFoldFail
-  :: (err -> HS.HashSet MetaVar) -> TermTraverse err a
-  -> Either (HS.HashSet MetaVar) a
+  :: (err -> MetaVarSet) -> TermTraverse err a
+  -> Either MetaVarSet a
 ttFoldFail _ (TTOK x)         = Right x
 ttFoldFail f (TTFail err)     = Left $ f err
 ttFoldFail _ (TTMetaVars mvs) = Left mvs
+
+newtype TermTraverseT err m a =
+  TTT {runTermTraverseT :: m (TermTraverse err a)}
+  deriving (Functor)
+
+hoistTT :: (Monad m) => TermTraverse err a -> TermTraverseT err m a
+hoistTT = TTT . return
+
+instance (Functor m, Monad m) => Applicative (TermTraverseT err m) where
+  pure  = return
+  (<*>) = ap
+
+instance Monad m => Monad (TermTraverseT err m) where
+  return = TTT . return . pure
+
+  TTT m >>= f = TTT $ do
+    tt <- m
+    case tt of
+      TTOK x -> runTermTraverseT $ f x
+      TTFail err -> return $ TTFail err
+      TTMetaVars mvs -> return $ TTMetaVars mvs
+
+instance MonadTrans (TermTraverseT err) where
+  lift m = TTT $ liftM TTOK m
 
 -- Clauses
 ------------------------------------------------------------------------
@@ -518,11 +554,11 @@ ignoreInvertible :: Invertible t -> [Clause t]
 ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
 
-definitionToNameInfo :: A.Name -> Definition t -> A.NameInfo
-definitionToNameInfo n (Constant _ _)       = A.DefName n 0
-definitionToNameInfo n (DataCon _ args _ _) = A.ConName n 0 args
-definitionToNameInfo n (Projection _ _ _ _) = A.ProjName n 0
-definitionToNameInfo n (Function _ _)       = A.DefName n 0
+definitionToNameInfo :: Name -> Definition t -> NameInfo
+definitionToNameInfo n (Constant _ _)       = SI.DefName n 0
+definitionToNameInfo n (DataCon _ args _ _) = SI.ConName n 0 args
+definitionToNameInfo n (Projection _ _ _ _) = SI.ProjName n 0
+definitionToNameInfo n (Function _ _)       = SI.DefName n 0
 
 -- 'MetaVar'iables
 ------------------------------------------------------------------------
@@ -530,7 +566,7 @@ definitionToNameInfo n (Function _ _)       = A.DefName n 0
 -- | 'MetaVar'iables.  Globally scoped.
 data MetaVar = MetaVar
   { mvId     :: !Int
-  , mvSrcLoc :: !A.SrcLoc
+  , mvSrcLoc :: !SrcLoc
   } deriving (Generic)
 
 instance Eq MetaVar where
@@ -548,7 +584,7 @@ instance PP.Pretty MetaVar where
 instance Show MetaVar where
    show (MetaVar mv _) = "_" ++ show mv
 
-instance A.HasSrcLoc MetaVar where
+instance HasSrcLoc MetaVar where
   srcLoc = mvSrcLoc
 
 -- Substitutions and Actions

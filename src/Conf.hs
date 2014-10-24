@@ -11,7 +11,7 @@ import           Data.IORef                       (IORef, newIORef, atomicModify
 data Conf = Conf
   { confTermType                :: String
   , confSolver                  :: String
-  , confDebugLabels             :: [[String]]
+  , confDebugLabels             :: [(Bool, [String])]
   , confStackTrace              :: Bool
   , confQuiet                   :: Bool
   , confNoMetaVarsSummary       :: Bool

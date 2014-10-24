@@ -301,11 +301,16 @@ instantiateMetaVar
   :: (IsTerm t)
   => MetaVar -> Closed (Term t) -> TC t s ()
 instantiateMetaVar mv t = do
-  debugBracket "instantiateMeta" (prettyTermM t) $ do
+  let msg = do
+        tDoc <- prettyTermM t
+        return $
+          "metavar:" //> PP.pretty mv $$
+          "term:" //> tDoc
+  debugBracket "instantiateMeta" msg $ do
     checkConsistency <- confCheckMetaVarConsistency <$> readConf
     when checkConsistency $ do
       mvType <- getMetaVarType mv
-      let msg err = do
+      let msg' err = do
             tDoc <- prettyTermM t
             mvTypeDoc <- prettyTermM mvType
             return $
@@ -314,5 +319,5 @@ instantiateMetaVar mv t = do
                "type:" //> mvTypeDoc $$
                "term:" //> tDoc $$
                "err:" //> err
-      assert msg $ check Ctx.Empty t mvType
+      assert msg' $ check Ctx.Empty t mvType
     uncheckedInstantiateMetaVar mv t
