@@ -428,7 +428,12 @@ metaAssign ctx type1 mv elims type2 t = do
           "to term:" //> tDoc
   debugBracket "metaAssign" msg $ do
     -- See if we can invert the metavariable
-    invOrMvs <- ttFoldFail (\() -> HS.singleton mv) <$> invertMetaVar_ ctx elims
+    invOrMvs <- do
+      tt <- invertMetaVar_ ctx elims
+      return $ case tt of
+        TTOK x         -> Right x
+        TTFail ()      -> Left $ HS.singleton mv
+        TTMetaVars mvs -> Left $ HS.insert mv mvs
     case invOrMvs of
       Left mvs -> do
         debug_ "couldn't invert" ""

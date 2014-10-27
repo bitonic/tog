@@ -57,7 +57,6 @@ module Term.Types
     -- * TermTraverse
   , TermTraverse(..)
   , TermTraverse'
-  , ttFoldFail
   , TermTraverseT(..)
   , hoistTT
     -- * Definition
@@ -441,13 +440,6 @@ instance Monad (TermTraverse err) where
   TTOK x         >>= f = f x
   TTFail err     >>= _ = TTFail err
   TTMetaVars mvs >>= _ = TTMetaVars mvs
-
-ttFoldFail
-  :: (err -> MetaVarSet) -> TermTraverse err a
-  -> Either MetaVarSet a
-ttFoldFail _ (TTOK x)         = Right x
-ttFoldFail f (TTFail err)     = Left $ f err
-ttFoldFail _ (TTMetaVars mvs) = Left mvs
 
 newtype TermTraverseT err m a =
   TTT {runTermTraverseT :: m (TermTraverse err a)}

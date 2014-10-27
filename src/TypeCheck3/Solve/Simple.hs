@@ -15,7 +15,7 @@ import           Syntax.Internal                  (Name)
 
 import           Conf
 import           Prelude.Extended
-import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
+import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang, indent)
 import qualified PrettyPrint                      as PP
 import           Term
 
@@ -413,7 +413,12 @@ metaAssign ctx type_ mv elims t = do
           "to term:" //> tDoc
   debugBracket "metaAssign" msg $ do
     -- See if we can invert the metavariable
-    invOrMvs <- ttFoldFail (\() -> HS.singleton mv) <$> invertMetaVar_ ctx elims
+    invOrMvs <- do
+      tt <- invertMetaVar_ ctx elims
+      return $ case tt of
+        TTOK x         -> Right x
+        TTFail ()      -> Left $ HS.singleton mv
+        TTMetaVars mvs -> Left $ HS.insert mv mvs
     case invOrMvs of
       Left mvs -> do
         debug_ "couldn't invert" ""
@@ -526,7 +531,7 @@ instance PrettyM Constraint where
       c1 :>>: c2 -> do
         c1Doc <- prettyM c1
         c2Doc <- prettyM c2
-        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+        return $ group (indent 2 (group c1Doc) $$ ">>" $$ indent 2 (group c2Doc))
       Conj cs -> do
         csDoc <- mapM prettyM cs
         return $
