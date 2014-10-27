@@ -502,7 +502,7 @@ compareTerms (ctx, type_, t1, t2) = do
       checkEqualApplySpine ctx equalType_ [type1', l1, r1] [type2', l2, r2]
     (Equal _ _ _, Refl, Refl) -> do
       return []
-    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
+    (App (Def tyCon) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
        let Just tyConPars = mapM isApply tyConPars0
        DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
        appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars

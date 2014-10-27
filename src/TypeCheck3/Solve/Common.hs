@@ -861,12 +861,31 @@ killArgs newMv kills = do
   body <- metaVar newMv . map Apply =<< mapM var vs
   foldl' (\body' _ -> lam =<< body') (return body) kills
 
+-- | If @t = α ts@ and @α : Δ -> D us@ where @D@ is some record type, it
+-- will instantiate @α@ accordingly.
+etaExpandMeta :: forall t s. (IsTerm t) => Term t -> TC t s (Term t)
+etaExpandMeta t = do
+  let fallback = do
+        debug_ "didn't expand meta" ""
+        return t
+  debugBracket "etaExpandMeta" (prettyTermM t) $ do
+    mbT <- runMaybeT $ do
+      -- TODO duplication between this and 'instantiateDataCon'
+      App (Meta mv) elims <- lift $ whnfView t
+      mvType <- lift $ getMetaVarType mv
+      (_, endType) <- lift $ unrollPi mvType
+      App (Def tyCon) _ <- lift $ whnfView endType
+      Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
+      mvT :: Term t <- lift $ instantiateDataCon mv dataCon
+      lift $ eliminate mvT elims
+    case mbT of
+      Just t' -> return t'
+      Nothing -> fallback
+
 -- | @etaExpand A t@ η-expands term @t@.
---
--- Moreover, if @t = α ts@ and @A = D us@ where @D@ is some record type,
--- it will instantiate @α@ accordingly.
 etaExpand :: forall t s. (IsTerm t) => Type t -> Term t -> TC t s (Term t)
-etaExpand type_ t = do
+etaExpand type_ t0 = do
+  t <- etaExpandMeta t0
   let fallback = do
         debug_ "didn't expand" ""
         return t
@@ -888,19 +907,6 @@ etaExpand type_ t = do
           Constant (Record dataCon projs) _ -> do
             tView <- whnfView t
             case tView of
-              -- If it's meta-headed and record-typed, instantiate the
-              -- meta.
-              App (Meta mv) elims -> do
-                debug "expanding meta" $ do
-                  elimsDoc <- prettyListM elims
-                  return $
-                    "** Expanding meta" $$
-                    "metavar:" <+> PP.pretty mv $$
-                    "datacon:" <+> PP.pretty dataCon $$
-                    "elims:" //> elimsDoc
-                mvT <- instantiateDataCon mv dataCon
-                mvT' <- eliminate mvT elims
-                return mvT'
               -- Optimization: if it's already of the right shape, do nothing
               Con _ _ -> do
                 fallback

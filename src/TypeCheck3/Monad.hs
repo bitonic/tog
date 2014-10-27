@@ -280,7 +280,11 @@ addMetaVar type_ = do
   loc <- teCurrentSrcLoc <$> ask
   sig <- tsSignature <$> get
   let (mv, sig') = Sig.addMetaVar sig loc type_
-  debug "addMetaVar" (prettyTermM type_)
+  debug "addMetaVar" $ do
+    typeDoc <- prettyTermM type_
+    return $
+      "metavar" <+> PP.pretty mv $$
+      "type" //> typeDoc
   modify_ $ \ts -> ts{tsSignature = sig'}
   return mv
 
