@@ -12,10 +12,11 @@ papers/*.ptb
 papers/*.snm
 papers/*.toc
 papers/*.bbl
-papers/*.bib
 papers/*.blg
 papers/*.pdf
 papers/talk.tex
+papers/type-checking-metas.tex
+papers/permamake.sh
 
 *~
 \#*\#

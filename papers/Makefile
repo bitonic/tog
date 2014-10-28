@@ -1,6 +1,9 @@
 all: $(patsubst %.tex,%.pdf,$(wildcard *.tex)) $(patsubst %.lhs,%.pdf,$(wildcard *.lhs))
 
-unifications-constraints.pdf: unifications-constraints.tex unifications-constraints.bib
+type-checking-metas.tex: type-checking-metas.lhs
+	lhs2TeX $< -o $@
+
+type-checking-metas.pdf: type-checking-metas.tex type-checking-metas.bib
 	pdflatex -halt-on-error $< -o $@
 	bibtex $(patsubst %.tex,%,$<)
 	pdflatex -halt-on-error $< -o $@
