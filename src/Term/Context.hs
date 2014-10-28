@@ -20,10 +20,10 @@ import qualified Prelude
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
-import           Term.Types                       (IsTerm, Var(..), named)
+import           Term.Types                       (IsTerm, Var(..), named, MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
-import           Term.MonadTerm
+import qualified Term.Substitution.Utils          as Term
 
 -- Ctx
 ------------------------------------------------------------------------

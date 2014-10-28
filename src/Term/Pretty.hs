@@ -15,7 +15,7 @@ import qualified Syntax.Internal                  as SI
 import           Term.Types
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import           Term.MonadTerm
+import qualified Term.Substitution.Types          as Sub
 
 prettyTermM :: (IsTerm t, MonadTerm t m) => t -> m PP.Doc
 prettyTermM = prettyPrecTermM 0
@@ -98,23 +98,26 @@ prettyTelWithTerm tel t =
 instance PrettyM Ctx.Ctx where
   prettyM = prettyM . Tel.tel
 
-prettySubstitutionM :: (MonadTerm t m, IsTerm t) => Substitution t -> m PP.Doc
-prettySubstitutionM sub = do
-  let ppPair (i, t) = do
-        tDoc <- prettyTermM t
-        return $ (PP.pretty i <+> "|->") //> tDoc
-  PP.list <$> mapM ppPair sub
+instance PrettyM Sub.Substitution where
+  prettyM sub0 = error "TODO prettySubstitution"
 
-instance PrettyM TermAction where
-  prettyM ta0 = case ta0 of
-    Substs sub -> do
-      subDoc <- prettySubstitutionM sub
-      return $
-        "Substs" //> subDoc
-    Weaken from by -> do
-      return $ "Weaken" <+> PP.pretty from <+> PP.pretty by
-    Strengthen from by -> do
-      return $ "Strengthen" <+> PP.pretty from <+> PP.pretty by
+-- prettySubstitutionM :: (MonadTerm t m, IsTerm t) => Substitution t -> m PP.Doc
+-- prettySubstitutionM sub = do
+--   let ppPair (i, t) = do
+--         tDoc <- prettyTermM t
+--         return $ (PP.pretty i <+> "|->") //> tDoc
+--   PP.list <$> mapM ppPair sub
+
+-- instance PrettyM TermAction where
+--   prettyM ta0 = case ta0 of
+--     Substs sub -> do
+--       subDoc <- prettySubstitutionM sub
+--       return $
+--         "Substs" //> subDoc
+--     Weaken from by -> do
+--       return $ "Weaken" <+> PP.pretty from <+> PP.pretty by
+--     Strengthen from by -> do
+--       return $ "Strengthen" <+> PP.pretty from <+> PP.pretty by
 
 prettyListM
   :: (IsTerm t, PrettyM f, MonadTerm t m) => [f t] -> m PP.Doc
@@ -145,14 +148,11 @@ internalToTerm t0 = do
       n <- getAbsName_ body
       SI.Lam n <$> internalToTerm body
     Pi dom cod -> do
-      mbCod <- strengthen_ 1 cod
-      case mbCod of
-        Nothing -> do
-          n <- getAbsName_ cod
+      mbN <- canStrengthen cod
+      case mbN of
+        Just n -> do
           SI.Pi n <$> internalToTerm dom <*> internalToTerm cod
-        Just _ -> do
-          -- Note that we do not use the cod on purpose: we don't want
-          -- to screw up the De Bruijn numbering.
+        Nothing -> do
           SI.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
       SI.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y

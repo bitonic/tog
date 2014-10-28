@@ -18,25 +18,16 @@ module Term.Telescope
 import qualified Prelude
 import           Prelude                          hiding (pi, length, lookup, (++))
 
-import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
-
 import           Prelude.Extended
-import           Syntax.Internal                  (Name)
 import qualified Term.Context                     as Ctx
-import           Term.MonadTerm
+import           Term.Types                       (MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
+import qualified Term.Substitution.Utils          as Term
+import           Term.Telescope.Types
 
 -- Tel
 ------------------------------------------------------------------------
-
--- | A 'Tel' is a list of types, each one ranging over the rest of the
--- list, and with something of at the end -- the inverse of a 'Ctx.Ctx',
--- plus the end element.
-data Tel t
-    = Empty
-    | Cons (Name, t) (Tel (Abs t))
-    deriving (Eq, Ord, Typeable)
 
 length :: Tel t -> Int
 length Empty         = 0
@@ -93,7 +84,7 @@ instantiate tel0 arg = go 0 tel0
     go ix (Cons (n, type_) tel') = do
       arg' <- Term.weaken_ (ix + 1) arg
       type' <- Term.subst ix arg' type_
-      Just type'' <- Term.strengthen ix 1 type'
+      type'' <- Term.strengthen ix 1 type'
       Cons (n, type'') <$> go (ix + 1) tel'
 
 weaken :: (Term.IsTerm t, MonadTerm t m) => Int -> Int -> Tel t -> m (Tel t)
@@ -107,15 +98,15 @@ weaken from by (Cons (n, type_) tel') = do
 weaken_ :: (Term.IsTerm t, MonadTerm t m) => Int -> Tel t -> m (Tel t)
 weaken_ = weaken 0
 
-strengthen :: (Term.IsTerm t, MonadTerm t m) => Int -> Int -> Tel t -> m (Maybe (Tel t))
-strengthen _ _ Empty = runMaybeT $ do
+strengthen :: (Term.IsTerm t, MonadTerm t m) => Int -> Int -> Tel t -> m (Tel t)
+strengthen _ _ Empty = do
   return Empty
-strengthen from by (Cons (n, type_) tel') = runMaybeT $ do
-  type' <- MaybeT $ Term.strengthen from by type_
-  tel'' <- MaybeT $ strengthen (from + 1) by tel'
+strengthen from by (Cons (n, type_) tel') = do
+  type' <- Term.strengthen from by type_
+  tel'' <- strengthen (from + 1) by tel'
   return (Cons (n, type') tel'')
 
-strengthen_ :: (Term.IsTerm t, MonadTerm t m) => Int -> Tel t -> m (Maybe (Tel t))
+strengthen_ :: (Term.IsTerm t, MonadTerm t m) => Int -> Tel t -> m (Tel t)
 strengthen_ = strengthen 0
 
 pi :: (Term.IsTerm t, MonadTerm t m) => Tel (Type t) -> Type t -> m (Type t)

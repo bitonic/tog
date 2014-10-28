@@ -329,3 +329,8 @@ genericWeaken from by t = do
         Def n   -> app (Def n) els'
         Meta mv -> app (Meta mv) els'
         J       -> app J els'
+
+instantiateClauseBody
+  :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
+instantiateClauseBody body args =
+  substs (zip [0..] $ reverse args) body

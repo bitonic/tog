@@ -4,7 +4,6 @@ module Term.MetaVars
 
 import qualified Data.HashSet                     as HS
 
-import           Term.MonadTerm
 import qualified Term.Telescope                   as Tel
 import qualified Term.Signature                   as Sig
 import           Term.Types

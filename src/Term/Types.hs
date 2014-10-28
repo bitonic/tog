@@ -28,9 +28,9 @@ module Term.Types
   , metaVars
     -- * Term typeclass
   , IsTerm(..)
-  , weaken_
-  , strengthen_
+  , substs
   , subst
+  -- , subst
   , getAbsName
   , getAbsName_
   , eliminate
@@ -40,11 +40,6 @@ module Term.Types
   , isBlocked
   , ignoreBlocking
   , blockedEq
-    -- ** Substitutions and Actions
-  , Substitution
-  , TermAction(..)
-  , applyAction
-  , applyActions
     -- ** Utilities
   , var
   , lam
@@ -72,21 +67,29 @@ module Term.Types
   , TermHead(..)
   , ignoreInvertible
   , definitionToNameInfo
+    -- * MonadTerm
+  , MonadTerm(..)
+  , TermM
+  , runTermM
+    -- * Signature
+  , Signature(..)
   ) where
 
 import           Prelude                          hiding (pi)
 
+import           Control.Monad.Trans.Reader       (ReaderT, runReaderT, ask)
 import           Control.Monad.Trans.Class        (MonadTrans)
 import qualified Data.HashSet                     as HS
+import qualified Data.HashMap.Strict              as HMS
 
 import           Conf
 import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Internal                  as SI
 import qualified PrettyPrint                      as PP
-import {-# SOURCE #-} qualified Term.Telescope    as Tel
+import           Term.Telescope.Types             (Tel)
+import           Term.Substitution.Types          (Substitution)
 import           Term.Synonyms
-import           Term.MonadTerm
 
 -- Var
 ------------------------------------------------------------------------
@@ -128,10 +131,6 @@ strengthenVar from by (V (Named n ix)) =
 
 strengthenVar_ :: Int -> Var -> Maybe Var
 strengthenVar_ = strengthenVar 0
-
--- unvar :: (Named () -> a) -> (Var n -> a) -> Var (Suc n) -> a
--- unvar f _ (B n) = f n
--- unvar _ f (F v) = f v
 
 -- Named
 ------------------------------------------------------------------------
@@ -247,67 +246,49 @@ metaVars t = do
 ---------
 
 class (Typeable t, Show t) => IsTerm t where
-    termEq :: MonadTerm t m => t -> t -> m Bool
-    default termEq :: (MonadTerm t m, Eq t) => t -> t -> m Bool
+    -- Syntactic equality
+    --------------------------------------------------------------------
+
+    termEq :: MonadTerm t m => Term t -> Term t -> m Bool
+
+    default termEq :: (MonadTerm t m, Eq t) => Term t -> Term t -> m Bool
     termEq t1 t2 = return $ t1 == t2
 
-    -- Abstraction related
+    -- Substitution
     --------------------------------------------------------------------
-    weaken
-      :: (MonadTerm t m)
-      => Int
-      -- ^ Weaken starting from this index..
-      -> Int
-      -- ^ ..by this much.
-      -> t
-      -> m t
 
-    strengthen
-      :: MonadTerm t m => Int -> Int -> Abs t -> m (Maybe t)
+    applySubst :: (MonadTerm t m) => Substitution t -> Term t -> m (Term t)
 
-    -- | Applies the substitution to the term.
-    substs :: MonadTerm t m => Substitution t -> t -> m t
-
-    instantiate :: (MonadTerm t m, IsTerm t) => Abs t -> t -> m t
-    instantiate t arg = do
-      arg' <- weaken_ 1 arg
-      t' <- subst 0 arg' t
-      Just t'' <- strengthen_ 1 t'
-      return t''
-
-    getAbsName' :: MonadTerm t m => Abs t -> m (Maybe Name)
+    canStrengthen :: MonadTerm t m => Abs (Term t) -> m (Maybe Name)
 
     -- Evaluation
     --------------------------------------------------------------------
-    whnf :: MonadTerm t m => t -> m (Blocked t)
-    nf   :: MonadTerm t m => t -> m t
+    whnf :: MonadTerm t m => Term t -> m (Blocked (Term t))
+    nf   :: MonadTerm t m => Term t -> m (Term t)
 
     -- View / Unview
     --------------------------------------------------------------------
-    view   :: MonadTerm t m => t -> m (TermView t)
+    view   :: MonadTerm t m => Term t -> m (TermView t)
 
-    whnfView :: MonadTerm t m => t -> m (TermView t)
+    whnfView :: MonadTerm t m => Term t -> m (TermView t)
     whnfView t = (view <=< ignoreBlocking <=< whnf) t
 
-    unview :: MonadTerm t m => TermView t -> m t
+    unview :: MonadTerm t m => TermView t -> m (Term t)
 
-    set     :: Closed t
-    refl    :: Closed t
-    typeOfJ :: Closed t
-
-weaken_ :: (IsTerm t, MonadTerm t m) => Int -> t -> m t
-weaken_ n t = weaken 0 n t
-
-strengthen_ :: (IsTerm t, MonadTerm t m) => Int -> t -> m (Maybe t)
-strengthen_ = strengthen 0
+    -- We require these to be un-monadic mostly because having them
+    -- monadic is a huge PITA when writing the type-checker/unifier.
+    -- And, for 'typeOfJ', for performance reasons.
+    set     :: Closed (Term t)
+    refl    :: Closed (Term t)
+    typeOfJ :: Closed (Type t)
 
 subst :: (IsTerm t, MonadTerm t m) => Int -> t -> t -> m t
-subst ix arg = substs [(ix, arg)]
+subst = error "TODO subst" -- substs [(ix, arg)]
 
 getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
 getAbsName t = do
   skip <- confFastGetAbsName <$> readConf
-  if skip then return (Just "_") else getAbsName' t
+  if skip then return (Just "_") else canStrengthen t
 
 getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
@@ -342,8 +323,8 @@ instance PP.Pretty BlockedHead where
   pretty = PP.text . show
 
 ignoreBlocking :: (IsTerm t, MonadTerm t m) => Blocked t -> m t
-ignoreBlocking (NotBlocked t)           = return t
-ignoreBlocking (MetaVarHead mv es)      = metaVar mv es
+ignoreBlocking (NotBlocked t)      = return t
+ignoreBlocking (MetaVarHead mv es) = metaVar mv es
 ignoreBlocking (BlockedOn _ bh es) =
   let h = case bh of
             BlockedOnFunction funName -> Def funName
@@ -499,11 +480,11 @@ instantiateClauseBody body args =
 
 data Definition t
     = Constant ConstantKind (Type t)
-    | DataCon Name Int (Tel.Tel (Type t)) (Type t)
+    | DataCon Name Int (Tel (Type t)) (Type t)
     -- ^ Data type name, number of arguments, telescope ranging over the
     -- parameters of the type constructor ending with the type of the
     -- constructor.
-    | Projection Field Name (Tel.Tel (Type t)) (Type t)
+    | Projection Field Name (Tel (Type t)) (Type t)
     -- ^ Field number, record type name, telescope ranging over the
     -- parameters of the type constructor ending with the type of the
     -- projection.
@@ -582,23 +563,58 @@ instance HasSrcLoc MetaVar where
 -- Substitutions and Actions
 ------------------------------------------------------------------------
 
-type Substitution t = [(Int, Term t)]
+-- type Substitution t = [(Int, Term t)]
 
-data TermAction t
-  = Substs (Substitution t)
-  | Weaken Int Int
-  | Strengthen Int Int
-  -- ^ Will fail if it can't be strengthened.
+-- data TermAction t
+--   = Substs (Substitution t)
+--   | Weaken Int Int
+--   | Strengthen Int Int
+--   -- ^ Will fail if it can't be strengthened.
 
-applyAction
-  :: (IsTerm t, MonadTerm t m) => TermAction t -> Term t -> m (Term t)
-applyAction a t = case a of
-  Substs sub         -> substs sub t
-  Weaken from by     -> weaken from by t
-  Strengthen from by -> do Just t' <- strengthen from by t
-                           return t'
+-- applyAction
+--   :: (IsTerm t, MonadTerm t m) => TermAction t -> Term t -> m (Term t)
+-- applyAction a t = case a of
+--   Substs sub         -> substs sub t
+--   Weaken from by     -> weaken from by t
+--   Strengthen from by -> do Just t' <- strengthen from by t
+--                            return t'
 
--- | Applies some actions, first one first.
-applyActions
-  :: (IsTerm t, MonadTerm t m) => [TermAction t] -> Term t -> m (Term t)
-applyActions as t = foldlM (\t' a -> applyAction a t') t as
+-- -- | Applies some actions, first one first.
+-- applyActions
+--   :: (IsTerm t, MonadTerm t m) => [TermAction t] -> Term t -> m (Term t)
+-- applyActions as t = foldlM (\t' a -> applyAction a t') t as
+
+substs :: MonadTerm t m => [(Int, Term t)] -> t -> m t
+substs = error "TODO substs"
+
+instantiate :: (MonadTerm t m, IsTerm t) => Abs t -> t -> m t
+instantiate = error "TODO instantiate"
+
+-- MonadTerm
+------------------------------------------------------------------------
+
+class (Functor m, Applicative m, Monad m, MonadIO m) => MonadTerm t m | m -> t where
+  askSignature :: m (Signature t)
+
+newtype TermM t a = TermM (ReaderT (Signature t) IO a)
+  deriving (Functor, Applicative, Monad, MonadIO)
+
+instance MonadTerm t (TermM t) where
+  askSignature = TermM ask
+
+runTermM :: Signature t -> TermM t a -> IO a
+runTermM sig (TermM m) = runReaderT m sig
+
+-- Signature
+------------------------------------------------------------------------
+
+-- | A 'Signature' stores every globally scoped thing.  That is,
+-- 'Definition's and 'MetaVar's bodies and types.
+data Signature t = Signature
+    { sigDefinitions    :: HMS.HashMap Name (Closed (Definition t))
+    , sigMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
+    , sigMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
+    -- ^ INVARIANT: Every 'MetaVar' in 'sMetaBodies' is also in
+    -- 'sMetasTypes'.
+    , sigMetasCount     :: Int
+    }

@@ -27,17 +27,6 @@ import           Term.Synonyms
 import           Term.Types
 import           PrettyPrint                      (render)
 
--- | A 'Signature' stores every globally scoped thing.  That is,
--- 'Definition's and 'MetaVar's bodies and types.
-data Signature t = Signature
-    { sigDefinitions    :: HMS.HashMap Name (Closed (Definition t))
-    , sigMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
-    , sigMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
-    -- ^ INVARIANT: Every 'MetaVar' in 'sMetaBodies' is also in
-    -- 'sMetasTypes'.
-    , sigMetasCount     :: Int
-    }
-
 empty :: Signature t
 empty = Signature HMS.empty HMS.empty HMS.empty 0
 

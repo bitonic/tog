@@ -8,7 +8,6 @@ import           Control.Applicative              ((<$>), (<*>))
 import           Control.Monad                    ((<=<))
 
 import qualified Term.Telescope                   as Tel
-import           Term.MonadTerm
 import           Term.Types
 
 class Nf t where

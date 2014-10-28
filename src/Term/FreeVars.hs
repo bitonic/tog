@@ -10,7 +10,6 @@ import           Data.Monoid                      (Monoid, mappend, mempty, (<>)
 import qualified Data.Set                         as Set
 
 import           Term.Types
-import           Term.MonadTerm
 
 -- Free variables
 ------------------------------------------------------------------------
