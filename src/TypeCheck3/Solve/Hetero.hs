@@ -15,7 +15,7 @@ import           Syntax.Internal                  (Name)
 
 import           Conf
 import           Prelude.Extended
-import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang)
+import           PrettyPrint                      (($$), (<+>), (//>), (//), group, hang, indent)
 import qualified PrettyPrint                      as PP
 import           Term
 import qualified Term.Telescope                   as Tel
@@ -555,7 +555,7 @@ instance PrettyM Constraint where
       c1 :>>: c2 -> do
         c1Doc <- prettyM c1
         c2Doc <- prettyM c2
-        return $ group (group c1Doc $$ hang 2 ">>" $$ group c2Doc)
+        return $ group (indent 2 (group c1Doc) $$ ">>" $$ indent 2 (group c2Doc))
       Conj cs -> do
         csDoc <- mapM prettyM cs
         return $
