@@ -25,18 +25,18 @@ import           TypeCheck3.Check
 -- Pruning
 ------------------------------------------------------------------------
 
-{-# WARNING unrollMetaVarArgs "Remove this, do the unrolling on-demand in prune." #-}
--- | @unrollMetaVarArgs t@ checks if @t = α ts@ and for every argument
+{-# WARNING curryMetaVar "Remove this, do the unrolling on-demand in prune." #-}
+-- | @curryMetaVar t@ checks if @t = α ts@ and for every argument
 -- of the metavar which is a record type it splits it up in separate
 -- arguments, one for each field.
-unrollMetaVarArgs
-  :: forall t s. (IsTerm t) => Term t -> TC t s (Maybe (Term t))
-unrollMetaVarArgs t = do
+curryMetaVar
+  :: forall t s. (IsTerm t) => Term t -> TC t s (Term t)
+curryMetaVar t = do
   let msg = do
         tDoc <- prettyTermM t
         return $
           "term:" //> tDoc
-  debugBracket "unrollMetaVarArgs" msg $ runMaybeT $ do
+  debugBracket "curryMetaVar" msg $ fmap (fromMaybe t) $ runMaybeT $ do
     App (Meta mv) _ <- lift $ whnfView t
     (ctx, mvType) <- lift $ unrollPi =<< getMetaVarType mv
     (True, args0, newMvType) <- lift $ go (Tel.tel ctx) mvType
@@ -95,7 +95,7 @@ unrollMetaVarArgs t = do
               DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
               appliedDataConType <- Tel.substs dataConTypeTel dataConType tyConPars
               (dataConPars, _) <-
-                assert_ ("unrollMetaVarArgs, unrollPiWithNames:" <+>) $
+                assert_ ("curryMetaVar, unrollPiWithNames:" <+>) $
                 unrollPiWithNames appliedDataConType (map pName projs)
               let numDataConPars = Ctx.length dataConPars
               recordTerm <- con dataCon =<< mapM var (Ctx.vars dataConPars)
@@ -161,15 +161,10 @@ pruneTerm' vs t = do
     Equal type_ x y -> do
       join $ equal <$> pruneTerm' vs type_ <*> pruneTerm' vs x <*> pruneTerm' vs y
     App (Meta mv) elims -> do
-      mbMvT <- unrollMetaVarArgs t
-      case mbMvT of
-        Nothing -> do
-          mbMvT' <- prune vs mv elims
-          case mbMvT' of
-            Nothing  -> metaVar mv elims
-            Just mvT -> eliminate mvT elims
-        Just mvT -> do
-          pruneTerm' vs mvT
+      mbMvT' <- prune vs mv elims
+      case mbMvT' of
+        Nothing  -> metaVar mv elims
+        Just mvT -> eliminate mvT elims
     App h elims -> do
       app h =<< mapM pruneElim elims
     Set ->
@@ -197,33 +192,34 @@ prune
     -> MetaVar
     -> [Elim (Term t)]       -- ^ Arguments to the metavariable
     -> TC t s (Maybe (Closed (Term t)))
-prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
-  mbKills <- sequence <$> mapM (shouldKill allowedVs) args
-  case mbKills of
-    Just kills0 | or kills0 -> do
-      let msg = do
-            mvTypeDoc <- prettyTermM =<< getMetaVarType oldMv
-            elimsDoc <- prettyListM elims
-            return $
-              "metavar type:" //> mvTypeDoc $$
-              "metavar:" <+> PP.pretty oldMv $$
-              "elims:" //> elimsDoc $$
-              "to kill:" //> PP.pretty kills0 $$
-              "allowed vars:" //> PP.pretty (Set.toList allowedVs)
-      debugBracket "prune" msg $ do
-        oldMvType <- getMetaVarType oldMv
-        (newMvType, kills1) <- createNewMeta oldMvType kills0
-        debug_ "new kills" $ PP.pretty (map unNamed kills1)
-        if any unNamed kills1
-          then do
-            newMv <- addMetaVar newMvType
-            mvT <- killArgs newMv kills1
-            instantiateMetaVar oldMv mvT
-            return $ Just mvT
-          else do
-            return Nothing
-    _ -> do
-      return Nothing
+prune allowedVs mv0 elims0 = do
+  -- TODO do expansion/currying more lazily, and optimize by first
+  -- checking if we need to do anything at all.
+  App (Meta oldMv) elims <-
+    whnfView =<< etaExpandMeta =<< curryMetaVar =<< metaVar mv0 elims0
+  -- TODO can we do something more if we have projections?
+  runMaybeT $ do
+    args <- MaybeT $ return $ mapM isApply elims
+    kills0 <- MaybeT $ sequence <$> mapM (shouldKill allowedVs) args
+    guard (or kills0)
+    let msg = do
+          mvTypeDoc <- prettyTermM =<< getMetaVarType oldMv
+          elimsDoc <- prettyListM elims
+          return $
+            "metavar type:" //> mvTypeDoc $$
+            "metavar:" <+> PP.pretty oldMv $$
+            "elims:" //> elimsDoc $$
+            "to kill:" //> PP.pretty kills0 $$
+            "allowed vars:" //> PP.pretty (Set.toList allowedVs)
+    MaybeT $ debugBracket "prune" msg $ runMaybeT $ do
+      oldMvType <- lift $ getMetaVarType oldMv
+      (newMvType, kills1) <- lift $ createNewMeta oldMvType kills0
+      lift $ debug_ "new kills" $ PP.pretty (map unNamed kills1)
+      guard (any unNamed kills1)
+      newMv <- lift $ addMetaVar newMvType
+      mvT <- lift $ killArgs newMv kills1
+      lift $ instantiateMetaVar oldMv mvT
+      return mvT
   where
     -- We build a pi-type with the non-killed types in.  This way, we
     -- can analyze the dependency between arguments and avoid killing
@@ -262,9 +258,6 @@ prune allowedVs oldMv elims | Just args <- mapM isApply elims = do
                                     notKilled
         _ ->
           fatalError "impossible.createNewMeta: metavar type too short"
-prune _ _ _ = do
-  -- TODO we could probably do something more.
-  return Nothing
 
 -- | Returns whether the term should be killed, given a set of allowed
 --   variables.
@@ -885,6 +878,7 @@ etaExpandMeta t = do
 -- | @etaExpand A t@ η-expands term @t@.
 etaExpand :: forall t s. (IsTerm t) => Type t -> Term t -> TC t s (Term t)
 etaExpand type_ t0 = do
+  -- TODO should we do this here?
   t <- etaExpandMeta t0
   let fallback = do
         debug_ "didn't expand" ""
