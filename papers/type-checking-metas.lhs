@@ -431,42 +431,42 @@ richer language, such as one with user defined data types and records.
 \section{The algorithm}
 
 \begin{figure}
-  \[
-  \inference{}{
-    |Gamma !- Set : A ==> alpha, Set : Set|
-  }\quad
-  \inference{}{
-    |Gamma !- Bot : A ==> alpha, Bot : Set|
-  }
-  \]
-  \[
-  \inference{}{
-    |Gamma !- Unit : A ==> alpha, Unit : Set|
-  }\quad
-  \inference{}{
-    |Gamma !- tt : A ==> alpha, tt : Unit|
-  }
-  \]
-  \[
-  \inference{}{
-    |Gamma !- Bool : A ==> alpha, Unit : Set|
-  }
-  \]
-  \[
-  \inference{}{
-    |Gamma !- true : A ==> alpha, true : Bool|
-  }\quad
-  \inference{}{
-    |Gamma !- false : A ==> alpha, false : Bool|
-  }
-  \]
-  \[
-  \inference{
-    |Gamma !- A : Set ==> A', Con_1| & |Gamma; x : A' !- B : Set ==> B', Con_2|
-  }{
-    |Gamma !- (x : A) -> B : C => alpha, 
-  }
-  \]
+  % \[
+  % \inference{}{
+  %   |Gamma !- Set : A ==> alpha, Set : Set|
+  % }\quad
+  % \inference{}{
+  %   |Gamma !- Bot : A ==> alpha, Bot : Set|
+  % }
+  % \]
+  % \[
+  % \inference{}{
+  %   |Gamma !- Unit : A ==> alpha, Unit : Set|
+  % }\quad
+  % \inference{}{
+  %   |Gamma !- tt : A ==> alpha, tt : Unit|
+  % }
+  % \]
+  % \[
+  % \inference{}{
+  %   |Gamma !- Bool : A ==> alpha, Unit : Set|
+  % }
+  % \]
+  % \[
+  % \inference{}{
+  %   |Gamma !- true : A ==> alpha, true : Bool|
+  % }\quad
+  % \inference{}{
+  %   |Gamma !- false : A ==> alpha, false : Bool|
+  % }
+  % \]
+  % \[
+  % \inference{
+  %   |Gamma !- A : Set ==> A', Con_1| & |Gamma; x : A' !- B : Set ==> B', Con_2|
+  % }{
+  %   |Gamma !- (x : A) -> B : C => alpha, 
+  % }
+  % \]
 \end{figure}
 
 \section{The big picture}
