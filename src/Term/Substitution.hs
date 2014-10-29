@@ -3,6 +3,7 @@ module Term.Substitution
   ( -- * Type
     Substitution
   , id
+  , singleton
   , weaken
   , snoc
   , strengthen
@@ -24,6 +25,9 @@ import           Term.Types
 
 id :: Substitution t
 id = Id
+
+singleton :: Term t -> Substitution t
+singleton t = snoc id t
 
 weaken :: Int -> Substitution t -> Substitution t
 weaken 0 rho            = rho

@@ -1,3 +1,4 @@
+{-# OPTIONS -fno-warn-orphans #-}
 module Term.Telescope
     ( -- * 'Tel'
       Tel(..)
@@ -5,13 +6,7 @@ module Term.Telescope
     , unTel
     , length
     , (++)
-    , subst
-    , substs
-    , instantiate
-    , weaken
-    , weaken_
-    , strengthen
-    , strengthen_
+    , discharge
     , pi
     ) where
 
@@ -57,57 +52,29 @@ Ctx.Empty            ++ tel' = tel'
 
 -- Methods
 
-subst :: (Term.IsTerm t, MonadTerm t m) => Int -> t -> Tel t -> m (Tel t)
-subst _ _ Empty =
-  return Empty
-subst ix t (Cons (n, type_) tel') = do
-  type' <- Term.subst ix t type_
-  t' <- Term.weaken_ 1 t
-  tel'' <- subst (ix + 1) t' tel'
-  return $ Cons (n, type') tel''
+instance Term.Subst t (Tel t) where
+  applySubst _ Empty = do
+    return Empty
+  applySubst rho (Cons (n, type_) tel') = do
+    type' <- Term.applySubst rho type_
+    tel'' <- Term.applySubst rho tel'
+    return $ Cons (n, type') tel''
+
+instance Term.MetaVars t (Tel t) where
+  metaVars Empty =
+    return mempty
+  metaVars (Cons (_, type_) tel') =
+    (<>) <$> Term.metaVars type_ <*> Term.metaVars tel'
+
 
 -- | Instantiates an 'Tel' repeatedly until we get to the bottom of
 -- it.  Fails If the length of the 'Tel' and the provided list don't
 -- match.
-substs :: (Term.IsTerm t, MonadTerm t m) => Tel t -> t -> [t] -> m t
-substs tel' t args =
+discharge :: (Term.IsTerm t, MonadTerm t m) => Tel t -> t -> [t] -> m t
+discharge tel' t args =
   if length tel' == Prelude.length args
-  then Term.substs (zip [0..] $ reverse args) t
-  else error "Term.Telescope.substs"
-
--- | Instantiates a bound variable.
-instantiate :: (Term.IsTerm t, MonadTerm t m) => Tel t -> t -> m (Tel t)
-instantiate tel0 arg = go 0 tel0
-  where
-    go _ Empty =
-      return Empty
-    go ix (Cons (n, type_) tel') = do
-      arg' <- Term.weaken_ (ix + 1) arg
-      type' <- Term.subst ix arg' type_
-      type'' <- Term.strengthen ix 1 type'
-      Cons (n, type'') <$> go (ix + 1) tel'
-
-weaken :: (Term.IsTerm t, MonadTerm t m) => Int -> Int -> Tel t -> m (Tel t)
-weaken _ _ Empty =
-  return Empty
-weaken from by (Cons (n, type_) tel') = do
-  type' <- Term.weaken from by type_
-  tel'' <- weaken (1 + from) by tel'
-  return $ Cons (n, type') tel''
-
-weaken_ :: (Term.IsTerm t, MonadTerm t m) => Int -> Tel t -> m (Tel t)
-weaken_ = weaken 0
-
-strengthen :: (Term.IsTerm t, MonadTerm t m) => Int -> Int -> Tel t -> m (Tel t)
-strengthen _ _ Empty = do
-  return Empty
-strengthen from by (Cons (n, type_) tel') = do
-  type' <- Term.strengthen from by type_
-  tel'' <- strengthen (from + 1) by tel'
-  return (Cons (n, type') tel'')
-
-strengthen_ :: (Term.IsTerm t, MonadTerm t m) => Int -> Tel t -> m (Tel t)
-strengthen_ = strengthen 0
+  then Term.instantiate t args
+  else error "Term.Telescope.discharge"
 
 pi :: (Term.IsTerm t, MonadTerm t m) => Tel (Type t) -> Type t -> m (Type t)
 pi = Ctx.pi . unTel

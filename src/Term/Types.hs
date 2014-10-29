@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Term.Types
   ( -- * Var
@@ -13,33 +12,36 @@ module Term.Types
     -- * Named
   , named
   , Named(..)
-    -- * MetaVars
-  , MetaVar(..)
     -- * Terms
   , TermView(..)
   , Projection(..)
   , Head(..)
   , Elim(..)
   , Field(..)
-  , elimEq
-  , elimsEq
-    -- ** Metavars
+    -- * Term typeclasses
+    -- ** MetaVars
   , MetaVarSet
-  , metaVars
-    -- * Term typeclass
+  , MetaVars(..)
+  , MetaVar(..)
+    -- ** Nf
+  , Nf(..)
+    -- ** Pretty
+  , PrettyM(..)
+    -- ** Subst
+  , Subst(..)
+  , canStrengthen
+    -- ** SynEq
+  , SynEq(..)
+    -- * IsTerm
   , IsTerm(..)
-  , substs
-  , subst
-  -- , subst
+  , whnfView
   , getAbsName
   , getAbsName_
-  , eliminate
     -- ** Blocked
   , Blocked(..)
   , BlockedHead(..)
   , isBlocked
   , ignoreBlocking
-  , blockedEq
     -- ** Utilities
   , var
   , lam
@@ -62,7 +64,6 @@ module Term.Types
   , Pattern(..)
   , patternBindings
   , patternsBindings
-  , instantiateClauseBody
   , Invertible(..)
   , TermHead(..)
   , ignoreInvertible
@@ -87,6 +88,7 @@ import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Internal                  as SI
 import qualified PrettyPrint                      as PP
+import           PrettyPrint                      ((<+>))
 import           Term.Telescope.Types             (Tel)
 import           Term.Substitution.Types          (Substitution)
 import           Term.Synonyms
@@ -191,16 +193,6 @@ instance Hashable Projection
 instance PP.Pretty Projection where
   pretty = PP.pretty . pName
 
-elimEq :: (IsTerm t, MonadTerm t m) => Elim t -> Elim t -> m Bool
-elimEq (Apply t1) (Apply t2) = termEq t1 t2
-elimEq (Proj p1)  (Proj p2)  = return $ p1 == p2
-elimEq _            _            = return False
-
-elimsEq :: (IsTerm t, MonadTerm t m) => [Elim t] -> [Elim t] -> m Bool
-elimsEq []           []           = return True
-elimsEq (el1 : els1) (el2 : els2) = (&&) <$> elimEq el1 el2 <*> elimsEq els1 els2
-elimsEq _            _            = return False
-
 -- | The 'TermView' lets us pattern match on terms.  The actual
 -- implementation of terms might be different, but we must be able to
 -- get a 'TermView' out of it.  See 'View'.
@@ -216,7 +208,7 @@ data TermView t
 
 instance (Hashable t) => Hashable (TermView t)
 
--- Term typeclass
+-- Term typeclasses
 ------------------------------------------------------------------------
 
 -- MetaVars
@@ -224,55 +216,99 @@ instance (Hashable t) => Hashable (TermView t)
 
 type MetaVarSet = HS.HashSet MetaVar
 
-metaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet
-metaVars t = do
-  tView <- whnfView t
-  case tView of
-    Lam body           -> metaVars body
-    Pi domain codomain -> (<>) <$> metaVars domain <*> metaVars codomain
-    Equal type_ x y    -> mconcat <$> mapM metaVars [type_, x, y]
-    App h elims        -> (<>) <$> metaVarsHead h <*> (mconcat <$> mapM metaVarsElim elims)
-    Set                -> return mempty
-    Refl               -> return mempty
-    Con _ elims        -> mconcat <$> mapM metaVars elims
-  where
-    metaVarsElim (Apply t') = metaVars t'
-    metaVarsElim (Proj _)   = return mempty
+class MetaVars t a | a -> t where
+  metaVars :: (IsTerm t, MonadTerm t m) => a -> m (HS.HashSet MetaVar)
 
-    metaVarsHead (Meta mv) = return $ HS.singleton mv
-    metaVarsHead _         = return mempty
+-- Nf
+------------------------------------------------------------------------
+
+class Nf t a where
+  nf :: (IsTerm t, MonadTerm t m) => a -> m a
+
+instance Nf t (Elim t) where
+  nf (Proj p)  = return $ Proj p
+  nf (Apply t) = Apply <$> nf t
+
+-- Pretty
+------------------------------------------------------------------------
+
+class PrettyM t a where
+  {-# MINIMAL prettyPrecM | prettyM #-}
+
+  prettyPrecM :: (IsTerm t, MonadTerm t m) => Int -> a -> m PP.Doc
+  prettyPrecM _ = prettyM
+
+  prettyM :: (IsTerm t, MonadTerm t m) => a -> m PP.Doc
+  prettyM = prettyPrecM 0
+
+instance PrettyM t (Elim t) where
+  prettyPrecM p (Apply t) = do
+    tDoc <- prettyPrecM p t
+    return $ PP.condParens (p > 0) $ "$" <+> tDoc
+  prettyPrecM _ (Proj p) = do
+    return $ "." <> PP.pretty (pName p)
+
+instance PrettyM t a => PrettyM t [a] where
+  prettyM x = PP.list <$> mapM prettyM x
+
+-- Subst
+------------------------------------------------------------------------
+
+canStrengthen :: (IsTerm t, MonadTerm t m) => t -> m (Maybe Name)
+canStrengthen = error "TODO canStrengthen"
+
+class Subst t a where
+  applySubst :: (IsTerm t, MonadTerm t m) => Substitution t -> a -> m a
+
+instance Subst t (Elim t) where
+  applySubst _   (Proj p)  = return $ Proj p
+  applySubst sub (Apply t) = Apply <$> applySubst sub t
+
+instance Subst t a => Subst t [a] where
+  applySubst rho = mapM (applySubst rho)
+
+  -- canStrengthen (Apply t) = canStrengthen t
+  -- canStrengthen (Proj _)  = return Nothing
+
+-- SynEq
+------------------------------------------------------------------------
+
+class SynEq t a where
+  synEq :: (IsTerm t, MonadTerm t m) => a -> a -> m Bool
+
+instance SynEq t (Elim t) where
+  synEq e1 e2 = case (e1, e2) of
+    (Proj p1,  Proj p2)  -> return $ p1 == p2
+    (Apply t1, Apply t2) -> synEq t1 t2
+    (_,        _)        -> return False
+
+instance SynEq t (Blocked t) where
+  synEq blockedX blockedY = case (blockedX, blockedY) of
+    (NotBlocked x, NotBlocked y) ->
+      synEq x y
+    (MetaVarHead mv1 els1, MetaVarHead mv2 els2) | mv1 == mv2 ->
+      synEq els1 els2
+    (BlockedOn mvs1 f1 els1, BlockedOn mvs2 f2 els2) | mvs1 == mvs2 && f1 == f2 ->
+      synEq els1 els2
+    (_, _) ->
+      return False
+
+instance SynEq t a => SynEq t [a] where
+  synEq []       []       = return True
+  synEq (x : xs) (y : ys) = (&&) <$> synEq x y <*> synEq xs ys
+  synEq _        _        = return False
 
 -- HasAbs
 ---------
 
-class (Typeable t, Show t) => IsTerm t where
-    -- Syntactic equality
-    --------------------------------------------------------------------
-
-    termEq :: MonadTerm t m => Term t -> Term t -> m Bool
-
-    default termEq :: (MonadTerm t m, Eq t) => Term t -> Term t -> m Bool
-    termEq t1 t2 = return $ t1 == t2
-
-    -- Substitution
-    --------------------------------------------------------------------
-
-    applySubst :: (MonadTerm t m) => Substitution t -> Term t -> m (Term t)
-
-    canStrengthen :: MonadTerm t m => Abs (Term t) -> m (Maybe Name)
-
+class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t t) => IsTerm t where
     -- Evaluation
     --------------------------------------------------------------------
     whnf :: MonadTerm t m => Term t -> m (Blocked (Term t))
-    nf   :: MonadTerm t m => Term t -> m (Term t)
 
     -- View / Unview
     --------------------------------------------------------------------
     view   :: MonadTerm t m => Term t -> m (TermView t)
-
-    whnfView :: MonadTerm t m => Term t -> m (TermView t)
-    whnfView t = (view <=< ignoreBlocking <=< whnf) t
-
     unview :: MonadTerm t m => TermView t -> m (Term t)
 
     -- We require these to be un-monadic mostly because having them
@@ -282,8 +318,8 @@ class (Typeable t, Show t) => IsTerm t where
     refl    :: Closed (Term t)
     typeOfJ :: Closed (Type t)
 
-subst :: (IsTerm t, MonadTerm t m) => Int -> t -> t -> m t
-subst = error "TODO subst" -- substs [(ix, arg)]
+whnfView :: (IsTerm t, MonadTerm t m) => Term t -> m (TermView t)
+whnfView t = (view <=< ignoreBlocking <=< whnf) t
 
 getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
 getAbsName t = do
@@ -330,38 +366,6 @@ ignoreBlocking (BlockedOn _ bh es) =
             BlockedOnFunction funName -> Def funName
             BlockedOnJ                -> J
   in app h es
-
-blockedEq
-  :: (IsTerm t, MonadTerm t m) => Blocked t -> Blocked t -> m Bool
-blockedEq blockedX blockedY = case (blockedX, blockedY) of
-  (NotBlocked x, NotBlocked y) ->
-    termEq x y
-  (MetaVarHead mv1 els1, MetaVarHead mv2 els2) | mv1 == mv2 ->
-    elimsEq els1 els2
-  (BlockedOn mvs1 f1 els1, BlockedOn mvs2 f2 els2) | mvs1 == mvs2 && f1 == f2 ->
-    elimsEq els1 els2
-  (_, _) ->
-    return False
-
--- | Tries to apply the eliminators to the term.  Trows an error
--- when the term and the eliminators don't match.
-eliminate :: (IsTerm t, MonadTerm t m) => t -> [Elim t] -> m t
-eliminate t elims = do
-  tView <- whnfView t
-  case (tView, elims) of
-    (_, []) ->
-        return t
-    (Con _c args, Proj proj : es) ->
-        if unField (pField proj) >= length args
-        then error "eliminate: Bad elimination"
-        else eliminate (args !! unField (pField proj)) es
-    (Lam body, Apply argument : es) -> do
-        body' <- instantiate body argument
-        eliminate body' es
-    (App h es1, es2) ->
-        app h (es1 ++ es2)
-    (_, _) ->
-        error $ "eliminate: Bad elimination"
 
 -- Term utils
 -------------
@@ -470,11 +474,6 @@ patternBindings (ConP _ pats) = patternsBindings pats
 patternsBindings :: [Pattern] -> Int
 patternsBindings = sum . map patternBindings
 
-instantiateClauseBody
-  :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
-instantiateClauseBody body args =
-  substs (zip [0..] $ reverse args) body
-
 -- Definition
 ------------------------------------------------------------------------
 
@@ -559,36 +558,6 @@ instance Show MetaVar where
 
 instance HasSrcLoc MetaVar where
   srcLoc = mvSrcLoc
-
--- Substitutions and Actions
-------------------------------------------------------------------------
-
--- type Substitution t = [(Int, Term t)]
-
--- data TermAction t
---   = Substs (Substitution t)
---   | Weaken Int Int
---   | Strengthen Int Int
---   -- ^ Will fail if it can't be strengthened.
-
--- applyAction
---   :: (IsTerm t, MonadTerm t m) => TermAction t -> Term t -> m (Term t)
--- applyAction a t = case a of
---   Substs sub         -> substs sub t
---   Weaken from by     -> weaken from by t
---   Strengthen from by -> do Just t' <- strengthen from by t
---                            return t'
-
--- -- | Applies some actions, first one first.
--- applyActions
---   :: (IsTerm t, MonadTerm t m) => [TermAction t] -> Term t -> m (Term t)
--- applyActions as t = foldlM (\t' a -> applyAction a t') t as
-
-substs :: MonadTerm t m => [(Int, Term t)] -> t -> m t
-substs = error "TODO substs"
-
-instantiate :: (MonadTerm t m, IsTerm t) => Abs t -> t -> m t
-instantiate = error "TODO instantiate"
 
 -- MonadTerm
 ------------------------------------------------------------------------

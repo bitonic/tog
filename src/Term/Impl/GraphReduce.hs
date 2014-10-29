@@ -17,35 +17,39 @@ newtype GraphReduce = GR {unGR :: IORef (TermView GraphReduce)}
 instance Show GraphReduce where
   show _ = "<<ref>>"
 
-instance IsTerm GraphReduce where
-  termEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
-  termEq t1 t2 = genericTermEq t1 t2
+instance MetaVars GraphReduce GraphReduce where
+  metaVars = genericMetaVars
 
-  strengthen = genericStrengthen
-  getAbsName' = genericGetAbsName
-
-  whnf t = do
-    blockedT <- genericWhnf t
-    tView <- liftIO . readIORef . unGR =<< ignoreBlocking blockedT
-    liftIO $ writeIORef (unGR t) (tView)
-    return $ blockedT
-
+instance Nf GraphReduce GraphReduce where
   nf t = do
     t' <- genericNf t
     tView <- liftIO $ readIORef $ unGR t'
     liftIO $ writeIORef (unGR t) (tView)
     return t
 
-  view = liftIO . readIORef . unGR
+instance PrettyM GraphReduce GraphReduce where
+  prettyPrecM = genericPrettyPrecM
 
+instance Subst GraphReduce GraphReduce where
+  applySubst = genericApplySubst
+
+instance SynEq GraphReduce GraphReduce where
+  synEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
+  synEq t1 t2 = genericSynEq t1 t2
+
+instance IsTerm GraphReduce where
+  whnf t = do
+    blockedT <- genericWhnf t
+    tView <- liftIO . readIORef . unGR =<< ignoreBlocking blockedT
+    liftIO $ writeIORef (unGR t) (tView)
+    return $ blockedT
+
+  view = liftIO . readIORef . unGR
   unview tView = GR <$> liftIO (newIORef tView)
 
   set = setGR
   refl = reflGR
   typeOfJ = typeOfJGR
-
-  substs = genericSubsts
-  weaken = genericWeaken
 
 {-# NOINLINE setGR #-}
 setGR :: GraphReduce

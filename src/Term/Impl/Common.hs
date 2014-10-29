@@ -1,14 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Term.Impl.Common
-  ( genericSubsts
+  ( genericApplySubst
   , genericWhnf
   , genericGetAbsName
   , genericStrengthen
   , genericWeaken
   , genericTypeOfJ
   , genericNf
-  , genericTermEq
-  , matchClause
+  , genericSynEq
+  , genericMetaVars
+  , genericPrettyPrecM
   ) where
 
 import           Prelude                          hiding (pi, foldr, mapM, sequence)
@@ -18,72 +19,49 @@ import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import           Data.Traversable                 (mapM, sequence)
 
+import           Conf
 import           Prelude.Extended
-import           Syntax.Internal                  (Name)
+import           Syntax
+import qualified Syntax.Internal                  as SI
+import qualified PrettyPrint                      as PP
 import           Term
+import qualified Term.Substitution                as Sub
+import           Term.Substitution.Types          as Sub
 import qualified Term.Signature                   as Sig
 
--- TODO remove duplication between this and the actual `eliminate'
--- | Tries to apply the eliminators to the term.  Trows an error
--- when the term and the eliminators don't match.
-substEliminate
-  :: (IsTerm t, MonadTerm t m) => t -> [Elim t] -> m t
-substEliminate t elims = do
-  tView <- view t
-  case (tView, elims) of
-    (_, []) ->
-        return t
-    (Con _c args, Proj proj : es) ->
-        if unField (pField proj) >= length args
-        then error "substEliminate: Bad elimination"
-        else substEliminate (args !! unField (pField proj)) es
-    (Lam body, Apply argument : es) -> do
-        body' <- instantiate body argument
-        substEliminate body' es
-    (App h es1, es2) ->
-        app h (es1 ++ es2)
-    (_, _) -> do
-        error $ "substEliminate: Bad elimination"
-
-genericSubstsView
+genericApplySubstView
   :: forall t m. (IsTerm t, MonadTerm t m) => Substitution t -> TermView t -> m t
-genericSubstsView [] tView = do
+genericApplySubstView Sub.Id tView = do
   unview tView
-genericSubstsView args tView = do
+genericApplySubstView rho tView = do
   case tView of
     Lam body ->
-      lam =<< subst' body
+      lam =<< applySubst rho body
     Pi dom cod ->
-      join $ pi <$> substs args dom <*> subst' cod
+      join $ pi <$> applySubst rho dom <*> applySubst rho cod
     Equal type_ x y  ->
-      join $ equal <$> substs args type_ <*> substs args x <*> substs args y
+      join $ equal <$> applySubst rho type_
+                   <*> applySubst rho x
+                   <*> applySubst rho y
     Refl ->
       return refl
-    Con dataCon args' ->
-      join $ con dataCon <$> mapM (substs args) args'
+    Con dataCon args ->
+      join $ con dataCon <$> applySubst rho args
     Set ->
       return set
     App h els  -> do
-      els' <- mapM (mapM (substs args)) els
+      els' <- applySubst rho els
       case h of
-        Var v   -> case lookup (varIndex v) args of
-                     Nothing  -> app (Var v) els'
-                     Just arg -> substEliminate arg els'
+        Var v   -> (`eliminate` els') =<< Sub.lookup v rho
         Def n   -> app (Def n) els'
         Meta mv -> app (Meta mv) els'
         J       -> app J els'
-  where
-    subst' t' = do
-      args' <- forM args $ \(ix, arg) -> do
-        arg' <- weaken_ 1 arg
-        return (ix + 1, arg')
-      substs args' t'
 
-genericSubsts
+genericApplySubst
   :: (IsTerm t, MonadTerm t m) => Substitution t -> t -> m t
-genericSubsts args t = do
+genericApplySubst args t = do
   tView <- view t
-  genericSubstsView args tView
+  genericApplySubstView args tView
 
 genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
@@ -237,7 +215,7 @@ genericNf t = do
     Set ->
       return set
     App h elims ->
-      join $ app h <$> mapM nf' elims
+      join $ app h <$> mapM nf elims
 
 -- (A : Set) ->
 -- (x : A) ->
@@ -266,10 +244,10 @@ genericTypeOfJ =
     (-->) :: (Name, m t) -> m t -> m t
     (_, type_) --> t = join $ pi <$> type_ <*> t
 
-genericTermEq
+genericSynEq
   :: (IsTerm t, MonadTerm t m)
   => t -> t -> m Bool
-genericTermEq t1 t2 = do
+genericSynEq t1 t2 = do
   join $ genericTermViewEq <$> view t1 <*> view t2
 
 genericTermViewEq
@@ -278,26 +256,22 @@ genericTermViewEq
 genericTermViewEq tView1 tView2 = do
   case (tView1, tView2) of
     (Lam body1, Lam body2) ->
-      termEq body1 body2
+      synEq body1 body2
     (Pi domain1 codomain1, Pi domain2 codomain2) ->
-      (&&) <$> termEq domain1 domain2 <*> termEq codomain1 codomain2
+      (&&) <$> synEq domain1 domain2 <*> synEq codomain1 codomain2
     (Equal type1 x1 y1, Equal type2 x2 y2) ->
-      (&&) <$> ((&&) <$> termEq type1 type2 <*> termEq x1 x2)
-           <*> termEq y1 y2
+      (&&) <$> ((&&) <$> synEq type1 type2 <*> synEq x1 x2)
+           <*> synEq y1 y2
     (App h1 els1, App h2 els2) ->
-      (h1 == h2 &&) <$> elimsEq els1 els2
+      (h1 == h2 &&) <$> synEq els1 els2
     (Set, Set) ->
       return True
     (Con dataCon1 args1, Con dataCon2 args2) | dataCon1 == dataCon2 ->
-      argsEq args1 args2
+      synEq args1 args2
     (Refl, Refl) ->
       return True
     (_, _) -> do
       return False
-  where
-    argsEq []             []             = return True
-    argsEq (arg1 : args1) (arg2 : args2) = (&&) <$> termEq arg1 arg2 <*> argsEq args1 args2
-    argsEq _              _              = return False
 
 genericWeaken
   :: (IsTerm t, MonadTerm t m)
@@ -332,5 +306,64 @@ genericWeaken from by t = do
 
 instantiateClauseBody
   :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
-instantiateClauseBody body args =
-  substs (zip [0..] $ reverse args) body
+instantiateClauseBody body args = instantiate body args
+
+genericPrettyPrecM
+  :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc
+genericPrettyPrecM p t = do
+    synT <- internalToTerm t
+    return $ PP.prettyPrec p synT
+
+internalToTerm
+  :: (IsTerm t, MonadTerm t m) => t -> m SI.Expr
+internalToTerm t0 = do
+  dontNormalize <- confDontNormalizePP <$> readConf
+  tView <- view =<< if dontNormalize then return t0 else nf t0
+  case tView of
+    Lam body -> do
+      n <- getAbsName_ body
+      SI.Lam n <$> internalToTerm body
+    Pi dom cod -> do
+      mbN <- canStrengthen cod
+      case mbN of
+        Just n -> do
+          SI.Pi n <$> internalToTerm dom <*> internalToTerm cod
+        Nothing -> do
+          SI.Fun <$> internalToTerm dom <*> internalToTerm cod
+    Equal type_ x y ->
+      SI.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
+    Refl ->
+      return $ SI.Refl SI.noSrcLoc
+    Con dataCon args ->
+      SI.Con dataCon <$> mapM internalToTerm args
+    Set ->
+      return $ SI.Set SI.noSrcLoc
+    App h args -> do
+      let h' = case h of
+            Var v -> SI.Var (SI.name (PP.render v))
+            Def f -> SI.Def f
+            J -> SI.J SI.noSrcLoc
+            Meta mv -> SI.Var (SI.Name (SI.srcLoc mv) (PP.render mv))
+      args' <- forM args $ \arg -> case arg of
+        Apply t -> SI.Apply <$> internalToTerm t
+        Proj p  -> return $ SI.Proj $ pName p
+      return $ SI.App h' args'
+
+
+genericMetaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet
+genericMetaVars t = do
+  tView <- whnfView t
+  case tView of
+    Lam body           -> metaVars body
+    Pi domain codomain -> (<>) <$> metaVars domain <*> metaVars codomain
+    Equal type_ x y    -> mconcat <$> mapM metaVars [type_, x, y]
+    App h elims        -> (<>) <$> metaVarsHead h <*> (mconcat <$> mapM metaVarsElim elims)
+    Set                -> return mempty
+    Refl               -> return mempty
+    Con _ elims        -> mconcat <$> mapM metaVars elims
+  where
+    metaVarsElim (Apply t') = metaVars t'
+    metaVarsElim (Proj _)   = return mempty
+
+    metaVarsHead (Meta mv) = return $ HS.singleton mv
+    metaVarsHead _         = return mempty
