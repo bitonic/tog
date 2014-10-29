@@ -306,7 +306,7 @@ genericWeaken from by t = do
 
 instantiateClauseBody
   :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
-instantiateClauseBody body args = instantiate body args
+instantiateClauseBody body args = error "TODO instantiateClauseBody" -- instantiate body args
 
 genericPrettyPrecM
   :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc
@@ -357,13 +357,10 @@ genericMetaVars t = do
     Lam body           -> metaVars body
     Pi domain codomain -> (<>) <$> metaVars domain <*> metaVars codomain
     Equal type_ x y    -> mconcat <$> mapM metaVars [type_, x, y]
-    App h elims        -> (<>) <$> metaVarsHead h <*> (mconcat <$> mapM metaVarsElim elims)
+    App h elims        -> (<>) <$> metaVarsHead h <*> metaVars elims
     Set                -> return mempty
     Refl               -> return mempty
-    Con _ elims        -> mconcat <$> mapM metaVars elims
+    Con _ elims        -> metaVars elims
   where
-    metaVarsElim (Apply t') = metaVars t'
-    metaVarsElim (Proj _)   = return mempty
-
     metaVarsHead (Meta mv) = return $ HS.singleton mv
     metaVarsHead _         = return mempty

@@ -40,11 +40,11 @@ instance IsTerm EasyWeaken where
   weaken ew = do
     EW <$> newIORef (Weakened ew)
 
-  termEq (EW ewRef1) (EW ewRef2) | ewRef1 == ewRef2 = do
+  synEq (EW ewRef1) (EW ewRef2) | ewRef1 == ewRef2 = do
     return True
   -- TODO here we could avoid weakening if both are Weakened, but we
   -- trip over Eq constraints...
-  termEq ew1 ew2 = genericTermEq ew1 ew2
+  synEq ew1 ew2 = genericTermEq ew1 ew2
     -- ew1' <- readIORef ewRef2
     -- ew2' <- readIORef ewRef2
     -- go ew1' ew2'

@@ -216,8 +216,15 @@ instance (Hashable t) => Hashable (TermView t)
 
 type MetaVarSet = HS.HashSet MetaVar
 
-class MetaVars t a | a -> t where
+class MetaVars t a where
   metaVars :: (IsTerm t, MonadTerm t m) => a -> m (HS.HashSet MetaVar)
+
+instance MetaVars t (Elim t) where
+  metaVars (Apply t) = metaVars t
+  metaVars (Proj _)  = return mempty
+
+instance MetaVars t a => MetaVars t [a] where
+  metaVars xs = mconcat <$> mapM metaVars xs
 
 -- Nf
 ------------------------------------------------------------------------
