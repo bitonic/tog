@@ -74,25 +74,22 @@ instance PrettyM t (Ctx.Ctx t) where
   prettyM = prettyM . Tel.tel
 
 instance PrettyM t (Sub.Substitution t) where
-  prettyM sub0 = error "TODO prettySubstitution"
-
-{-
--- prettySubstitutionM :: (MonadTerm t m, IsTerm t) => Substitution t -> m PP.Doc
--- prettySubstitutionM sub = do
---   let ppPair (i, t) = do
---         tDoc <- prettyTermM t
---         return $ (PP.pretty i <+> "|->") //> tDoc
---   PP.list <$> mapM ppPair sub
-
--- instance PrettyM TermAction where
---   prettyM ta0 = case ta0 of
---     Substs sub -> do
---       subDoc <- prettySubstitutionM sub
---       return $
---         "Substs" //> subDoc
---     Weaken from by -> do
---       return $ "Weaken" <+> PP.pretty from <+> PP.pretty by
---     Strengthen from by -> do
---       return $ "Strengthen" <+> PP.pretty from <+> PP.pretty by
-
--}
+  prettyM sub0 = case sub0 of
+    Sub.Id -> do
+      return "Id"
+    Sub.Weaken i sub -> do
+      subDoc <- prettyM sub
+      return $ "Weaken" <+> PP.pretty i //> subDoc
+    Sub.Snoc sub t -> do
+      subDoc <- prettyM sub
+      tDoc <- prettyM t
+      return $
+        "Snoc" $$
+        "sub:" //> subDoc $$
+        "term:" //> tDoc
+    Sub.Strengthen i sub -> do
+      subDoc <- prettyM sub
+      return $ "Strengthen" <+> PP.pretty i //> subDoc
+    Sub.Lift i sub -> do
+      subDoc <- prettyM sub
+      return $ "Lift" <+> PP.pretty i //> subDoc
