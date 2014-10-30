@@ -142,6 +142,7 @@ Agda program.\footnote{The source code for \texttt{tog} is available at
   \url{https://github.com/bitonic/tog}.}
 
 \section{The problem}
+\label{problem}
 
 In this section we will explain in more details the challenges faced
 when type checking dependent types with meta-variables, and sketch a
@@ -283,6 +284,41 @@ theory, whose syntax is shown in figure \ref{syntax}.  While small, it
 contains all the elements necessary to extend the presented ideas to a
 richer language, such as one with user defined data types and records.
 
+Most operations are done under a context (denoted by |Gamma| or
+|Delta|), that stores the types of free variables; and a signature |Sg|,
+that stores the type and the body (if present) of defined constants.
+Their syntax is shown in figure \ref{contexts-signatures}. In our case
+we use the signature exclusively to store meta-variables, but in a real
+language we would use it to store arbitrary definitions. We tacitly
+assume that no duplicate names are present in contexts and signatures.
+Note that a signature contains only closed terms so we will not have an
+explicit representation of meta-variables in a context.  Instead, when
+creating a new meta-variable |alpha| of type |A| in context |Gamma|, we
+will have |alpha| to abstract over |Gamma| by giving it the type |Gamma
+-> A|.
+
+The typing checking rules are shown in figure \ref{typing-rules}.
+Neutral terms are represented in spine form, a necessary condition to
+perform bidirectional type checking and as we will see to perform our
+algorithm.  Note that while neutral terms are denoted by |h ^ (vec e)|,
+where |(vec e)| is a list of eliminators, we adopt a more readable
+syntax when the eliminators are known -- in their syntax $\_$ denotes
+where the head will appear.  The signature |Sg| is kept implicit, since
+the rules never modify it.  Every mention of |Gamma| and |Sg| is assumed
+to be valid according to the rules in figure
+\ref{context-signature-validity}.  Our type theory includes a universe
+|Set| equipped with an inconsistent typing rule |Set : Set| for the sake
+of simplicity, but our presentation can be extended with stratified
+universes.\footnote{Note that a simpler theory like Martin-L{\"o}f's
+  logical framework is not affected by the problems we have mentioned in
+  section \ref{problem}, since we have no mean to compute
+  types.}\todo{Clarify here}
+
+As mentioned, our type checking rules are bidirectional: the type of
+neutral terms is inferred, everything else is checked.  This allows us
+to have untyped constructors for dependent functions and dependent
+products.\todo{Add equality}
+
 \begin{figure}
   \begin{code}
     A, B, C, t, u, v    
@@ -394,11 +430,11 @@ richer language, such as one with user defined data types and records.
 
     \begin{subfigure}[b]{1\textwidth}
       \[
-      \inference{}{
-        |Gamma !- x ^^ nil ==> Lookup(x, Gamma)|
+      \inference{|x : A `elem` Gamma|}{
+        |Gamma !- x ^^ nil ==> A|
       }\quad
-      \inference{}{
-        |Gamma !- alpha ^^ nil ==> Lookup(alpha, Sg)|
+      \inference{|alpha : A `elem` Sg|}{
+        |Gamma !- alpha ^^ nil ==> A|
       }
       \]
       \[
@@ -428,6 +464,7 @@ richer language, such as one with user defined data types and records.
     the rules, since rules never manipulate it.}
   \label{typing-rules}
 \end{figure}
+
 \section{The algorithm}
 
 \begin{figure}
