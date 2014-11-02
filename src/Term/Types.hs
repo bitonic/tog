@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Term.Types
   ( -- * Var
-    Var(..)
+    Var
+  , unVar
+  , mkVar
   , varIndex
   , varName
   , boundVar
@@ -29,7 +31,6 @@ module Term.Types
   , PrettyM(..)
     -- ** Subst
   , Subst(..)
-  , canStrengthen
     -- ** SynEq
   , SynEq(..)
     -- * IsTerm
@@ -96,8 +97,15 @@ import           Term.Synonyms
 -- Var
 ------------------------------------------------------------------------
 
-newtype Var = V {unVar :: Named Int}
+newtype Var = V (Named Int)
   deriving (Eq, Ord, Hashable)
+
+unVar :: Var -> Named Int
+unVar (V v) = v
+
+mkVar :: Name -> Int -> Var
+mkVar _ i | i < 0 = error "impossible.mkVar"
+mkVar n i = V $ named n i
 
 varIndex :: Var -> Int
 varIndex = unNamed . unVar
@@ -199,7 +207,7 @@ instance PP.Pretty Projection where
 data TermView t
     = Pi t (Abs t)
     | Lam (Abs t)
-    | Equal t t t
+    | Equal (Type t) t t
     | Refl
     | Set
     | Con Name [t]
@@ -236,6 +244,9 @@ instance Nf t (Elim t) where
   nf (Proj p)  = return $ Proj p
   nf (Apply t) = Apply <$> nf t
 
+instance Nf t a => Nf t [a] where
+  nf = mapM nf
+
 -- Pretty
 ------------------------------------------------------------------------
 
@@ -261,18 +272,15 @@ instance PrettyM t a => PrettyM t [a] where
 -- Subst
 ------------------------------------------------------------------------
 
-canStrengthen :: (IsTerm t, MonadTerm t m) => t -> m (Maybe Name)
-canStrengthen = error "TODO canStrengthen"
-
 class Subst t a where
-  applySubst :: (IsTerm t, MonadTerm t m) => Substitution t -> a -> m a
+  applySubst :: (IsTerm t, MonadTerm t m) => a -> Substitution t -> m a
 
 instance Subst t (Elim t) where
-  applySubst _   (Proj p)  = return $ Proj p
-  applySubst sub (Apply t) = Apply <$> applySubst sub t
+  applySubst (Proj p)  _   = return $ Proj p
+  applySubst (Apply t) sub = Apply <$> applySubst t sub
 
 instance Subst t a => Subst t [a] where
-  applySubst rho = mapM (applySubst rho)
+  applySubst t rho = mapM (`applySubst` rho) t
 
   -- canStrengthen (Apply t) = canStrengthen t
   -- canStrengthen (Proj _)  = return Nothing
@@ -324,6 +332,10 @@ class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t
     set     :: Closed (Term t)
     refl    :: Closed (Term t)
     typeOfJ :: Closed (Type t)
+
+    -- TODO move this to Subst
+    --------------------------------------------------------------------
+    canStrengthen :: (MonadTerm t m) => t -> m (Maybe Name)
 
 whnfView :: (IsTerm t, MonadTerm t m) => Term t -> m (TermView t)
 whnfView t = (view <=< ignoreBlocking <=< whnf) t

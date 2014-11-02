@@ -13,11 +13,11 @@ module Term.Telescope
 import qualified Prelude
 import           Prelude                          hiding (pi, length, lookup, (++))
 
-import           Prelude.Extended
 import qualified Term.Context                     as Ctx
 import           Term.Types                       (MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
+import           Term.Substitution                as Sub
 import qualified Term.Substitution.Utils          as Term
 import           Term.Telescope.Types
 
@@ -53,24 +53,17 @@ Ctx.Empty            ++ tel' = tel'
 -- Methods
 
 instance Term.Subst t (Tel t) where
-  applySubst _ Empty = do
+  applySubst Empty _ = do
     return Empty
-  applySubst rho (Cons (n, type_) tel') = do
-    type' <- Term.applySubst rho type_
-    tel'' <- Term.applySubst rho tel'
+  applySubst (Cons (n, type_) tel') rho = do
+    type' <- Term.applySubst type_ rho
+    tel'' <- Term.applySubst tel' (Sub.lift 1 rho)
     return $ Cons (n, type') tel''
-
-instance Term.MetaVars t (Tel t) where
-  metaVars Empty =
-    return mempty
-  metaVars (Cons (_, type_) tel') =
-    (<>) <$> Term.metaVars type_ <*> Term.metaVars tel'
-
 
 -- | Instantiates an 'Tel' repeatedly until we get to the bottom of
 -- it.  Fails If the length of the 'Tel' and the provided list don't
 -- match.
-discharge :: (Term.IsTerm t, MonadTerm t m) => Tel t -> t -> [t] -> m t
+discharge :: (Term.IsTerm t, MonadTerm t m) => Tel t -> Term t -> [Term t] -> m t
 discharge tel' t args =
   if length tel' == Prelude.length args
   then Term.instantiate t args

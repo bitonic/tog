@@ -80,11 +80,11 @@ instance PrettyM t (Sub.Substitution t) where
     Sub.Weaken i sub -> do
       subDoc <- prettyM sub
       return $ "Weaken" <+> PP.pretty i //> subDoc
-    Sub.Snoc sub t -> do
+    Sub.Instantiate t sub -> do
       subDoc <- prettyM sub
       tDoc <- prettyM t
       return $
-        "Snoc" $$
+        "Instantiate" $$
         "sub:" //> subDoc $$
         "term:" //> tDoc
     Sub.Strengthen i sub -> do

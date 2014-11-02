@@ -17,6 +17,9 @@ import           TypeCheck3
 import           Syntax.Internal                  (scopeCheckProgram)
 import           Syntax.Raw                       (parseProgram)
 
+-- Modules that we don't need, but should compile
+import           Term.Testing                     ()
+
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
   <$> strOption
@@ -77,12 +80,6 @@ debugLabelsOption
   -> Parser [(Bool, [String])]
 debugLabelsOption = option $ do
   s <- readerAsk
-  traceM $ show [ case x of
-                    []       -> (True,  [])
-                    '~' : x' -> (False, splitOn "." x')
-                    x'       -> (True,  splitOn "." x')
-                | x <- splitOn "|" s
-                ]
   return [ case x of
              []       -> (True,  [])
              '~' : x' -> (False, splitOn "." x')

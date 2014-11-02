@@ -3,34 +3,34 @@ module Term.Substitution.Types where
 import           Term.Synonyms
 
 -- | The "context morphism" interpretation, and the "do stuff to term"
--- interpretation.
+--   interpretation.
+--
+--   A substitution σ : Δ → Γ can be seen as a list of terms Γ ⊢ vᵢ : Aᵢ
+--   with Aᵢ from Δ, that can be applied to a term Δ ⊢ u : B yielding
+--   Γ ⊢ uσ : Bσ by substituting the vs for the variables in u. In other
+--   words, if σ : Δ → Γ then applySubst σ : Term Δ -> Term Γ.
 data Substitution t
   = Id
-    --   Γ ⊢ Id : Γ
     --
-    -- Leaves everything as-is
+    -- --------------------------------
+    --   Id : Γ → Γ
+
   | Weaken !Int (Substitution t)
-    --   Γ ⊢ ρ : Δ
+    --   ρ : Δ → Γ
     -- --------------------------------
-    --   Γ ⊢ Weaken |Ψ| ρ : Δ; Ψ
-    --
-    -- Weaken the term by that much.
-  | Snoc (Substitution t) (Term t)
-    --   Γ ⊢ u : Aρ    Γ ⊢ ρ : Δ
-    -- --------------------------------
-    --   Γ ⊢ Snoc ρ u : Δ; A
-    --
-    -- Add a new thing to substitute, now variable 0 will be replaced by
-    -- that term.
+    --   Weaken |Ψ| ρ : Δ → Γ;Ψ
+
   | Strengthen !Int (Substitution t)
-    --   Γ ⊢ ρ : Δ
+    --   ρ : Δ → Γ
     -- --------------------------------
-    --   Γ; Ψ ⊢ Strengthen |Ψ| ρ : Δ
-    --
-    -- Strengthen the term
+    --   Strengthen |Ψ| ρ : Γ;Ψ →  Δ
+
+  | Instantiate (Term t) (Substitution t)
+    --   Γ ⊢ u : Aρ    ρ : Δ → Γ
+    -- --------------------------------
+    --   Instantiate u ρ : Δ;A → Γ
+
   | Lift !Int (Substitution t)
-    --   Γ ⊢ ρ : Δ
+    --   ρ : Δ → Γ
     -- --------------------------------
-    --   Γ; Ψρ ⊢ Lift |Ψ| ρ : Δ; Ψ
-    --
-    -- Does whatere is in ρ lifted by n.
+    --   Lift |Ψ| ρ : Δ;Ψ → Γ;Ψρ

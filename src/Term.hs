@@ -11,6 +11,7 @@ module Term
 import Term.Types
 import Term.Synonyms
 import Term.Pretty ()
+import Term.MetaVars ()
 import Term.FreeVars
 import Term.Substitution.Utils
 import Term.Context (Ctx)

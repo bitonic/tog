@@ -3,13 +3,13 @@ module Term.Impl.Common
   ( genericApplySubst
   , genericWhnf
   , genericGetAbsName
-  , genericStrengthen
   , genericWeaken
   , genericTypeOfJ
   , genericNf
   , genericSynEq
   , genericMetaVars
   , genericPrettyPrecM
+  , genericCanStrengthen
   ) where
 
 import           Prelude                          hiding (pi, foldr, mapM, sequence)
@@ -29,39 +29,62 @@ import qualified Term.Substitution                as Sub
 import           Term.Substitution.Types          as Sub
 import qualified Term.Signature                   as Sig
 
-genericApplySubstView
-  :: forall t m. (IsTerm t, MonadTerm t m) => Substitution t -> TermView t -> m t
-genericApplySubstView Sub.Id tView = do
-  unview tView
-genericApplySubstView rho tView = do
+genericApplySubst
+  :: (IsTerm t, MonadTerm t m) => t -> Substitution t -> m t
+genericApplySubst t Sub.Id = do
+  return t
+genericApplySubst t rho = do
+  tView <- view t
   case tView of
     Lam body ->
-      lam =<< applySubst rho body
+      lam =<< applySubst body (Sub.lift 1 rho)
     Pi dom cod ->
-      join $ pi <$> applySubst rho dom <*> applySubst rho cod
+      join $ pi <$> applySubst dom rho <*> applySubst cod (Sub.lift 1 rho)
     Equal type_ x y  ->
-      join $ equal <$> applySubst rho type_
-                   <*> applySubst rho x
-                   <*> applySubst rho y
+      join $ equal <$> applySubst type_ rho
+                   <*> applySubst x rho
+                   <*> applySubst y rho
     Refl ->
       return refl
     Con dataCon args ->
-      join $ con dataCon <$> applySubst rho args
+      join $ con dataCon <$> applySubst args rho
     Set ->
       return set
     App h els  -> do
-      els' <- applySubst rho els
+      els' <- applySubst els rho
       case h of
         Var v   -> (`eliminate` els') =<< Sub.lookup v rho
         Def n   -> app (Def n) els'
         Meta mv -> app (Meta mv) els'
         J       -> app J els'
 
-genericApplySubst
-  :: (IsTerm t, MonadTerm t m) => Substitution t -> t -> m t
-genericApplySubst args t = do
-  tView <- view t
-  genericApplySubstView args tView
+genericCanStrengthen
+  :: forall t m. (IsTerm t, MonadTerm t m) => t -> m (Maybe Name)
+genericCanStrengthen = runMaybeT . go 0
+  where
+    go :: Int -> t -> MaybeT m Name
+    go ix t = do
+      tView <- lift $ whnfView t
+      case tView of
+        App (Var v) _ | varIndex v == ix -> do
+          return $ varName v
+        App _ es -> do
+          msum $ map goElim es
+        Pi dom cod -> do
+          go ix dom <|> go (ix+1) cod
+        Lam body -> do
+          go (ix+1) body
+        Equal type_ x y -> do
+          go ix type_ <|> go ix x <|> go ix y
+        Refl -> do
+          mzero
+        Set -> do
+          mzero
+        Con _ ts -> do
+          msum $ map (go ix) ts
+      where
+        goElim (Proj _)   = mzero
+        goElim (Apply t') = go ix t'
 
 genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
@@ -71,7 +94,9 @@ genericWhnf t = do
   case tView of
     App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv -> do
       whnf =<< eliminate t' es
-    App (Def defName) es | Function _ cs <- Sig.getDefinition sig defName -> do
+    -- Note that here we don't want to crash if the definition is not
+    -- set, since I want to be able to test non-typechecked terms.
+    App (Def defName) es | Just (Function _ cs) <- Sig.getDefinition sig defName -> do
       mbT <- whnfFun defName es $ ignoreInvertible cs
       case mbT of
         Just t' -> return t'
@@ -165,39 +190,6 @@ genericGetAbsName =
           els' <- forM els $ fmap (join . firstOf traverse) . traverse (go f)
           return $ mbN <|> msum els'
 
-genericStrengthen
-  :: (IsTerm t, MonadTerm t m) => Int -> Int -> Abs t -> m (Maybe t)
-genericStrengthen from0 by = runMaybeT . go from0
-  where
-    go :: (IsTerm t, MonadTerm t m)
-       => Int -> t -> MaybeT m t
-    go from t = do
-      tView <- lift $ view t
-      case tView of
-        Lam body -> do
-          lift . lam =<< go (from + 1) body
-        Pi dom cod -> do
-          dom' <- go from dom
-          cod' <- go (from + 1) cod
-          lift $ pi dom' cod'
-        Equal type_ x y  -> do
-          type' <- go from type_
-          x' <- go from x
-          y' <- go from y
-          lift $ equal type' x' y'
-        Refl -> do
-          return refl
-        Con dataCon args -> do
-          lift . con dataCon =<< mapM (go from) args
-        Set -> do
-          return set
-        App h els -> do
-          h' <- MaybeT $ return $ case h of
-            Var v -> Var <$> strengthenVar from by v
-            _     -> Just h
-          els' <- mapM (mapM (go from)) els
-          lift $ app h' els'
-
 genericNf :: forall t m. (IsTerm t, MonadTerm t m) => t -> m t
 genericNf t = do
   tView <- whnfView t
@@ -233,11 +225,11 @@ genericTypeOfJ =
           ("eq", join (equal <$> v "A" 4 <*> v "x" 1 <*> v "y" 0)) -->
           r set
     ) -->
-    ("p", ("x", v "A" 3) --> (app (Var (V (Named "P" 1))) . map Apply =<< sequence [v "x" 0, v "x" 0, r refl])) -->
+    ("p", ("x", v "A" 3) --> (app (Var (mkVar "P" 1)) . map Apply =<< sequence [v "x" 0, v "x" 0, r refl])) -->
     ("eq", join (equal <$> v "A" 4 <*> v "x" 3 <*> v "y" 2)) -->
-    (app (Var (V (Named "P" 2))) . map Apply =<< sequence [v "x" 4, v "y" 3, v "eq" 0])
+    (app (Var (mkVar "P" 2)) . map Apply =<< sequence [v "x" 4, v "y" 3, v "eq" 0])
   where
-    v n ix = var $ V $ Named n ix
+    v n ix = var $ mkVar n ix
     r = return
 
     infixr 9 -->
@@ -306,7 +298,7 @@ genericWeaken from by t = do
 
 instantiateClauseBody
   :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
-instantiateClauseBody body args = error "TODO instantiateClauseBody" -- instantiate body args
+instantiateClauseBody = instantiate
 
 genericPrettyPrecM
   :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc

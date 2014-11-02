@@ -5,7 +5,6 @@ module Term.Signature
       -- * Definitions
     , getDefinition
     , addDefinition
-    , addDefinition_
     , definedNames
       -- * MetaVars
     , getMetaVarType
@@ -30,22 +29,15 @@ import           PrettyPrint                      (render)
 empty :: Signature t
 empty = Signature HMS.empty HMS.empty HMS.empty 0
 
--- | Gets a definition for the given name.  Fails if no definition can
--- be found.
-getDefinition :: Signature t -> Name -> Closed (Definition t)
-getDefinition sig name =
-    case HMS.lookup name (sigDefinitions sig) of
-      Nothing   -> error $ "impossible.getDefinition: not found " ++ show name
-      Just def' -> def'
+-- | Gets a definition for the given name.
+getDefinition :: Signature t -> Name -> Maybe (Closed (Definition t))
+getDefinition sig name = HMS.lookup name (sigDefinitions sig)
 
 -- | Adds a new definition.
 --
 -- In the case of a new 'Projection' or 'DataCon', the definition of the
 -- type constructor will be updated with the new information.  Fails if
 -- the definition for the type constructor is not present.
-addDefinition_ :: Signature t -> Name -> Closed (Definition t) -> Signature t
-addDefinition_ sig name def' = addDefinition sig name def'
-
 addDefinition :: Signature t -> Name -> Closed (Definition t) -> Signature t
 addDefinition sig defName def' = case (defName, def') of
     (name, Projection projIx tyCon _ _) -> addProjection name tyCon projIx
@@ -55,7 +47,7 @@ addDefinition sig defName def' = case (defName, def') of
     sig' = sig{sigDefinitions = HMS.insert defName def' (sigDefinitions sig)}
 
     addProjection name tyCon projIx = case getDefinition sig' tyCon of
-      Constant (Record dataCon projs) tyConType ->
+      Just (Constant (Record dataCon projs) tyConType) ->
         let projs' = projs ++ [Projection' name projIx]
             defs   = HMS.insert tyCon (Constant (Record dataCon projs') tyConType) (sigDefinitions sig')
         in sig'{sigDefinitions = defs}
@@ -63,11 +55,11 @@ addDefinition sig defName def' = case (defName, def') of
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a record"
 
     addDataCon name tyCon = case getDefinition sig' tyCon of
-      Constant (Data dataCons) tyConType ->
+      Just (Constant (Data dataCons) tyConType) ->
         let dataCons' = dataCons ++ [name]
             defs      = HMS.insert tyCon (Constant (Data dataCons') tyConType) (sigDefinitions sig')
         in sig'{sigDefinitions = defs}
-      Constant (Record dataCon _) _ ->
+      Just (Constant (Record dataCon _) _) ->
         if name == dataCon
         then sig'
         else error $ "impossible.addDefinition: mismatching constructors " ++
@@ -127,4 +119,3 @@ toScope :: Signature t -> Scope
 toScope = Scope . Map.fromList . map f . HMS.toList . sigDefinitions
   where
     f (n, def') = (nameString n, definitionToNameInfo n def')
-

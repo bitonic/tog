@@ -52,6 +52,7 @@ module Prelude.Extended
   , intersperse
   , isPrefixOf
   , for
+  , elemIndex
   ) where
 
 import Prelude ()

@@ -152,7 +152,7 @@ checkRec tyCon tyConPars dataCon fields = do
     definitionallyEqual tyConPars' set endType set
     fieldsTel <- checkFields tyConPars' fields
     appliedTyConType <- Ctx.app (def tyCon []) tyConPars'
-    fieldsTel' <- Tel.weaken_ 1 fieldsTel
+    fieldsTel' <- weaken_ 1 fieldsTel
     addProjections
       tyCon tyConPars' (boundVar "_") (map SI.typeSigName fields)
       fieldsTel'
@@ -198,7 +198,7 @@ addProjections tyCon tyConPars self fields0 =
       (proj : fields', Tel.Cons (_, fieldType) fieldTypes') -> do
         endType <- (`pi` fieldType) =<< Ctx.app (def tyCon []) tyConPars
         addProjection proj tyCon (Tel.tel tyConPars) endType
-        (go fields' <=< Tel.instantiate fieldTypes') =<< app (Var self) [Proj proj]
+        (go fields' <=< instantiate_ fieldTypes') =<< app (Var self) [Proj proj]
       (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
 
 checkFunDef :: (IsTerm t) => Name -> [SI.Clause] -> CheckM t ()
@@ -252,7 +252,7 @@ checkPatterns funName (synPat : synPats) type0 = atSrcLoc synPat $ do
     Pi dom cod -> do
       (ctx, pat, patVar) <- checkPattern funName synPat dom
       cod'  <- Ctx.weaken 1 ctx cod
-      cod'' <- instantiate cod' patVar
+      cod'' <- instantiate_ cod' patVar
       (ctx', pats, patsVars, bodyType) <- checkPatterns funName synPats cod''
       patVar' <- Ctx.weaken_ ctx' patVar
       return (ctx Ctx.++ ctx', pat : pats, patVar' : patsVars, bodyType)
@@ -288,7 +288,7 @@ checkPattern funName synPat type_ = case synPat of
       case typeView of
         App (Def tyCon') tyConArgs0 | tyCon == tyCon' -> do
           let Just tyConArgs = mapM isApply tyConArgs0
-          dataConTypeNoPars <- Tel.substs tyConParsTel dataConType tyConArgs
+          dataConTypeNoPars <- Tel.discharge tyConParsTel dataConType tyConArgs
           (ctx, pats, patsVars, _) <- checkPatterns funName synPats dataConTypeNoPars
           t <- con dataCon patsVars
           return (ctx, ConP dataCon pats, t)
@@ -360,7 +360,7 @@ checkProgram' _ decls0 ret = do
     checkState :: TCState' t -> IO (Maybe PP.Doc)
     checkState ts = do
       let sig = tsSignature ts
-      unsolvedMvs <- runTermM sig $ metaVars' sig
+      unsolvedMvs <- runTermM sig $ metaVars sig
       quiet <- confQuiet <$> readConf
       unless quiet $ do
         mvNoSummary <- confNoMetaVarsSummary <$> readConf
@@ -377,13 +377,13 @@ checkProgram' _ decls0 ret = do
             forM_ (sortBy (comparing fst) $ HMS.toList mvsTypes) $ \(mv, mvType) -> do
               let mbBody = Sig.getMetaVarBody sig mv
               when (not (isJust mbBody) || not mvOnlyUnsolved) $ do
-                mvTypeDoc <- runTermM sig $ prettyTermM mvType
+                mvTypeDoc <- runTermM sig $ prettyM mvType
                 putStrLn $ render $
                   PP.pretty mv <+> PP.parens (PP.pretty (mvSrcLoc mv)) <+> ":" //> mvTypeDoc
                 when (not mvOnlyUnsolved) $ do
                   mvBody <- case mbBody of
                     Nothing      -> return "?"
-                    Just mvBody0 -> runTermM sig $ prettyTermM mvBody0
+                    Just mvBody0 -> runTermM sig $ prettyM mvBody0
                   putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
                 putStrLn ""
         noProblemsSummary <- confNoProblemsSummary <$> readConf
@@ -446,12 +446,12 @@ runCommand ts cmd =
   case cmd of
     TypeOf synT -> runTC' $ do
       (_, type_) <- inferExpr Ctx.Empty synT
-      typeDoc <- prettyTermM type_
+      typeDoc <- prettyM type_
       return $ "type:" //> typeDoc
     Normalize synT -> runTC' $ do
       (t, type_) <- inferExpr Ctx.Empty synT
-      typeDoc <- prettyTermM type_
-      tDoc <- prettyTermM t
+      typeDoc <- prettyM type_
+      tDoc <- prettyM t
       return $
         "type:" //> typeDoc $$
         "term:" //> tDoc
@@ -460,10 +460,10 @@ runCommand ts cmd =
     ShowMeta mv -> runTC' $ do
       mvType <- getMetaVarType mv
       mbMvBody <- getMetaVarBody mv
-      mvTypeDoc <- prettyTermM mvType
+      mvTypeDoc <- prettyM mvType
       mvBodyDoc <- case mbMvBody of
         Nothing   -> return "?"
-        Just body -> prettyTermM body
+        Just body -> prettyM body
       return $
         PP.pretty mv <+> ":" <+> mvTypeDoc $$
         PP.pretty mv <+> "=" <+> mvBodyDoc

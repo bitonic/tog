@@ -242,7 +242,8 @@ getDefinition
   :: (IsTerm t) => Name -> TC t s (Closed (Definition t))
 getDefinition n = do
   sig <- tsSignature <$> get
-  return $ Sig.getDefinition sig n
+  Just def' <- return $ Sig.getDefinition sig n
+  return def'
 
 addDefinition
   :: (IsTerm t) => Name -> Closed (Definition t) -> TC t s ()
@@ -281,7 +282,7 @@ addMetaVar type_ = do
   sig <- tsSignature <$> get
   let (mv, sig') = Sig.addMetaVar sig loc type_
   debug "addMetaVar" $ do
-    typeDoc <- prettyTermM type_
+    typeDoc <- prettyM type_
     return $
       "metavar" <+> PP.pretty mv $$
       "type" //> typeDoc

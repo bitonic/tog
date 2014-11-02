@@ -36,7 +36,7 @@ elaborate
   :: (IsTerm t) => Ctx t -> Type t -> SI.Expr -> ElabM t (Term t, Constraints t)
 elaborate ctx type_ absT = atSrcLoc absT $ do
   let msg = do
-        typeDoc <- prettyTermM type_
+        typeDoc <- prettyM type_
         let absTDoc = PP.pretty absT
         return $
           "type:" //> typeDoc $$
@@ -55,7 +55,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         return (mvT, waitForUnifiedType set t <> constrDom <> constrCod)
       SI.Fun synDom synCod -> do
         elaborate ctx type_ (SI.Pi "_" synDom synCod)
-      SI.Meta _ ->
+      SI.Meta _ -> do
         return (mvT, mempty)
       SI.Equal synType synT1 synT2 -> do
         (type', constrType) <- elaborate ctx set synType
@@ -80,7 +80,7 @@ elaborate ctx type_ absT = atSrcLoc absT $ do
         DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
         tyConType <- definitionType =<< getDefinition tyCon
         tyConArgs <- fillArgsWithMetas ctx tyConType
-        appliedDataConType <-  Tel.substs tyConParsTel dataConType tyConArgs
+        appliedDataConType <-  Tel.discharge tyConParsTel dataConType tyConArgs
         (dataConArgs, constrDataConArgs) <- elaborateDataConArgs ctx appliedDataConType synArgs
         type' <- app (Def tyCon) $ map Apply tyConArgs
         t <- con dataCon dataConArgs
@@ -96,7 +96,7 @@ fillArgsWithMetas ctx' type' = do
   case typeView of
     Pi dom cod -> do
       arg <- addMetaVarInCtx ctx' dom
-      cod' <- instantiate cod arg
+      cod' <- instantiate_ cod arg
       (arg :) <$> fillArgsWithMetas ctx' cod'
     Set -> do
       return []
@@ -110,7 +110,7 @@ elaborateDataConArgs _ _ [] =
 elaborateDataConArgs ctx type_ (synArg : synArgs) = do
   Pi dom cod <- whnfView type_
   (arg, constrArg) <- elaborate ctx dom synArg
-  cod' <- instantiate cod arg
+  cod' <- instantiate_ cod arg
   (args, constrArgs) <- elaborateDataConArgs ctx cod' synArgs
   return (arg : args, constrArg <> constrArgs)
 
@@ -140,7 +140,7 @@ elaborateApp'
 elaborateApp' ctx type_ h elims = do
   let msg = do
         ctxDoc <- prettyM ctx
-        typeDoc <- prettyTermM type_
+        typeDoc <- prettyM type_
         return $
           "ctx:" //> ctxDoc $$
           "typeDoc:" //> typeDoc $$
@@ -162,7 +162,7 @@ elaborateApp ctx type_ h (elims :< SI.Apply arg) = atSrcLoc arg $ do
   typeF <- pi dom cod
   (f, constrF) <- elaborateApp' ctx typeF h elims
   (arg', constrArg) <- elaborate ctx dom arg
-  type' <- instantiate cod arg'
+  type' <- instantiate_ cod arg'
   t <- eliminate f [Apply arg']
   mvT <- addMetaVarInCtx ctx type_
   return (mvT, jmEq ctx type_ mvT type' t <> constrF <> constrArg)
@@ -173,9 +173,9 @@ elaborateApp ctx type_ h (elims :< SI.Proj projName) = atSrcLoc projName $ do
   tyConArgs <- fillArgsWithMetas ctx tyConType
   typeRec <- app (Def tyCon) (map Apply tyConArgs)
   (rec_, constrRec) <- elaborateApp' ctx typeRec h elims
-  type0 <- Tel.substs projTypeTel projType tyConArgs
+  type0 <- Tel.discharge projTypeTel projType tyConArgs
   Pi _ type1 <- whnfView type0
-  type' <- instantiate type1 rec_
+  type' <- instantiate_ type1 rec_
   t <- eliminate rec_ [Proj proj]
   mvT <- addMetaVarInCtx ctx type_
   return (mvT, jmEq ctx type_ mvT type' t <> constrRec)

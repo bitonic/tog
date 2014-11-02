@@ -20,7 +20,7 @@ import qualified Prelude
 
 import           Prelude.Extended
 import           Syntax.Internal                  (Name)
-import           Term.Types                       (IsTerm, Var(..), named, MonadTerm)
+import           Term.Types                       (IsTerm, Var, MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
 import qualified Term.Substitution.Utils          as Term
@@ -59,7 +59,7 @@ lookupName n = go 0
       return Nothing
     go ix (Snoc ctx (n', type_)) =
       if n == n'
-      then Just . (Term.V (Term.named n ix), ) <$> Term.weaken_ (ix + 1) type_
+      then Just . (Term.mkVar n ix, ) <$> Term.weaken_ (ix + 1) type_
       else go (ix + 1) ctx
 
 lookupVar :: (IsTerm t, MonadTerm t m) => Term.Var -> Ctx t -> m (Maybe t)
@@ -90,7 +90,7 @@ vars = toList . go 0
   where
     go :: Int -> Ctx (Type t) -> Bwd Var
     go _  Empty                = B0
-    go ix (Snoc ctx (name, _)) = go (ix + 1) ctx :< V (named name ix)
+    go ix (Snoc ctx (name, _)) = go (ix + 1) ctx :< Term.mkVar name ix
 
 -- | Creates a 'Pi' type containing all the types in the 'Ctx' and
 -- terminating with the provided 't'.

@@ -51,6 +51,8 @@ instance IsTerm GraphReduce where
   refl = reflGR
   typeOfJ = typeOfJGR
 
+  canStrengthen = genericCanStrengthen
+
 {-# NOINLINE setGR #-}
 setGR :: GraphReduce
 setGR = unsafePerformIO $ GR <$> newIORef Set

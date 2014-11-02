@@ -16,7 +16,7 @@ import qualified TypeCheck3.Solve.Simple          as Simple
 -- import qualified TypeCheck3.Solve.Hetero          as Hetero
 -- import qualified TypeCheck3.Solve.TwoContexts     as TwoContexts
 
-data SolveState t = forall solveState. (PrettyM solveState) => SolveState
+data SolveState t = forall solveState. (PrettyM t (solveState t)) => SolveState
   { sState :: solveState t
   , sSolve :: Constraint t -> TC t (solveState t) ()
   }
@@ -46,5 +46,5 @@ solve c = do
   ((), ss') <- nestTC ss $ solve' c
   put $ SolveState ss' solve'
 
-instance PrettyM SolveState where
+instance PrettyM t (SolveState t) where
   prettyM (SolveState ss _) = prettyM ss

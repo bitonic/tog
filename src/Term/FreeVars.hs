@@ -34,9 +34,9 @@ freeVars
 freeVars = go Just
   where
     lift :: (Var -> Maybe Var) -> (Var -> Maybe Var)
-    lift f (V (Named n ix)) =
-      if ix > 0
-      then f $ V (Named n (ix - 1))
+    lift f v =
+      if varIndex v > 0
+      then f $ mkVar (varName v) (varIndex v - 1)
       else Nothing
 
     go :: (Var -> Maybe Var) -> t -> m FreeVars

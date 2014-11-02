@@ -18,6 +18,7 @@ module TypeCheck3.Common
   , isProj
   , unrollPiWithNames
   , unrollPi
+  , instantiateMetaVars
   ) where
 
 import           Prelude                          hiding (abs, pi)
@@ -28,6 +29,7 @@ import qualified Syntax.Internal                  as SI
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
+import qualified Term.Signature                   as Sig
 import           PrettyPrint                      (($$), (<+>), (//>), group, (//), hang)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
@@ -53,43 +55,43 @@ renderError :: (IsTerm t) => CheckError t -> TC t s PP.Doc
 renderError err =
   case err of
     TermsNotEqual type1 t1 type2 t2 -> do
-      t1Doc <- prettyTermM t1
-      type1Doc <- prettyTermM type1
-      t2Doc <- prettyTermM t2
-      type2Doc <- prettyTermM type2
+      t1Doc <- prettyM t1
+      type1Doc <- prettyM type1
+      t2Doc <- prettyM t2
+      type2Doc <- prettyM type2
       return $
         t1Doc <+> ":" <+> type1Doc $$
         PP.nest 2 "!=" $$
         t2Doc <+> ":" <+> type2Doc
     SpineNotEqual type1 es1 type2 es2 -> do
-      type1Doc <- prettyTermM type1
+      type1Doc <- prettyM type1
       es1Doc <- PP.list <$> mapM prettyM es1
-      type2Doc <- prettyTermM type2
+      type2Doc <- prettyM type2
       es2Doc <- PP.list <$> mapM prettyM es2
       return $
         es1Doc <+> ":" <+> type1Doc $$
         PP.nest 2 "!=" $$
         es2Doc <+> ":" <+> type2Doc
     FreeVariableInEquatedTerm mv els rhs v -> do
-      mvDoc <- prettyTermM =<< metaVar mv els
-      rhsDoc <- prettyTermM rhs
+      mvDoc <- prettyM =<< metaVar mv els
+      rhsDoc <- prettyM rhs
       return $ "Free variable `" PP.<> prettyVar v PP.<> "' in term equated to metavariable application:" $$
                mvDoc $$ PP.nest 2 "=" $$ rhsDoc
     OccursCheckFailed mv t -> do
-      tDoc <- prettyTermM t
+      tDoc <- prettyM t
       return $ "Attempt at recursive instantiation:" $$ PP.pretty mv <+> ":=" <+> tDoc
     NameNotInScope name -> do
       return $ "Name not in scope:" <+> PP.pretty name
     PatternMatchOnRecord synPat tyCon -> do
       return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> PP.pretty tyCon
     ExpectingPi type_ -> do
-      typeDoc <- prettyTermM type_
+      typeDoc <- prettyM type_
       return $ "Expecting a pi type, not:" //> typeDoc
     ExpectingEqual type_ -> do
-      typeDoc <- prettyTermM type_
+      typeDoc <- prettyM type_
       return $ "Expecting an identity type, not:" //> typeDoc
     ExpectingTyCon tyCon type_ -> do
-      typeDoc <- prettyTermM type_
+      typeDoc <- prettyM type_
       return $ "Expecting a" <+> PP.pretty tyCon PP.<> ", not:" //> typeDoc
   where
     prettyVar = PP.pretty
@@ -216,14 +218,14 @@ data Constraint t
 jmEq :: Ctx t -> Type t -> Term t -> Type t -> Term t -> Constraints t
 jmEq ctx type1 t1 type2 t2 = [JMEq ctx type1 t1 type2 t2]
 
-instance PrettyM Constraint where
+instance PrettyM t (Constraint t) where
   prettyM c = case c of
     JMEq ctx type1 t1 type2 t2 -> do
       ctxDoc <- prettyM ctx
-      type1Doc <- prettyArgM type1
-      t1Doc <- prettyArgM t1
-      type2Doc <- prettyArgM type2
-      t2Doc <- prettyArgM t2
+      type1Doc <- prettyM type1
+      t1Doc <- prettyM t1
+      type2Doc <- prettyM type2
+      t2Doc <- prettyM t2
       return $
         group (ctxDoc <+> "|-") //>
         (group $
