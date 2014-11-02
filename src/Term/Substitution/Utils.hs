@@ -7,13 +7,14 @@ module Term.Substitution.Utils
   , strengthen_
   , instantiate
   , instantiate_
+  , strengthenTerm
   , eliminate
   ) where
 
+import           Prelude.Extended
 import           Term.Synonyms
 import           Term.Types
 import qualified Term.Substitution                as Sub
-
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      (($$), (//>))
 
@@ -38,6 +39,13 @@ instantiate t0 ts0 = applySubst t0 $ go $ reverse ts0
   where
     go []       = Sub.id
     go (t : ts) = Sub.instantiate t (go ts)
+
+strengthenTerm :: (IsTerm t, MonadTerm t m) => Term t -> m (Maybe (Term t))
+strengthenTerm t = do
+  mbN <- canStrengthen t
+  case mbN of
+    Nothing -> Just <$> strengthen_ 1 t
+    Just _  -> return Nothing
 
 -- Elimination
 ------------------------------------------------------------------------

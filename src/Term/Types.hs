@@ -333,7 +333,7 @@ class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t
     refl    :: Closed (Term t)
     typeOfJ :: Closed (Type t)
 
-    -- TODO move this to Subst
+    -- TODO Consider having a partial applySubst instead
     --------------------------------------------------------------------
     canStrengthen :: (MonadTerm t m) => t -> m (Maybe Name)
 

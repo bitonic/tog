@@ -255,12 +255,11 @@ prune allowedVs oldMv elims = do
           if not kill
             then notKilled
             else do
-              mbName <- canStrengthen =<< nf type'
-              case mbName of
-                Nothing -> do type'' <- strengthen_ 1 type'
-                              return (type'', named name True : kills')
-                Just _  -> do debug_ "couldn't strengthen" ""
-                              notKilled
+              mbType <- strengthenTerm =<< nf type'
+              case mbType of
+                Just type'' -> do return (type'', named name True : kills')
+                Nothing     -> do debug_ "couldn't strengthen" ""
+                                  notKilled
         _ ->
           fatalError "impossible.createNewMeta: metavar type too short"
 

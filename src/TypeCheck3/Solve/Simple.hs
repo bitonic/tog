@@ -378,15 +378,14 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
         res1 <- checkEqual (ctx, dom, arg1, arg2)
-        mbN <- canStrengthen cod
+        mbCod <- strengthenTerm cod
         mbH' <- traverse (`eliminate` [Apply arg1]) mbH
         -- If the rest is non-dependent, we can continue immediately.
-        case mbN of
-          Nothing -> do
-            cod' <- strengthen_ 1 cod
+        case mbCod of
+          Just cod' -> do
             res2 <- checkEqualSpine' ctx cod' mbH' elims1 elims2
             return (res1 <> res2)
-          Just _ -> do
+          Nothing -> do
             cod' <- instantiate_ cod arg1
             return $ sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
       (Proj proj, Proj proj') | proj == proj' -> do
