@@ -7,7 +7,10 @@ types.
 
     git clone https://github.com/bitonic/tog
     cd tog
-    make
+    make all
+
+If you want to install the binary add
+
     cabal install
 
 ## Usage
@@ -23,3 +26,9 @@ all the debug output, that is to say a lot of stuff.
 `tog --help` gives the full options.
 
 See `examples/` for some example files, it's basically a simple `Agda`.
+
+## Tests
+
+To run the (sadly quite limited) tests, run
+
+    make test
