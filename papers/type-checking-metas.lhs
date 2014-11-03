@@ -8,6 +8,9 @@
 \usepackage{caption}
 \usepackage{subcaption}
 \usepackage{todonotes}
+
+\newcommand{\mytodo}[2][]{\todo[color=blue!20,size=\scriptsize,fancyline,#1]{#2}}
+
 %include polycode.fmt
 
 %format ^ = " "
@@ -30,7 +33,8 @@
 %format * = "\times "
 %format fst (a) = "\mathbf{fst}" ^^ a
 %format snd (a) = "\mathbf{snd}" ^^ a
-%format BoolOrNat = "\mathbf{BoolOrNat} "
+%format BoolOrNat = "\mathbf{F} "
+%format BoolOrNat' = "\mathbf{BoolOrNat} "
 %format refl = "\mathsf{refl} "
 %format test = "\mathbf{test} "
 %format ite (x) (a) (u) (v) (t) = if t ^^ "/" x "." A then u else v
@@ -76,15 +80,15 @@
 \maketitle
 
 \begin{abstract}
-  \todo{Should I use ``pattern'' or ``higher order''?}  In this paper we
-  describe how to take advantage of higher order unification in a type
-  theory with meta-variables.  The literature usually presents the
-  unification algorithm as a standalone component.  However the need to
-  check definitional equality of terms while type checking gives rise to
-  a tight interplay between type checking and unification.  We propose
-  an algorithm to express type checking entirely in the form of
-  unification constraints, thus making the whole process significantly
-  more modular and understandable.
+  In this paper we describe how to take advantage of higher-order
+  unification in a dependently typed language with meta-variables.  The
+  literature usually presents the unification algorithm as a standalone
+  component.  However the need to check definitional equality of terms
+  while type checking gives rise to a tight interplay between type
+  checking and unification.  We propose an algorithm\mytodo{An
+    ``algorithm to express [...]''?  Really?} to express type checking
+  entirely in the form of unification constraints, thus making the whole
+  process significantly more modular and understandable.
 \end{abstract}
 
 \section{Introduction}
@@ -97,49 +101,66 @@ richer than the underlying type theory, which will hopefully be small
 enough to gain confidence in the correctness of the code that type
 checks it.
 
-One key piece in making a type theory palatable by users is the addition
-of \emph{meta-variables}, standing for yet to be determined terms, and
-solved by unification.  Their usage in traditional programming languages
-is confined to type inference and thus they can stand in only for types.
-In dependently typed languages types can contain any terms, and thus
-meta-variables are usually extended to stand in for any term in our
-language.  This has led to their use beyond inference, such as
-interactive proof development.
+One common way to make a type theory palatable for users is extending
+the core theory with \emph{meta-variables}, standing for yet to be
+determined terms, and solved by unification.  Their usage in traditional
+programming languages is confined to type inference and thus they can
+stand in only for types.  In dependently typed languages types can
+contain any terms, and thus meta-variables are usually extended to stand
+in for any term in our language.  This has led to\mytodo{I'm not sure
+  if your description of the evolution of meta-variables is historically
+  correct.}their use beyond inference, such as interactive proof
+development.
 
-The apparently simple task of integrating meta-variables in a simple
-type checking algorithm for dependent types gives rise to complications.
-For example, consider the task of type checking
+\mytodo[inline]{I think the previous paragraph is too abstract.
+  Readers not familiar with dependent types may not know how
+  meta-variables are typically used. Perhaps you can make the text
+  more concrete by mentioning implicit arguments and including a (very
+  short) example.}
+
+The apparently simple \mytodo{Simple? Why?} task of integrating
+meta-variables in a simple \mytodo{What do you mean by simple?} type
+checking algorithm for dependent types gives rise to complications.  For
+example, consider the task of type checking
 \begin{code}
   true : if alpha <= 2 then Bool else Nat
 \end{code}
-Where |alpha| is an uninstantiated meta-variable of type |Nat|.  We
-want the type of |true| to be |Bool|, but reduction is impeded by
-|alpha|.  Thus, we cannot complete type checking until |alpha| is
-instantiated, and we will have to postpone type checking until it
-is.\footnote{Note that we cannot instantiate |alpha| without loss of
-  generality, since both |0| and |1| are acceptable solutions.}
-The key observation is that type checking dependent types involves
-normalizing terms, something that can be obstructed by meta-variables.
+, where |alpha| is an yet to be determined (\emph{uninstantiated})
+meta-variable of type |Nat|.  We want \mytodo{We know what the type of
+  |Bool| is. Please reformulate the sentence.} the type of |true| to be
+|Bool|, but reduction is impeded by |alpha|.  Thus, we cannot complete
+type checking until |alpha| is instantiated, and we will have to
+postpone type checking until it is. Note that we cannot instantiate
+|alpha| without loss of generality, since both |0| and |1| are
+acceptable solutions.  The key observation is that type checking
+dependent types involves reducing terms to their normal forms, something
+that can be obstructed by meta-variables, like in this case.
 
-This need to ``suspend'' and ``resume'' type checking gives rise to a
-sort of concurrency that makes reasoning about the type checking
-algorithm arduous.  In this paper we propose an algorithm that expresses
-a type checking problem entirely in the form of unification constraints,
+This need \mytodo{The word ``need'' suggests to me that there is no
+  other way. However, you argue that there is another way.} to
+``suspend'' and ``resume'' type checking gives rise to a sort of
+concurrency that makes reasoning about the type checking algorithm
+arduous.  In this paper we propose an algorithm that expresses a type
+checking problem entirely in the form of unification constraints,
 generated through a static traversal of the term to be type checked.  We
-expand on ideas developed in Agda \cite{norell2007} and
-Epigram, \todo{Add citation for Epigram}
-but we simplify matters considerably by separating type checking and
-unification. \todo{Maybe state advantages more clearly}
+expand on ideas developed in Agda \cite{norell2007} and Epigram,
+\mytodo{Add citation for Epigram} but we simplify matters by separating
+type checking and unification. \mytodo{Maybe state advantages more
+  clearly}
 
 In the rest of the paper, we will explain the problem more clearly.
 Then we will present the algorithm in detail using a simple type theory
-as example.  Finally, we will briefly describe a unification procedure
-capable of solving the generated constraints, and describe how the
-algorithm can be extended to support popular language features. We have
-implemented the presented algorithm in a prototype, \texttt{tog}, which
-covers a subset of Agda -- every \texttt{tog} program is also a valid
-Agda program.\footnote{The source code for \texttt{tog} is available at
+with dependent types as example.  Finally, we will briefly describe a
+unification procedure capable of solving the generated constraints, and
+describe how the algorithm can be extended to support certain popular
+language features. We have implemented the presented algorithm in a
+prototype, \texttt{tog}, which covers a subset of Agda -- every
+\texttt{tog} program is also a valid Agda program.\footnote{The source
+  code for \texttt{tog} is available at
   \url{https://github.com/bitonic/tog}.}
+
+\mytodo[inline]{I suggest that you include forward pointers in the
+  preceding paragraph.}
 
 \section{The problem}
 \label{problem}
@@ -162,121 +183,129 @@ Given
   alpha : Nat
   alpha = _
 \end{code}
-there are various tempting ways to approach the problem.  The most
+there are various tempting \mytodo{I suggest that you avoid using
+  subjective statements.} ways to approach the problem.  The most
 conservative approach is to stop type checking when faced with
 \emph{blocked} terms (terms whose normalization is impeded by some
 meta-variables).  However, this approach is unsatisfactory in many
 instances.
 
-Consider
+Consider \mytodo{Explain |refl|.}
 \begin{code}
   (true, refl) : (BoolOrNat alpha * alpha == 0)
 \end{code}
 Type checking this pair will involve type checking |true : BoolOrNat
 alpha| and then |refl : alpha == 0|. If we give up on the first type
 checking problem, we will not examine the second, which will give us a
-solution for |alpha| (|alpha := 0|).  After instantiating |alpha| we
-can easily go back and successfully type check the first part.  In
-general, we want to attempt to type check as much as possible, to
-instantiate as many meta-variables as possible.
+solution for |alpha| (|alpha := 0|).  After instantiating |alpha| we can
+easily go back and successfully type check the first part.  In general,
+we want \mytodo{Another subjective statement.} to attempt to type check
+as much as possible, to instantiate as many meta-variables as possible.
 
 Another approach is to assume that blocked type checking problems will
 eventually be solved, and continue type checking.  However, this road is
 dangerous since we need to be careful not to generate ill-typed terms or
-invalid type checking contexts, as noted by Norell\cite{norell2007}.
-Consider
+invalid type checking contexts, as noted by
+Norell\cite{norell2007}. \mytodo{Shouldn't Ulf and Catarina be cited
+  here?}  Consider
 \begin{code}
-  test : (alpha == 5 * ((x : BoolOrNat alpha) -> BoolOrNat (not x)) -> Nat)
+  BoolOrNat' : Bool -> Set
+  BoolOrNat' = \ b -> if b then Bool else Nat
+
+  test : (alpha == 5 * ((x : BoolOrNat' alpha) -> BoolOrNat' (not x)) -> Nat)
   test = (refl, \ g -> g 0)
 \end{code}
 Type checking the definition |test| will involve checking that its type
 is a valid type, and that its body is well typed.  Checking the former
 will involve making sure that
 \begin{code}
-  BoolOrNat alpha = Bool
+  BoolOrNat' alpha = Bool
 \end{code}
 since we know that the type of |x| must be |Bool|, given that |x| is
-used as an argument of |not : Bool -> Bool|.\footnote{Note that, while
-  |alpha == 5| appears in the type for |test|, this does not mean
-  that |alpha| will be unified with |5| when type checking the type.
-  However, type checking |refl : alpha == 5| will.}
+used as an argument of |not : Bool -> Bool|.\footnote{Note that checking
+  that an equality type is a well-formed type does not involved checking
+  that the equated things are equal -- |4 == 5| is a perfectly valid
+  type.  In this instance while |alpha == 5| appears in the type for
+  |test|, this does not mean that |alpha| will be unified with |5| when
+  type checking the type.  However, type checking its proof |refl :
+  alpha == 5| will.}
+
+\pagebreak 
 
 If we assume that the the type is valid, we will proceed and type check
 the body pairwise.  Type checking the first element -- a proof by
 reflexivity that |alpha| is equal to |5| -- will instantiate |alpha|
 to |5|, and then we will be faced with
 \begin{code}
-  (\ g -> g 0) : ((x : Nat) -> BoolOrNat (not x)) -> Nat
+  (\ g -> g 0) : ((x : Nat) -> BoolOrNat' (not x)) -> Nat
 \end{code}
 Note that the type is ill-typed\footnote{|x|, of type |Nat|, appears as
   an argument to the boolean function |not|.}, violating the usual
-invariants present when type checking.  Worse, to type check we will
-instantiate |x| with |0|, ending up with |BoolOrNat (not 0)|.  With some
-effort we can exploit this problem to make the type checker loop,
-rendering type checking undecidable. \todo{Consider adding less
-  contrived example}
+invariants \mytodo{Please state the invariant(s).} present when type
+checking.  Worse, to type check we will instantiate |x| with |0|, ending
+up with |BoolOrNat' (not 0)|.  With some effort we can exploit this
+problem to make the type checker loop,\mytodo{How? Perhaps such an
+  example would be too long for inclusion in the paper, but the current
+  text doesn't convince me that you (or someone else) have actually
+  constructed such an example.}, and thus type checking will be
+undecidable. \mytodo{Add less contrived example}
 
 As mentioned in the introduction, at the heart of the problem lies the
-fact that to type check we need to weak head normalize terms.
-\todo{Weak head normalize?} If reduction is impeded by meta-variables,
-we cannot proceed.  To overcome this problem, McBride \todo{Add citation
-  if there is one} and then Norell proposed to define type checking as
-an \emph{elaboration} procedure: given the problem of type checking |t|
-against |A| in context |Gamma|, type checking will produce a term |t'|
-that approximates |t|:
+fact that to type check we need to reduce terms to their weak head
+normal form. If reduction is impeded by meta-variables, we cannot
+proceed.  To overcome this problem, \mytodo{I'm certain that Norell added
+  elaboration to overcome that problem, not so much about Conor.}
+McBride \mytodo{Add citation if there is one} and then Norell proposed to
+define type checking as an \emph{elaboration} \mytodo{I'm fairly
+  certain that Conor wasn't the first person who employed elaboration
+  techniques. Perhaps he (and James McKinna?) was the first to use it to
+  tackle this problem, but I don't know. Feel free to ask him.}
+procedure: given the problem of type checking |t| against |A| in context
+|Gamma|, type checking will produce a term |t'| that approximates |t|:
 \begin{code}
   Gamma !- t : A ~> t'
 \end{code}
 |t'| is an approximation of |t| in the sense that it it can be turned
 into |t| by instantiating certain meta-variables -- if a subterm of |t|
 cannot be type checked a placeholder meta-variable will be put in its
-place.  Type checking will also consist in making sure that, once the
-postponed type checking problems can be solved, the placeholder
-meta-variables will be instantiated accordingly.
+place, an type checking that subterm will be postponed.  Type checking
+will also consist in making sure that, once the postponed type checking
+problems can be resumed solved, the placeholder meta-variables will be
+instantiated accordingly with the corresponding omitted subterm of |t|
+(possibly instantiated further).
 
 For instance, when type checking the type of |test|, we'll have
 \begin{code}
-  nil  !-  ((x : BoolOrNat alpha) -> BoolOrNat (not x)) -> Nat  ^^ :  ^^ Set
-       ~>  ((x : BoolOrNat alpha) -> BoolOrNat beta)    -> Nat
+  nil  !-  ((x : BoolOrNat' alpha) -> BoolOrNat' (not x)) -> Nat  ^^ :  ^^ Set
+       ~>  ((x : BoolOrNat' alpha) -> BoolOrNat' beta)    -> Nat
 \end{code}
 Since we cannot type check
 \begin{code}
-  x : BoolOrNat alpha !- not x : Bool
+  x : BoolOrNat' alpha !- not x : Bool
 \end{code}
-a fresh meta-variable |beta| of type |Bool| in context |x : BoolOrNat
+a fresh meta-variable |beta| of type |Bool| in context |x : BoolOrNat'
 alpha| is placed in the place of |not x|.  Then, when checking the body
 of |test|, we will check it against the approximated type generated
 above.  When |alpha| is instantiated, we can resume checking that
-|BoolOrNat alpha == Bool|, and if we are successful, instantiate |beta
+|BoolOrNat' alpha = Bool|, and if we are successful, instantiate |beta
 := not x|.  This will prevent us from running into problems when type
-checking the body.
+checking the body. \mytodo{Please explain how}
 
 The Agda system, as described in Norell's thesis and according to the
 current implementation, implements this elaboration interleaving type
 checking and unification, using some fairly complicated machinery.  Our
 contribution is to describe a type checking problem entirely in terms of
-unification constraints, greatly simplifying the algorithm. Unification,
+unification constraints, thus simplifying the algorithm. Unification,
 the most complicated part of type checking, can be completely separated
 from the logic that implements the typing rules. This modularity,
 amongst the other advantages, makes it very easy to experiment with
 different unification ``backends'' used by the same type checking
 ``frontend''.
 
-More specifically, we will elaborate a type checking problem into a well
-typed term and a set unification constraints:
-\begin{code}
-  << Gamma !- t : A >> => (t', Con)
-\end{code}
-Where the |Con| is a set of heterogenous unification constraints of the
-form
-\begin{code}
-  Gamma !- t : A = u : B
-\end{code}
-
 \section{The type theory}
 
-\todo{Should I add |Bot| and maybe the identity type?}
-\todo{Explain why we need spine syntax -- for the same reason we need it
+\mytodo{Should I add |Bot| and maybe the identity type?}
+\mytodo{Explain why we need spine syntax -- for the same reason we need it
   in bidi type checking}
 
 To present the type checking algorithm we will make use of a simple type
@@ -312,12 +341,12 @@ of simplicity, but our presentation can be extended with stratified
 universes.\footnote{Note that a simpler theory like Martin-L{\"o}f's
   logical framework is not affected by the problems we have mentioned in
   section \ref{problem}, since we have no mean to compute
-  types.}\todo{Clarify here}
+  types.}\mytodo{Clarify here}
 
 As mentioned, our type checking rules are bidirectional: the type of
 neutral terms is inferred, everything else is checked.  This allows us
 to have untyped constructors for dependent functions and dependent
-products.\todo{Add equality}
+products.\mytodo{Add equality}
 
 \begin{figure}
   \begin{code}
@@ -467,6 +496,22 @@ products.\todo{Add equality}
 
 \section{The algorithm}
 
+More specifically, we will elaborate a type checking problem into a well
+typed term and a set unification constraints:
+\begin{code}
+  << Gamma !- t : A >> => (t', Con)
+\end{code}
+Where the |Con| is a set of heterogeneous unification constraints
+\mytodo{Explain what a constraint is somewhere.} of the form
+\begin{code}
+  Gamma !- t : A = u : B
+\end{code}
+
+\mytodo[inline]{I would hope that the algorithm also satisfies
+  certain properties. I guess that you haven't proved anything, but
+  you could state the properties that you aim for.}
+
+
 \begin{figure}
   % \[
   % \inference{}{
@@ -516,7 +561,7 @@ products.\todo{Add equality}
 \section{Examples syntax}
 \label{examples-syntax}
 
-\todo{Actually write the syntax}
+\mytodo{Actually write the syntax}
 
 \bibliographystyle{abbrv}
 \bibliography{type-checking-metas}
