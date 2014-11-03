@@ -1,5 +1,4 @@
 {-# LANGUAGE CPP #-}
-
 module Prelude.Extended
   ( Foldable
   , Traversable
@@ -50,7 +49,7 @@ module Prelude.Extended
   , foldlM
   , Bwd(..)
   , toList
- , fold
+  , fold
   , intersperse
   , isPrefixOf
   , for
@@ -78,8 +77,7 @@ import Debug.Trace
 import Data.String
 import Data.Bwd
 
-#if __GLASGOW_HASKELL__ >= 708
-#else
+#if __GLASGOW_HASKELL__ < 708
 traceM :: (Monad m) => String -> m ()
 traceM string = trace string $ return ()
 #endif
