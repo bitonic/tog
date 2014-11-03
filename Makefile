@@ -20,15 +20,14 @@ dist/build/tog/tog: $(bnfc_output) $(hs_sources)
 
 all: dist/build/tog/tog
 
-# The sed is to work around a GHC bug that makes the tag generating
-# thing crash when it gets a LINE pragma whose file it can't find.
-TAGS: $(bnfc_output) $(hs_sources) $(alex_file).hs $(happy_file).hs
-	hasktags -e src bnfc
-
 .PHONY: clean
 clean:
 	rm -rf bnfc
 	cabal clean
+
+.PHONY: test
+test:
+	./test.sh
 
 modules.pdf: $(bnfc_output) $(hs_sources)
 	graphmod -i src -i bnfc src/Main.hs | dot -T pdf -o modules.pdf
