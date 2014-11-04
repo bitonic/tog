@@ -15,7 +15,7 @@ import           Syntax.Internal                  (Name)
 
 import           Conf
 import           Prelude.Extended
-import           PrettyPrint                      (($$), (<+>), (//>), (//), group, indent)
+import           PrettyPrint                      (($$), (<+>), (//>), (//), group, indent, hang)
 import qualified PrettyPrint                      as PP
 import           Term
 
@@ -528,7 +528,7 @@ instance PrettyM t (Constraint t) where
         t2Doc <- prettyM t2
         return $ group $
           ctxDoc <+> "|-" //
-          group (t1Doc // indent 2 "=" // t2Doc // indent 2 ":" // typeDoc)
+          group (t1Doc // hang 2 "=" // t2Doc // hang 2 ":" // typeDoc)
       c1 :>>: c2 -> do
         c1Doc <- prettyM c1
         c2Doc <- prettyM c2

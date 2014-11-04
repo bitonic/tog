@@ -27,7 +27,7 @@ clean:
 
 .PHONY: test
 test:
-	./test.sh
+	time ./test.sh
 
 modules.pdf: $(bnfc_output) $(hs_sources)
 	graphmod -i src -i bnfc src/Main.hs | dot -T pdf -o modules.pdf

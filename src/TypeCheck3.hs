@@ -314,11 +314,10 @@ checkProgram
 checkProgram decls ret = do
   tt <- confTermType <$> readConf
   case tt of
-    "S"  -> checkProgram' (Proxy :: Proxy Simple)      decls ret
-    "GR" -> checkProgram' (Proxy :: Proxy GraphReduce) decls ret
-    -- "EW" -> checkProgram' (Proxy :: Proxy EasyWeaken)  decls cmds ret
-    "H"  -> checkProgram' (Proxy :: Proxy Hashed)      decls ret
-    -- "SUSP" -> checkProgram' (Proxy :: Proxy Suspension) decls cmds ret
+    "S"   -> checkProgram' (Proxy :: Proxy Simple) decls ret
+    "GR"  -> checkProgram' (Proxy :: Proxy GraphReduce) decls ret
+    "GRU" -> checkProgram' (Proxy :: Proxy GraphReduceUnpack) decls ret
+    "H"   -> checkProgram' (Proxy :: Proxy Hashed) decls ret
     type_ -> emptyTCState' $ \dummyS -> do
       ret (dummyS, Just ("Invalid term type" <+> PP.text type_))
 

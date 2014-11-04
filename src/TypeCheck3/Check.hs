@@ -133,9 +133,7 @@ inferHead
   => Ctx t -> Head -> TC t s (Type t)
 inferHead ctx h = case h of
   Var v    -> Ctx.getVar v ctx
-  Def name -> do type_ <- definitionType =<< getDefinition name
-                 debug "deftype" $ prettyM type_
-                 return type_
+  Def name -> definitionType =<< getDefinition name
   J        -> return typeOfJ
   Meta mv  -> getMetaVarType mv
 

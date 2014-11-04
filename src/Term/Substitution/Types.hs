@@ -34,3 +34,4 @@ data Substitution t
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Lift |Ψ| ρ : Δ;Ψ → Γ;Ψρ
+  deriving (Eq, Show)

@@ -24,7 +24,7 @@ parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
   <$> strOption
       ( long "termType" <> short 't' <> value "GR" <>
-        help "Available types: S (Simple), GR (GraphReduce), H (Hashed)."
+        help "Available types: S (Simple), GR (GraphReduce), GRS (GraphReduceSub), GRU (GraphReduceUnpack), H (Hashed)."
       )
   <*> strOption
       ( long "solver" <> value "S" <>
