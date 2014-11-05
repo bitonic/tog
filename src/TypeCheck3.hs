@@ -315,8 +315,8 @@ checkProgram decls ret = do
   case tt of
     "S"   -> checkProgram' (Proxy :: Proxy Simple) decls ret
     "GR"  -> checkProgram' (Proxy :: Proxy GraphReduce) decls ret
-    "GRS" -> checkProgram' (Proxy :: Proxy GraphReduceSub) decls ret
-    "GRU" -> checkProgram' (Proxy :: Proxy GraphReduceUnpack) decls ret
+    -- "GRS" -> checkProgram' (Proxy :: Proxy GraphReduceSub) decls ret
+    -- "GRU" -> checkProgram' (Proxy :: Proxy GraphReduceUnpack) decls ret
     "H"   -> checkProgram' (Proxy :: Proxy Hashed) decls ret
     type_ -> emptyTCState' $ \dummyS -> do
       ret (dummyS, Just ("Invalid term type" <+> PP.text type_))
