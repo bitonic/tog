@@ -3,13 +3,14 @@ module Term.Impl.Common
   ( genericApplySubst
   , genericWhnf
   , genericGetAbsName
-  , genericWeaken
   , genericTypeOfJ
   , genericNf
   , genericSynEq
   , genericMetaVars
   , genericPrettyPrecM
   , genericCanStrengthen
+
+  , view
   , unview
   ) where
 
@@ -26,7 +27,7 @@ import           Syntax
 import qualified Syntax.Internal                  as SI
 import qualified PrettyPrint                      as PP
 import           Term
-import           Term.Types                       (unview)
+import           Term.Types                       (unview, view)
 import qualified Term.Substitution                as Sub
 import           Term.Substitution.Types          as Sub
 import qualified Term.Signature                   as Sig
@@ -36,7 +37,7 @@ genericApplySubst
 genericApplySubst t Sub.Id = do
   return t
 genericApplySubst t rho = do
-  tView <- view t
+  tView <- whnfView t
   case tView of
     Lam body ->
       lam =<< applySubst body (Sub.lift 1 rho)
@@ -177,7 +178,7 @@ genericGetAbsName =
 
     go :: (Var -> Maybe Name) -> t -> m (Maybe Name)
     go f t = do
-      tView <- view t
+      tView <- whnfView t
       case tView of
         Lam body -> go (lift' f) body
         Pi dom cod -> (<|>) <$> go f dom <*> go (lift' f) cod
@@ -266,37 +267,6 @@ genericTermViewEq tView1 tView2 = do
       return True
     (_, _) -> do
       return False
-
-genericWeaken
-  :: (IsTerm t, MonadTerm t m)
-  => Int -> Int -> t -> m t
-genericWeaken from by t = do
-  tView <- view t
-  case tView of
-    Lam body ->
-      lam =<< weaken (from + 1) by body
-    Pi dom cod ->
-      join $ pi <$> weaken from by dom <*> weaken (from + 1) by cod
-    Equal type_ x y  ->
-      join $ equal <$> weaken from by type_
-                   <*> weaken from by x
-                   <*> weaken from by y
-    Refl ->
-      return refl
-    Con dataCon args ->
-      join $ con dataCon <$> mapM (weaken from by) args
-    Set ->
-      return set
-    App h els  -> do
-      els' <- mapM (mapM (weaken from by)) els
-      case h of
-        Var v   -> let v' = if varIndex v >= from
-                            then weakenVar from by v
-                            else v
-                   in app (Var v') els'
-        Def n   -> app (Def n) els'
-        Meta mv -> app (Meta mv) els'
-        J       -> app J els'
 
 instantiateClauseBody
   :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)

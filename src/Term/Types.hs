@@ -149,8 +149,8 @@ named :: Name -> a -> Named a
 named = Named
 
 data Named a = Named
-  { namedName :: Name
-  , unNamed   :: a
+  { namedName :: !Name
+  , unNamed   :: !a
   } deriving (Functor, Foldable, Traversable, Generic)
 
 instance Eq a => Eq (Named a) where

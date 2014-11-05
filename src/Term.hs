@@ -18,8 +18,9 @@ module Term
   , Substitution
   ) where
 
--- We want to use the smart constructors only.
-import Term.Types hiding (unview)
+-- We want to use the smart constructors only, and we should only use
+-- whnfView.
+import Term.Types hiding (unview, view)
 import Term.Synonyms
 import Term.Pretty ()
 import Term.MetaVars ()

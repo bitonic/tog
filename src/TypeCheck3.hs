@@ -225,11 +225,7 @@ checkClause fun funType (SI.Clause synPats synClauseBody) = do
         return $ "context:" //> ctxDoc
   debugBracket "checkClause" msg $ do
     clauseBody <- checkExpr ctx synClauseBody clauseType
-    -- This is an optimization: we want to remove as many MetaVars
-    -- as possible so that we'll avoid recomputing things.
-    -- TODO generalize this to everything which adds a term.
-    clauseBody' <- instantiateMetaVars clauseBody
-    return $ Clause pats clauseBody'
+    return $ Clause pats clauseBody
 
 checkPatterns
   :: (IsTerm t)
