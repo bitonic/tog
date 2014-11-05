@@ -32,3 +32,18 @@ See `examples/` for some example files, it's basically a simple `Agda`.
 To run the (sadly quite limited) tests, run
 
     make test
+
+## Module structure
+
+Top-level module interface:
+
+    import           Conf
+    import           PrettyPrint
+    import           Syntax
+    import qualified Syntax.Raw                       as SR
+    import qualified Syntax.Internal                  as SI
+    import           Term
+    import qualified Term.Context                     as Ctx
+    import qualified Term.Substitution                as Sub
+    import qualified Term.Telescope                   as Tel
+    import           TypeCheck3
