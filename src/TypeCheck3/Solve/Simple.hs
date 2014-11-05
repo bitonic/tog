@@ -278,7 +278,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
                 debug_ "could invert, and same heads, checking spines." ""
                 equalSpine (Def fun1) ctx elims1 elims2
               _ -> do
-                t2Head <- termHead =<< unview t2View
+                t2Head <- termHead t2
                 case t2Head of
                   Nothing -> do
                     debug_ "definition invertible but we don't have a clause head." ""

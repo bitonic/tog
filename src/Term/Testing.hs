@@ -16,7 +16,7 @@ type Tm = Simple
 run :: TermM Tm a -> IO a
 run = runTermM Sig.empty
 
-tm_ :: forall m. (MonadTerm Tm m) => SI.Expr -> m Tm
+tm_ :: (MonadTerm Tm m) => SI.Expr -> m Tm
 tm_ = tm B0
 
 tm :: forall m. (MonadTerm Tm m) => Bwd Name -> SI.Expr -> m Tm

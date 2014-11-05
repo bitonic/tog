@@ -174,10 +174,10 @@ newtype Field = Field {unField :: Int}
 -- | A 'Head' heads a neutral term -- something which can't reduce
 -- further.
 data Head
-    = Var Var
-    | Def Name
+    = Var !Var
+    | Def !Name
     | J
-    | Meta MetaVar
+    | Meta !MetaVar
     deriving (Show, Eq, Generic)
 
 instance Hashable Head
@@ -185,7 +185,7 @@ instance Hashable Head
 -- | 'Elim's are applied to 'Head's.  They're either arguments applied
 -- to functions, or projections applied to records.
 data Elim t
-    = Apply t
+    = Apply !t
     | Proj !Projection
     deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
 
@@ -205,13 +205,13 @@ instance PP.Pretty Projection where
 -- implementation of terms might be different, but we must be able to
 -- get a 'TermView' out of it.  See 'View'.
 data TermView t
-    = Pi t (Abs t)
-    | Lam (Abs t)
-    | Equal (Type t) t t
+    = Pi !t !(Abs t)
+    | Lam !(Abs t)
+    | Equal !(Type t) !t !t
     | Refl
     | Set
-    | Con Name [t]
-    | App Head [Elim t]
+    | Con !Name [t]
+    | App !Head [Elim t]
     deriving (Eq, Generic, Show)
 
 instance (Hashable t) => Hashable (TermView t)
@@ -313,6 +313,11 @@ instance SynEq t a => SynEq t [a] where
   synEq (x : xs) (y : ys) = (&&) <$> synEq x y <*> synEq xs ys
   synEq _        _        = return False
 
+instance (SynEq t a, SynEq t b) => SynEq t (a, b) where
+  synEq (x1, y1) (x2, y2) = do
+    b <- synEq x1 x2
+    if b then synEq y1 y2 else return False
+
 -- HasAbs
 ---------
 
@@ -389,6 +394,10 @@ ignoreBlocking (BlockedOn _ bh es) =
 -- Term utils
 -------------
 
+seqList :: [a] -> b -> b
+seqList []        x = x
+seqList (!_ : xs) y = seqList xs y
+
 var :: (IsTerm t, MonadTerm t m) => Var -> m t
 var v = app (Var v) []
 
@@ -402,16 +411,16 @@ equal :: (IsTerm t, MonadTerm t m) => t -> t -> t -> m t
 equal type_ x y = unview $ Equal type_ x y
 
 app :: (IsTerm t, MonadTerm t m) => Head -> [Elim t] -> m t
-app h elims = unview $ App h elims
+app h elims = seqList elims $ unview $ App h elims
 
 metaVar :: (IsTerm t, MonadTerm t m) => MetaVar -> [Elim t] -> m t
-metaVar mv = unview . App (Meta mv)
+metaVar mv = app (Meta mv)
 
 def :: (IsTerm t, MonadTerm t m) => Name -> [Elim t] -> m t
-def f = unview . App (Def f)
+def f = app (Def f)
 
 con :: (IsTerm t, MonadTerm t m) => Name -> [t] -> m t
-con c args = unview $ Con c args
+con c args = seqList args $ unview $ Con c args
 
 -- TermTraverse
 ------------------------------------------------------------------------
