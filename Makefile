@@ -18,16 +18,22 @@ $(happy_file).hs: $(happy_file).y
 dist/build/tog/tog: $(bnfc_output) $(hs_sources)
 	cabal build
 
-all: dist/build/tog/tog
-
 .PHONY: clean
 clean:
 	rm -rf bnfc
 	cabal clean
 
 .PHONY: test
-test:
+test: dist/build/tog/tog
 	time ./test.sh
 
 modules.pdf: $(bnfc_output) $(hs_sources)
 	graphmod -i src -i bnfc src/Main.hs | dot -T pdf -o modules.pdf
+
+.PHONY: install-prof
+install-prof: $(bnfc_output) $(hs_sources)
+	cabal install --enable-executable-profiling --disable-documentation
+
+.PHONY: install
+install: $(bnfc_output) $(hs_source)
+	cabal install --disable-documentation

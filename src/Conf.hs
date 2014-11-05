@@ -1,3 +1,5 @@
+-- | Global configuration, what we get from the command line.  Every
+-- program using tog as a library should start with @'writeConf' conf@.
 module Conf (Conf(..), defaultConf, writeConf, readConf) where
 
 import           Control.Monad                    (unless)

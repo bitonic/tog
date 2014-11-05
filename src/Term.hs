@@ -1,3 +1,13 @@
+-- | Terms and a lot of facilities.
+--
+-- 'Tel', 'Ctx', and 'Substitution' operations should be imported in a
+-- qualified fashion:
+--
+-- @
+-- import qualified Term.Context                     as Ctx
+-- import qualified Term.Substitution                as Sub
+-- import qualified Term.Telescope                   as Tel
+-- @
 module Term
   ( module Term.Types
   , module Term.Synonyms
@@ -8,7 +18,8 @@ module Term
   , Substitution
   ) where
 
-import Term.Types
+-- We want to use the smart constructors only.
+import Term.Types hiding (unview)
 import Term.Synonyms
 import Term.Pretty ()
 import Term.MetaVars ()
@@ -17,4 +28,3 @@ import Term.Substitution.Utils
 import Term.Context (Ctx)
 import Term.Telescope (Tel)
 import Term.Substitution (Substitution)
-

@@ -10,6 +10,7 @@ module Term.Impl.Common
   , genericMetaVars
   , genericPrettyPrecM
   , genericCanStrengthen
+  , unview
   ) where
 
 import           Prelude                          hiding (pi, foldr, mapM, sequence)
@@ -25,6 +26,7 @@ import           Syntax
 import qualified Syntax.Internal                  as SI
 import qualified PrettyPrint                      as PP
 import           Term
+import           Term.Types                       (unview)
 import qualified Term.Substitution                as Sub
 import           Term.Substitution.Types          as Sub
 import qualified Term.Signature                   as Sig

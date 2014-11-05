@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+-- | Small pretty-printing library working on wl-pprint.
 module PrettyPrint
   ( module Text.PrettyPrint.Leijen
   , render
