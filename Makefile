@@ -1,8 +1,10 @@
-
 bnfc_output = $(patsubst %,bnfc/Syntax/Raw/%,Abs.hs ErrM.hs Layout.hs Print.hs Lex.x Par.y)
 hs_sources = $(shell find src/ -name '*.hs')
 alex_file = bnfc/Syntax/Raw/Lex
 happy_file = bnfc/Syntax/Raw/Par
+
+.PHONY: build
+build: dist/build/tog/tog
 
 $(bnfc_output): src/Syntax/Raw.cf
 	-@mkdir -p bnfc

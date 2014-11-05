@@ -7,11 +7,11 @@ types.
 
     git clone https://github.com/bitonic/tog
     cd tog
-    make all
+    make
 
-If you want to install the binary add
+If you want to install the binary
 
-    cabal install
+    make install
 
 ## Usage
 
