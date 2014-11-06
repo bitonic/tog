@@ -1,8 +1,10 @@
-
 bnfc_output = $(patsubst %,bnfc/Syntax/Raw/%,Abs.hs ErrM.hs Layout.hs Print.hs Lex.x Par.y)
 hs_sources = $(shell find src/ -name '*.hs')
 alex_file = bnfc/Syntax/Raw/Lex
 happy_file = bnfc/Syntax/Raw/Par
+
+.PHONY: build
+build: dist/build/tog/tog
 
 $(bnfc_output): src/Syntax/Raw.cf
 	-@mkdir -p bnfc
@@ -18,17 +20,22 @@ $(happy_file).hs: $(happy_file).y
 dist/build/tog/tog: $(bnfc_output) $(hs_sources)
 	cabal build
 
-all: dist/build/tog/tog
-
-# The sed is to work around a GHC bug that makes the tag generating
-# thing crash when it gets a LINE pragma whose file it can't find.
-TAGS: $(bnfc_output) $(hs_sources) $(alex_file).hs $(happy_file).hs
-	hasktags -e src bnfc
-
 .PHONY: clean
 clean:
 	rm -rf bnfc
 	cabal clean
 
+.PHONY: test
+test: dist/build/tog/tog
+	time ./test.sh
+
 modules.pdf: $(bnfc_output) $(hs_sources)
 	graphmod -i src -i bnfc src/Main.hs | dot -T pdf -o modules.pdf
+
+.PHONY: install-prof
+install-prof: $(bnfc_output) $(hs_sources)
+	cabal install --enable-executable-profiling --disable-documentation
+
+.PHONY: install
+install: $(bnfc_output) $(hs_source)
+	cabal install --disable-documentation

@@ -123,11 +123,11 @@ checkEqual
 checkEqual (ctx1_0, type1_0, t1_0, ctx2_0, type2_0, t2_0) = do
   let msg = do
         ctxXDoc <- prettyM ctx1_0
-        typeXDoc <- prettyTermM type1_0
-        xDoc <- prettyTermM t1_0
+        typeXDoc <- prettyM type1_0
+        xDoc <- prettyM t1_0
         ctxYDoc <- prettyM ctx2_0
-        typeYDoc <- prettyTermM type2_0
-        yDoc <- prettyTermM t2_0
+        typeYDoc <- prettyM type2_0
+        yDoc <- prettyM t2_0
         return $
           "*** checkEqual" $$
           "ctxX:" //> ctxXDoc $$
@@ -183,7 +183,7 @@ checkSynEq args@(ctx1, type1, t1, ctx2, type2, t2) = do
         t1' <- ignoreBlocking =<< whnf t1
         t2' <- ignoreBlocking =<< whnf t2
         -- TODO add option to skip this check
-        eq <- termEq t1' t2'
+        eq <- synEq t1' t2'
         if eq
           then done []
           else keepGoing (ctx1, type1, t1', ctx2, type2, t2')
@@ -203,8 +203,8 @@ checkAndInstantiate
   -> TC t s (Constraints t)
 checkAndInstantiate type_ term mv = do
   let msg = do
-        typeDoc <- prettyTermM type_
-        termDoc <- prettyTermM term
+        typeDoc <- prettyM type_
+        termDoc <- prettyM term
         return $
           "*** checkAndInstantiate" $$
           "type:" //> typeDoc $$
@@ -243,7 +243,7 @@ checkMetaVars (ctx1, type1, t1, ctx2, type2, t2) = do
   let syntacticEqualityOrPostpone mvs = do
         t1'' <- nf t1'
         t2'' <- nf t2'
-        eq <- termEq t1'' t2''
+        eq <- synEq t1'' t2''
         if eq
           then done []
           else do
@@ -394,13 +394,13 @@ checkEqualSpine' ctx1 type1 mbH1 (elim1 : elims1) ctx2 type2 mbH2 (elim2 : elims
   let msg = do
         let prettyMbH mbH = case mbH of
               Nothing -> return "No head"
-              Just h  -> prettyTermM h
-        type1Doc <- prettyTermM type1
+              Just h  -> prettyM h
+        type1Doc <- prettyM type1
         h1Doc <- prettyMbH mbH1
-        elims1Doc <- prettyListM $ elim1 : elims1
-        type2Doc <- prettyTermM type2
+        elims1Doc <- prettyM $ elim1 : elims1
+        type2Doc <- prettyM type2
         h2Doc <- prettyMbH mbH2
-        elims2Doc <- prettyListM $ elim2 : elims2
+        elims2Doc <- prettyM $ elim2 : elims2
         return $
           "*** checkEqualSpine" $$
           "type1:" //> type1Doc $$
@@ -440,9 +440,9 @@ metaAssign
 metaAssign ctx1 type1 mv elims1 ctx2 type2 t2 = do
   mvType <- getMetaVarType mv
   let msg = do
-        mvTypeDoc <- prettyTermM mvType
-        elimsDoc <- prettyListM elims1
-        tDoc <- prettyTermM t2
+        mvTypeDoc <- prettyM mvType
+        elimsDoc <- prettyM elims1
+        tDoc <- prettyM t2
         return $
           "*** metaAssign" $$
           "assigning metavar:" <+> PP.pretty mv $$
@@ -486,7 +486,7 @@ metaAssign ctx1 type1 mv elims1 ctx2 type2 t2 = do
             "inversion:" //> invDoc
         t2_1 <- pruneTerm (Set.fromList $ invertMetaVars inv) t2
         debug $ do
-          t1Doc <- prettyTermM t2_1
+          t1Doc <- prettyM t2_1
           return $ "** Pruned term:" //> t1Doc
         t2_2 <- applyInvertMeta inv t2_1
         case t2_2 of
@@ -543,8 +543,8 @@ compareTerms (ctx1, type1, t1, ctx2, type2, t2) = do
        let Just tyConPars1 = mapM isApply tyConPars10
        let Just tyConPars2 = mapM isApply tyConPars20
        DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
-       appliedDataConType1 <- Tel.substs dataConTypeTel dataConType tyConPars1
-       appliedDataConType2 <- Tel.substs dataConTypeTel dataConType tyConPars2
+       appliedDataConType1 <- Tel.discharge dataConTypeTel dataConType tyConPars1
+       appliedDataConType2 <- Tel.discharge dataConTypeTel dataConType tyConPars2
        checkEqualApplySpine ctx1 appliedDataConType1 dataConArgs1 ctx2 appliedDataConType2 dataConArgs2
     (Set, Set, Set, Set) -> do
       return []
@@ -560,18 +560,18 @@ instance PrettyM Constraint where
     case c0 of
       Unify ctx1 type1 t1 ctx2 type2 t2 -> do
         ctx1Doc <- prettyM ctx1
-        type1Doc <- prettyArgM type1
-        t1Doc <- prettyArgM t1
+        type1Doc <- prettyM type1
+        t1Doc <- prettyM t1
         ctx2Doc <- prettyM ctx2
-        type2Doc <- prettyArgM type2
-        t2Doc <- prettyArgM t2
+        type2Doc <- prettyM type2
+        t2Doc <- prettyM t2
         return $ group $
           group (ctx1Doc <+> "|-" // group (t1Doc <+> ":" <+> type1Doc)) //
           hang 2 "=" //
           group (ctx2Doc <+> "|-" // group (t2Doc <+> ":" <+> type2Doc))
       CheckAndInstantiate type_ term mv -> do
-        typeDoc <- prettyArgM type_
-        termDoc <- prettyArgM term
+        typeDoc <- prettyM type_
+        termDoc <- prettyM term
         return $
           "CheckAndInstantiate" $$
           "type:" //> typeDoc $$

@@ -11,6 +11,7 @@ module Syntax.Raw
 
 import           Data.Maybe                       (isJust, fromJust, isNothing, fromJust)
 
+import           Prelude
 import           Syntax.Raw.Abs
 import           Syntax.Raw.ErrM                  (Err(Bad, Ok))
 import           Syntax.Raw.Layout                (sToken, layoutOpen, layoutClose, layoutSep, layoutWords, layoutStopWords, topLayout)

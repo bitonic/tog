@@ -17,11 +17,14 @@ import           TypeCheck3
 import           Syntax.Internal                  (scopeCheckProgram)
 import           Syntax.Raw                       (parseProgram)
 
+-- Modules that we don't need, but should compile
+import           Term.Testing                     ()
+
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
   <$> strOption
       ( long "termType" <> short 't' <> value "GR" <>
-        help "Available types: S (Simple), GR (GraphReduce), H (Hashed)."
+        help "Available types: S (Simple), GR (GraphReduce), GRS (GraphReduceSub), GRU (GraphReduceUnpack), H (Hashed)."
       )
   <*> strOption
       ( long "solver" <> value "S" <>
@@ -77,12 +80,6 @@ debugLabelsOption
   -> Parser [(Bool, [String])]
 debugLabelsOption = option $ do
   s <- readerAsk
-  traceM $ show [ case x of
-                    []       -> (True,  [])
-                    '~' : x' -> (False, splitOn "." x')
-                    x'       -> (True,  splitOn "." x')
-                | x <- splitOn "|" s
-                ]
   return [ case x of
              []       -> (True,  [])
              '~' : x' -> (False, splitOn "." x')
@@ -110,25 +107,25 @@ parseMain =
           putStrLn (PP.render err)
           unless interactive exitFailure
         when interactive $
-          Haskeline.runInputT interactSettings (interact ts)
+          Haskeline.runInputT interactSettings (interact' ts)
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"
       , Haskeline.autoAddHistory = True
       }
 
-    interact :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
-    interact ts = do
+    interact' :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
+    interact' ts = do
       mbS <- Haskeline.getInputLine "> "
       forM_ mbS $ \s ->
         case parseCommand ts s of
           Left err -> do
             lift $ putStrLn $ PP.render err
-            interact ts
+            interact' ts
           Right cmd -> do
             (doc, ts') <- lift $ runCommand ts cmd
             lift $ putStrLn $ PP.render doc
-            interact ts'
+            interact' ts'
 
 checkFile
   :: FilePath

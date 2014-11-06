@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Monad
   ( -- * Monad definition
     TC
@@ -44,13 +45,11 @@ module TypeCheck3.Monad
   , whenDebug
   ) where
 
-import           Prelude                          hiding (any)
-
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 import           System.IO                        (hPutStr, stderr)
 
-import           Prelude.Extended
+import           Prelude.Extended                 hiding (any)
 import           Conf
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
@@ -242,7 +241,8 @@ getDefinition
   :: (IsTerm t) => Name -> TC t s (Closed (Definition t))
 getDefinition n = do
   sig <- tsSignature <$> get
-  return $ Sig.getDefinition sig n
+  Just def' <- return $ Sig.getDefinition sig n
+  return def'
 
 addDefinition
   :: (IsTerm t) => Name -> Closed (Definition t) -> TC t s ()
@@ -256,7 +256,7 @@ addConstant x k a = addDefinition x (Constant k a)
 
 addDataCon
     :: (IsTerm t)
-    => Name -> Name -> Int -> Tel.Tel (Type t) -> Type t -> TC t s ()
+    => Name -> Name -> Natural -> Tel.Tel (Type t) -> Type t -> TC t s ()
 addDataCon c d args tel t = addDefinition c (DataCon d args tel t)
 
 addProjection
@@ -281,7 +281,7 @@ addMetaVar type_ = do
   sig <- tsSignature <$> get
   let (mv, sig') = Sig.addMetaVar sig loc type_
   debug "addMetaVar" $ do
-    typeDoc <- prettyTermM type_
+    typeDoc <- prettyM type_
     return $
       "metavar" <+> PP.pretty mv $$
       "type" //> typeDoc
@@ -315,7 +315,7 @@ unsafeRemoveMetaVar mv = do
 -- Debugging
 ------------------------------------------------------------------------
 
-_ERROR_INDENT :: Int
+_ERROR_INDENT :: Natural
 _ERROR_INDENT = 2
 
 type DebugLabel = String

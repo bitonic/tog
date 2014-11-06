@@ -1,13 +1,13 @@
 module Term.Impl
   ( Simple
   , GraphReduce
-  -- , EasyWeaken
+  -- , GraphReduceSub
+  , GraphReduceUnpack
   , Hashed
-  -- , Suspension
   ) where
 
 import Term.Impl.Simple
 import Term.Impl.GraphReduce
--- import Term.Impl.EasyWeaken
+-- import Term.Impl.GraphReduceSub (GraphReduceSub)
+import Term.Impl.GraphReduceUnpack
 import Term.Impl.Hashed
--- import Term.Impl.Suspension

@@ -1,33 +1,14 @@
 #!/bin/bash
 set -e
 
-cabal build
-
-term_type="GR"
+term_type="GRU"
 tc="./dist/build/tog/tog"
 
-echo '# Checking that things that should succeed succeed'
-# for f in examples/*.agda; do
-#     echo $f
-#     $tc test succeed $term_type $f
-# done
-for f in tests/succed/*.agda; do
-    echo $f
-    $tc test succeed $term_type $f
-done
+make $tc
 
-echo '# Checking that things that should fail fail'
-for f in tests/fail/*.agda; do
-    echo $f
-    $tc test fail $term_type $f
+for f in examples/working/*.agda; do
+    if [[ "$f" != "examples/working/Prelude.agda" ]]; then
+        echo $f
+        $tc -q -t $term_type $f
+    fi
 done
-
-# echo '# Testing consistency between implementations'
-# for f in examples/*.agda; do
-#     echo $f
-#     $tc test $f
-# done
-# for f in tests/succed/*.agda; do
-#     echo $f
-#     $ts test $f
-# done

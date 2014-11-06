@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Term.Context
     ( -- * 'Ctx'
       Ctx(..)
@@ -15,15 +16,13 @@ module Term.Context
     , app
     ) where
 
-import           Prelude                          hiding (pi, length, lookup, (++))
-import qualified Prelude
-
-import           Prelude.Extended
+import           Prelude.Extended                 hiding (length, (++))
+import qualified Prelude.Extended                 as Prelude
 import           Syntax.Internal                  (Name)
-import           Term.Types                       (IsTerm, Var(..), named)
+import           Term.Types                       (IsTerm, Var, MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
-import           Term.MonadTerm
+import qualified Term.Substitution.Utils          as Term
 
 -- Ctx
 ------------------------------------------------------------------------
@@ -38,7 +37,7 @@ data Ctx t where
 singleton :: Name -> t -> Ctx t
 singleton name t = Snoc Empty (name, t)
 
-length :: Ctx t -> Int
+length :: Ctx t -> Natural
 length Empty        = 0
 length (Snoc ctx _) = 1 + length ctx
 
@@ -46,7 +45,7 @@ length (Snoc ctx _) = 1 + length ctx
 ctx1 ++ Empty                 = ctx1
 ctx1 ++ (Snoc ctx2 namedType) = Snoc (ctx1 ++ ctx2) namedType
 
-weaken :: (IsTerm t, MonadTerm t m) => Int -> Ctx t -> t -> m t
+weaken :: (IsTerm t, MonadTerm t m) => Natural -> Ctx t -> t -> m t
 weaken ix ctx t = Term.weaken ix (length ctx) t
 
 weaken_ :: (IsTerm t, MonadTerm t m) => Ctx t -> t -> m t
@@ -59,7 +58,7 @@ lookupName n = go 0
       return Nothing
     go ix (Snoc ctx (n', type_)) =
       if n == n'
-      then Just . (Term.V (Term.named n ix), ) <$> Term.weaken_ (ix + 1) type_
+      then Just . (Term.mkVar n ix, ) <$> Term.weaken_ (ix + 1) type_
       else go (ix + 1) ctx
 
 lookupVar :: (IsTerm t, MonadTerm t m) => Term.Var -> Ctx t -> m (Maybe t)
@@ -88,9 +87,9 @@ getVar v ctx = do
 vars :: forall t. (IsTerm t) => Ctx (Type t) -> [Var]
 vars = toList . go 0
   where
-    go :: Int -> Ctx (Type t) -> Bwd Var
+    go :: Natural -> Ctx (Type t) -> Bwd Var
     go _  Empty                = B0
-    go ix (Snoc ctx (name, _)) = go (ix + 1) ctx :< V (named name ix)
+    go ix (Snoc ctx (name, _)) = go (ix + 1) ctx :< Term.mkVar name ix
 
 -- | Creates a 'Pi' type containing all the types in the 'Ctx' and
 -- terminating with the provided 't'.

@@ -12,16 +12,28 @@ import           Prelude.Extended
 data Hashed = H Int (TermView Hashed)
   deriving (Typeable, Show)
 
-instance Eq Hashed where
-  H i1 t1 == H i2 t2 = i1 == i2 && t1 == t2
-
 instance Hashable Hashed where
   hashWithSalt s (H i _) = s `hashWithSalt` i
 
-instance IsTerm Hashed where
-  strengthen = genericStrengthen
-  getAbsName' = genericGetAbsName
+instance Eq Hashed where
+  H i1 t1 == H i2 t2 = i1 == i2 && t1 == t2
 
+instance MetaVars Hashed Hashed where
+  metaVars = genericMetaVars
+
+instance Nf Hashed Hashed where
+  nf = genericNf
+
+instance PrettyM Hashed Hashed where
+  prettyPrecM = genericPrettyPrecM
+
+instance Subst Hashed Hashed where
+  applySubst = genericApplySubst
+
+instance SynEq Hashed Hashed where
+  synEq x y = return (x == y)
+
+instance IsTerm Hashed where
   whnf t = do
     t' <- fromMaybe t <$> liftIO (lookupWhnfTerm t)
     blockedT <- genericWhnf t'
@@ -33,22 +45,17 @@ instance IsTerm Hashed where
       insertWhnfTerm t t''
       insertWhnfTerm t' t''
     return blockedT
-  nf = genericNf
 
   view (H _ t) = return t
   unview tv = return $ H (hash tv) tv
 
-  substs = genericSubsts
-  weaken = genericWeaken
-
   set = H (hash (Set :: Closed (TermView Hashed))) Set
   refl = H (hash (Refl :: Closed (TermView Hashed))) Refl
 
-  typeOfJ = typeOfJH
+  {-# NOINLINE typeOfJ #-}
+  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 
-{-# NOINLINE typeOfJH #-}
-typeOfJH :: Closed Hashed
-typeOfJH = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
+  canStrengthen = genericCanStrengthen
 
 -- Table
 
