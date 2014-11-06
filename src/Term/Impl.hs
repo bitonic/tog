@@ -8,6 +8,6 @@ module Term.Impl
 
 import Term.Impl.Simple
 import Term.Impl.GraphReduce
--- import Term.Impl.GraphReduceSub
+-- import Term.Impl.GraphReduceSub (GraphReduceSub)
 import Term.Impl.GraphReduceUnpack
 import Term.Impl.Hashed

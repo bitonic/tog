@@ -73,7 +73,7 @@ renderError err =
     FreeVariableInEquatedTerm mv els rhs v -> do
       mvDoc <- prettyM =<< metaVar mv els
       rhsDoc <- prettyM rhs
-      return $ "Free variable `" PP.<> prettyVar v PP.<> "' in term equated to metavariable application:" $$
+      return $ "Free variable `" <> prettyVar v <> "' in term equated to metavariable application:" $$
                mvDoc $$ PP.nest 2 "=" $$ rhsDoc
     OccursCheckFailed mv t -> do
       tDoc <- prettyM t
@@ -90,7 +90,7 @@ renderError err =
       return $ "Expecting an identity type, not:" //> typeDoc
     ExpectingTyCon tyCon type_ -> do
       typeDoc <- prettyM type_
-      return $ "Expecting a" <+> PP.pretty tyCon PP.<> ", not:" //> typeDoc
+      return $ "Expecting a" <+> PP.pretty tyCon <> ", not:" //> typeDoc
   where
     prettyVar = PP.pretty
 

@@ -1,7 +1,6 @@
 module Term.Impl.Simple (Simple) where
 
-import           Data.Typeable                    (Typeable)
-
+import           Prelude.Extended
 import           Term
 import qualified Term.Signature                   as Sig
 import           Term.Impl.Common

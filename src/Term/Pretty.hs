@@ -2,7 +2,8 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Pretty () where
 
-import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>), (<>))
+import           Prelude.Extended
+import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
 import qualified PrettyPrint                      as PP
 import           Term.Types
 import qualified Term.Context                     as Ctx

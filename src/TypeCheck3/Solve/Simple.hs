@@ -1,11 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Solve.Simple
   ( SolveState
   , initSolveState
   , solve
   ) where
-
-import           Prelude                          hiding (any, pi)
 
 import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
@@ -257,7 +256,7 @@ checkEqualBlockedOn
   -> Term t
   -> TC t s (Constraints t)
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
-  let msg = "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) PP.<>
+  let msg = "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) <>
             ", trying to invert definition" <+> PP.pretty bh
   t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
   debugBracket_ "checkEqualBlockedOn" msg $ do

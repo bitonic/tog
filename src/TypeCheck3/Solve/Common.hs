@@ -1,10 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Solve.Common where
 
-import           Prelude                          hiding (any, pi, mapM)
-
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
-import           Data.Traversable                 (mapM)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Data.Tree                        (Tree(Node), subForest, rootLabel, Forest)
@@ -93,6 +91,7 @@ curryMetaVar t = do
               let Just tyConPars = mapM isApply elims
               DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
               appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConPars
+              debug_ "tyConPars" $ PP.text $ show $ show tyConPars
               (dataConPars, _) <-
                 assert_ ("curryMetaVar, unrollPiWithNames:" <+>) $
                 unrollPiWithNames appliedDataConType (map pName projs)
@@ -481,8 +480,8 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
 ------------------------------------------------------------------------
 
 -- | Wraps the given term 'n' times.
-lambdaAbstract :: (IsTerm t) => Int -> Term t -> TC t s (Term t)
-lambdaAbstract n t | n <= 0 = return t
+lambdaAbstract :: (IsTerm t) => Natural -> Term t -> TC t s (Term t)
+lambdaAbstract 0 t = return t
 lambdaAbstract n t = (lam <=< lambdaAbstract (n - 1)) t
 
 data InvertMetaVar t = InvertMetaVar
@@ -490,7 +489,7 @@ data InvertMetaVar t = InvertMetaVar
     -- ^ A substitution from variables in equated term to variables by
     -- the metavariable to terms in the context abstracted by the
     -- metavariable.
-  , imvAbstractions :: Int
+  , imvAbstractions :: Natural
     -- ^ How many variables the metas abstracts.
   }
 
@@ -606,7 +605,7 @@ checkPatternCondition
   => [MetaVarArg Var] -> TC t s (Maybe (InvertMetaVar t))
 checkPatternCondition mvArgs = do
   let allVs = concatMap toList mvArgs
-  let linear = length allVs == Set.size (Set.fromList allVs)
+  let linear = length allVs == fromIntegral (Set.size (Set.fromList allVs))
   if linear
     then do
       vs <- mapM var $ reverse [mkVar "_" ix | (ix, _) <- zip [0..] mvArgs]

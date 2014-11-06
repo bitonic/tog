@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module Term.Impl.Common
   ( genericApplySubst
   , genericWhnf
-  , genericGetAbsName
   , genericTypeOfJ
   , genericNf
   , genericSynEq
@@ -14,15 +14,12 @@ module Term.Impl.Common
   , unview
   ) where
 
-import           Prelude                          hiding (pi, foldr, mapM, sequence)
-
-import           Control.Lens                     (firstOf)
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import           Data.Traversable                 (mapM, sequence)
 
 import           Conf
-import           Prelude.Extended
+import           Prelude.Extended                 hiding (foldr, mapM, sequence)
 import           Syntax
 import qualified Syntax.Internal                  as SI
 import qualified PrettyPrint                      as PP
@@ -65,7 +62,7 @@ genericCanStrengthen
   :: forall t m. (IsTerm t, MonadTerm t m) => t -> m (Maybe Name)
 genericCanStrengthen = runMaybeT . go 0
   where
-    go :: Int -> t -> MaybeT m Name
+    go :: Natural -> t -> MaybeT m Name
     go ix t = do
       tView <- lift $ whnfView t
       case tView of
@@ -165,33 +162,6 @@ matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
           return $ TTFail ()
 matchClause _ _ =
   return $ TTFail ()
-
-genericGetAbsName
-  :: forall t m.
-     (IsTerm t, MonadTerm t m)
-  => Abs t -> m (Maybe Name)
-genericGetAbsName =
-  go $ \v -> if varIndex v == 0 then Just (varName v) else Nothing
-  where
-    lift' :: (Var -> Maybe Name) -> Var -> Maybe Name
-    lift' f v = f =<< strengthenVar_ 1 v
-
-    go :: (Var -> Maybe Name) -> t -> m (Maybe Name)
-    go f t = do
-      tView <- whnfView t
-      case tView of
-        Lam body -> go (lift' f) body
-        Pi dom cod -> (<|>) <$> go f dom <*> go (lift' f) cod
-        Equal type_ x y -> msum <$> mapM (go f) [type_, x, y]
-        Refl -> return Nothing
-        Con _ args -> msum <$> mapM (go f) args
-        Set -> return Nothing
-        App h els -> do
-          let mbN = case h of
-                Var v -> f v
-                _     -> Nothing
-          els' <- forM els $ fmap (join . firstOf traverse) . traverse (go f)
-          return $ mbN <|> msum els'
 
 genericNf :: forall t m. (IsTerm t, MonadTerm t m) => t -> m t
 genericNf t = do

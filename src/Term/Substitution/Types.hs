@@ -1,5 +1,6 @@
 module Term.Substitution.Types where
 
+import           Prelude.Extended
 import           Term.Synonyms
 
 -- | The "context morphism" interpretation, and the "do stuff to term"
@@ -15,12 +16,12 @@ data Substitution t
     -- --------------------------------
     --   Id : Γ → Γ
 
-  | Weaken !Int (Substitution t)
+  | Weaken !Natural (Substitution t)
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Weaken |Ψ| ρ : Δ → Γ;Ψ
 
-  | Strengthen !Int (Substitution t)
+  | Strengthen !Natural (Substitution t)
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Strengthen |Ψ| ρ : Γ;Ψ →  Δ
@@ -30,7 +31,7 @@ data Substitution t
     -- --------------------------------
     --   Instantiate u ρ : Δ;A → Γ
 
-  | Lift !Int (Substitution t)
+  | Lift !Natural (Substitution t)
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Lift |Ψ| ρ : Δ;Ψ → Γ;Ψρ

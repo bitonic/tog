@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Internal.Abs where
 
-import Prelude.Extended hiding ((<>))
+import Prelude.Extended
 import PrettyPrint
 
 data SrcLoc = SrcLoc { pLine :: !Int, pCol :: !Int }

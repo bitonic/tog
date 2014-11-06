@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module Term.Substitution
   ( -- * Type
     Substitution
@@ -14,9 +15,7 @@ module Term.Substitution
   , null
   ) where
 
-import           Prelude                          hiding (pi, length, lookup, (++), drop, id, null)
-
-import           Prelude.Extended                 hiding (lift)
+import           Prelude.Extended                 hiding (lift, length, lookup, (++), drop, id, null)
 import           Term.Substitution.Types
 import           Term.Synonyms
 import           Term.Types
@@ -30,7 +29,7 @@ id = Id
 singleton :: Term t -> Substitution t
 singleton t = instantiate t id
 
-weaken :: Int -> Substitution t -> Substitution t
+weaken :: Natural -> Substitution t -> Substitution t
 weaken 0 rho            = rho
 weaken n (Weaken m rho)     = Weaken (n + m) rho
 weaken n (Strengthen m rho) = case n - m of
@@ -39,7 +38,7 @@ weaken n (Strengthen m rho) = case n - m of
                                 k         -> Strengthen k rho
 weaken n rho                = Weaken n rho
 
-strengthen :: Int -> Substitution t -> Substitution t
+strengthen :: Natural -> Substitution t -> Substitution t
 strengthen 0 rho                = rho
 strengthen n (Strengthen m rho) = Strengthen (m + n) rho
 strengthen n (Weaken m rho)     = case n - m of
@@ -53,7 +52,7 @@ strengthen n rho                = Strengthen n rho
 instantiate :: Term t -> Substitution t -> Substitution t
 instantiate = Instantiate
 
-lift :: Int -> Substitution t -> Substitution t
+lift :: Natural -> Substitution t -> Substitution t
 lift n _            | n < 0 = error "lift.impossible"
 lift 0 rho          = rho
 lift _ Id           = Id
@@ -67,7 +66,7 @@ null _  = False
 -- Operations
 ------------------------------------------------------------------------
 
-drop :: Int -> Substitution t -> Substitution t
+drop :: Natural -> Substitution t -> Substitution t
 drop n rho                 | n <= 0 = rho
 drop n Id                  = weaken n id
 drop n (Weaken m rho)      = weaken m (drop n rho)

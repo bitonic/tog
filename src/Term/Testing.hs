@@ -11,7 +11,7 @@ import qualified Term.Signature                   as Sig
 import           Syntax
 import qualified Syntax.Internal                  as SI
 
-type Tm = Simple
+type Tm = GraphReduce
 
 run :: TermM Tm a -> IO a
 run = runTermM Sig.empty

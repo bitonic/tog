@@ -107,25 +107,25 @@ parseMain =
           putStrLn (PP.render err)
           unless interactive exitFailure
         when interactive $
-          Haskeline.runInputT interactSettings (interact ts)
+          Haskeline.runInputT interactSettings (interact' ts)
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"
       , Haskeline.autoAddHistory = True
       }
 
-    interact :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
-    interact ts = do
+    interact' :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
+    interact' ts = do
       mbS <- Haskeline.getInputLine "> "
       forM_ mbS $ \s ->
         case parseCommand ts s of
           Left err -> do
             lift $ putStrLn $ PP.render err
-            interact ts
+            interact' ts
           Right cmd -> do
             (doc, ts') <- lift $ runCommand ts cmd
             lift $ putStrLn $ PP.render doc
-            interact ts'
+            interact' ts'
 
 checkFile
   :: FilePath

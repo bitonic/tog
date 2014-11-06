@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module Term.Types
   ( -- * Var
     Var
@@ -77,8 +78,6 @@ module Term.Types
   , Signature(..)
   ) where
 
-import           Prelude                          hiding (pi)
-
 import           Control.Monad.Trans.Reader       (ReaderT, runReaderT, ask)
 import           Control.Monad.Trans.Class        (MonadTrans)
 import qualified Data.HashSet                     as HS
@@ -97,17 +96,17 @@ import           Term.Synonyms
 -- Var
 ------------------------------------------------------------------------
 
-newtype Var = V (Named Int)
+newtype Var = V (Named Natural)
   deriving (Show, Read, Eq, Ord, Hashable)
 
-unVar :: Var -> Named Int
+unVar :: Var -> Named Natural
 unVar (V v) = v
 
-mkVar :: Name -> Int -> Var
+mkVar :: Name -> Natural -> Var
 mkVar _ i | i < 0 = error "impossible.mkVar"
 mkVar n i = V $ named n i
 
-varIndex :: Var -> Int
+varIndex :: Var -> Natural
 varIndex = unNamed . unVar
 
 varName :: Var -> Name
@@ -119,24 +118,24 @@ instance PP.Pretty Var where
 boundVar :: Name -> Var
 boundVar n = V $ named n 0
 
-weakenVar :: Int -> Int -> Var -> Var
+weakenVar :: Natural -> Natural -> Var -> Var
 weakenVar from by (V (Named n ix)) =
   let ix' = if ix >= from
             then ix + by
             else ix
   in V $ Named n ix'
 
-weakenVar_ :: Int -> Var -> Var
+weakenVar_ :: Natural -> Var -> Var
 weakenVar_ = weakenVar 0
 
-strengthenVar :: Int -> Int -> Var -> Maybe Var
+strengthenVar :: Natural -> Natural -> Var -> Maybe Var
 strengthenVar from by (V (Named n ix)) =
   let ix' | ix < from      = Just ix
           | ix < from + by = Nothing
           | otherwise      = Just $ ix - by
   in V . Named n <$> ix'
 
-strengthenVar_ :: Int -> Var -> Maybe Var
+strengthenVar_ :: Natural -> Var -> Maybe Var
 strengthenVar_ = strengthenVar 0
 
 -- Named
@@ -162,7 +161,7 @@ instance (Hashable a) => Hashable (Named a)
 ------------------------------------------------------------------------
 
 -- | The field of a projection.
-newtype Field = Field {unField :: Int}
+newtype Field = Field {unField :: Natural}
     deriving (Eq, Ord, Show, Read, Hashable)
 
 -- Terms
@@ -501,7 +500,7 @@ patternsBindings = sum . map patternBindings
 
 data Definition t
     = Constant ConstantKind (Type t)
-    | DataCon Name Int (Tel (Type t)) (Type t)
+    | DataCon Name Natural (Tel (Type t)) (Type t)
     -- ^ Data type name, number of arguments, telescope ranging over the
     -- parameters of the type constructor ending with the type of the
     -- constructor.
@@ -550,7 +549,7 @@ ignoreInvertible (Invertible injClauses) = map snd injClauses
 
 definitionToNameInfo :: Name -> Definition t -> NameInfo
 definitionToNameInfo n (Constant _ _)       = SI.DefName n 0
-definitionToNameInfo n (DataCon _ args _ _) = SI.ConName n 0 args
+definitionToNameInfo n (DataCon _ args _ _) = SI.ConName n 0 $ fromIntegral args
 definitionToNameInfo n (Projection _ _ _ _) = SI.ProjName n 0
 definitionToNameInfo n (Function _ _)       = SI.DefName n 0
 

@@ -16,14 +16,13 @@ module PrettyPrint
   , Pretty(..)
   , list
   , prettyApp
+  , hang
+  , indent
   ) where
 
-import           Data.Bwd                         (Bwd)
-import           Data.Foldable                    (toList)
-import           Data.String                      (IsString(fromString))
+import           Prelude.Extended
 import qualified Text.PrettyPrint.Leijen          as PP
-import           Text.PrettyPrint.Leijen          hiding ((<$>), (<$$>), renderPretty, renderCompact, Pretty(..), list, parens, tupled)
-import           Data.Monoid                      (Monoid(..))
+import           Text.PrettyPrint.Leijen          hiding ((<$>), (<$$>), renderPretty, renderCompact, Pretty(..), list, parens, tupled, hang, indent, (<>))
 
 instance Monoid PP.Doc where
   mempty = PP.empty
@@ -138,6 +137,9 @@ instance Pretty a => Pretty (Maybe a) where
 instance Pretty a => Pretty (Bwd a) where
   pretty = pretty . toList
 
+instance Pretty Natural where
+  pretty = text . show
+
 prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
 prettyApp _ h []   = h
 prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (reverse args0)))
@@ -145,3 +147,10 @@ prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (rever
     prettyArgs []           = empty
     prettyArgs [arg]        = line <> prettyPrec 4 arg
     prettyArgs (arg : args) = group (prettyArgs args) $$ prettyPrec 4 arg
+
+hang :: Natural -> Doc -> Doc
+hang n d = PP.hang (fromIntegral n) d
+
+indent :: Natural -> Doc -> Doc
+indent n d = PP.indent (fromIntegral n) d
+

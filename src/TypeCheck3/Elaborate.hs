@@ -1,13 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Elaborate
   ( elaborate
   , ElaborateState
   , initElaborateState
   , ElabM
   ) where
-
-import           Prelude                          hiding (mapM_, pi)
 
 import qualified Data.Bwd                         as Bwd
 import           Prelude.Extended

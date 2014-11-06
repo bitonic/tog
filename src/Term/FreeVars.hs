@@ -4,9 +4,7 @@ module Term.FreeVars
   , freeVars
   ) where
 
-import           Control.Applicative              ((<*>))
-import           Data.Functor                     ((<$>))
-import           Data.Monoid                      (Monoid, mappend, mempty, (<>), mconcat)
+import           Prelude.Extended
 import qualified Data.Set                         as Set
 
 import           Term.Types
@@ -33,8 +31,8 @@ freeVars
   => t -> m FreeVars
 freeVars = go Just
   where
-    lift :: (Var -> Maybe Var) -> (Var -> Maybe Var)
-    lift f v =
+    lift' :: (Var -> Maybe Var) -> (Var -> Maybe Var)
+    lift' f v =
       if varIndex v > 0
       then f $ mkVar (varName v) (varIndex v - 1)
       else Nothing
@@ -44,9 +42,9 @@ freeVars = go Just
       tView <- whnfView t0
       case tView of
         Lam body ->
-          go (lift strengthen') body
+          go (lift' strengthen') body
         Pi domain codomain ->
-          (<>) <$> go strengthen' domain <*> go (lift strengthen') codomain
+          (<>) <$> go strengthen' domain <*> go (lift' strengthen') codomain
         Equal type_ x y ->
           mconcat <$> mapM (go strengthen') [type_, x, y]
         App (Var v) elims -> do

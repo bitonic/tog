@@ -6,6 +6,7 @@ module Syntax.Internal.Scope
     , NameInfo(..)
     ) where
 
+import Prelude
 import Control.Arrow ((***), (&&&), first)
 import Control.Applicative
 import Control.Monad.Reader

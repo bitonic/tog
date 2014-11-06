@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-term_type="GR"
+term_type="GRU"
 tc="./dist/build/tog/tog"
 
 make $tc

@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3
   ( -- * Global state
     TCState'
@@ -11,8 +12,6 @@ module TypeCheck3
   , parseCommand
   , runCommand
   ) where
-
-import           Prelude                          hiding (abs, pi)
 
 import           Control.Lens                     ((^.))
 import qualified Control.Lens                     as L

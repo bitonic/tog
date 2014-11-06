@@ -1,4 +1,5 @@
 {-# OPTIONS -fno-warn-orphans #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module Term.Telescope
     ( -- * 'Tel'
       Tel(..)
@@ -10,9 +11,8 @@ module Term.Telescope
     , pi
     ) where
 
-import qualified Prelude
-import           Prelude                          hiding (pi, length, lookup, (++))
-
+import           Prelude.Extended                 hiding (length, lookup, (++))
+import qualified Prelude.Extended                 as Prelude
 import qualified Term.Context                     as Ctx
 import           Term.Types                       (MonadTerm)
 import qualified Term.Types                       as Term
@@ -24,7 +24,7 @@ import           Term.Telescope.Types
 -- Tel
 ------------------------------------------------------------------------
 
-length :: Tel t -> Int
+length :: Tel t -> Natural
 length Empty         = 0
 length (Cons _ tel') = 1 + length tel'
 

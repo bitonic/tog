@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 module Term.Substitution.Utils
   ( -- * Term operations through 'Substitution'
     weaken
@@ -18,17 +19,17 @@ import qualified Term.Substitution                as Sub
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      (($$), (//>))
 
-weaken :: (IsTerm t, Subst t a, MonadTerm t m) => Int -> Int -> a -> m a
+weaken :: (IsTerm t, Subst t a, MonadTerm t m) => Natural -> Natural -> a -> m a
 weaken from by t = applySubst t $ Sub.lift from $ Sub.weaken by Sub.id
 
-weaken_ :: (IsTerm t, Subst t a, MonadTerm t m) => Int -> a -> m a
+weaken_ :: (IsTerm t, Subst t a, MonadTerm t m) => Natural -> a -> m a
 weaken_ n t = weaken 0 n t
 
-strengthen :: (IsTerm t, MonadTerm t m) => Int -> Int -> Abs t -> m t
+strengthen :: (IsTerm t, MonadTerm t m) => Natural -> Natural -> Abs t -> m t
 strengthen from by t =
   applySubst t $ Sub.lift from $ Sub.strengthen by Sub.id
 
-strengthen_ :: (IsTerm t, MonadTerm t m) => Int -> t -> m t
+strengthen_ :: (IsTerm t, MonadTerm t m) => Natural -> t -> m t
 strengthen_ = strengthen 0
 
 instantiate_ :: (IsTerm t, Subst t a, MonadTerm t m) => a -> Term t -> m a
