@@ -6,17 +6,15 @@ import Prelude.Extended hiding ((<>))
 import PrettyPrint
 
 data SrcLoc = SrcLoc { pLine :: !Int, pCol :: !Int }
+  deriving (Show, Read)
 
 noSrcLoc = SrcLoc 0 0
 
-instance Show SrcLoc where
-  show (SrcLoc line col) = concat [show line, ":", show col]
-
 instance Pretty SrcLoc where
-  pretty = text . show
+  pretty (SrcLoc line col) = text $ concat [show line, ":", show col]
 
 data Name = Name { nameLoc :: !SrcLoc, nameString :: !String }
-    deriving (Typeable, Generic)
+    deriving (Show, Read, Typeable, Generic)
 
 name :: String -> Name
 name s = Name noSrcLoc s
@@ -147,7 +145,6 @@ instance Eq Head where
 -- Pretty printing
 ------------------------------------------------------------------------
 
-instance Show Name    where showsPrec = defaultShow
 instance Show Decl    where showsPrec = defaultShow
 instance Show TypeSig where showsPrec = defaultShow
 instance Show Elim    where showsPrec = defaultShow

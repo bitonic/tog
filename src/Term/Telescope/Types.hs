@@ -10,4 +10,4 @@ import           Term.Synonyms
 data Tel t
     = Empty
     | Cons (Name, t) (Tel (Abs t))
-    deriving (Eq, Ord, Typeable)
+    deriving (Eq, Ord, Show, Typeable)

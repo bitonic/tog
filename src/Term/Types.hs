@@ -98,7 +98,7 @@ import           Term.Synonyms
 ------------------------------------------------------------------------
 
 newtype Var = V (Named Int)
-  deriving (Eq, Ord, Hashable)
+  deriving (Show, Read, Eq, Ord, Hashable)
 
 unVar :: Var -> Named Int
 unVar (V v) = v
@@ -114,10 +114,7 @@ varName :: Var -> Name
 varName = namedName . unVar
 
 instance PP.Pretty Var where
-  pretty v = PP.text $ show (varIndex v) ++ "#" ++ show (varName v)
-
-instance Show Var where
-  show = PP.render
+  pretty v = PP.pretty (varIndex v) <> "#" <> PP.pretty (varName v)
 
 boundVar :: Name -> Var
 boundVar n = V $ named n 0
@@ -151,7 +148,7 @@ named = Named
 data Named a = Named
   { namedName :: !Name
   , unNamed   :: !a
-  } deriving (Functor, Foldable, Traversable, Generic)
+  } deriving (Show, Read, Functor, Foldable, Traversable, Generic)
 
 instance Eq a => Eq (Named a) where
   Named _ v1 == Named _ v2 = v1 == v2
@@ -166,7 +163,7 @@ instance (Hashable a) => Hashable (Named a)
 
 -- | The field of a projection.
 newtype Field = Field {unField :: Int}
-    deriving (Eq, Ord, Show, Hashable)
+    deriving (Eq, Ord, Show, Read, Hashable)
 
 -- Terms
 ------------------------------------------------------------------------
@@ -178,7 +175,7 @@ data Head
     | Def !Name
     | J
     | Meta !MetaVar
-    deriving (Show, Eq, Generic)
+    deriving (Show, Read, Eq, Generic)
 
 instance Hashable Head
 
@@ -187,14 +184,14 @@ instance Hashable Head
 data Elim t
     = Apply !t
     | Proj !Projection
-    deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
+    deriving (Eq, Show, Read, Generic, Functor, Foldable, Traversable)
 
 instance (Hashable t) => Hashable (Elim t)
 
 data Projection = Projection'
   { pName  :: !Name
   , pField :: !Field
-  } deriving (Eq, Ord, Show, Generic)
+  } deriving (Show, Read, Eq, Ord, Generic)
 
 instance Hashable Projection
 
@@ -281,9 +278,6 @@ instance Subst t (Elim t) where
 
 instance Subst t a => Subst t [a] where
   applySubst t rho = mapM (`applySubst` rho) t
-
-  -- canStrengthen (Apply t) = canStrengthen t
-  -- canStrengthen (Proj _)  = return Nothing
 
 -- SynEq
 ------------------------------------------------------------------------
@@ -567,7 +561,7 @@ definitionToNameInfo n (Function _ _)       = SI.DefName n 0
 data MetaVar = MetaVar
   { mvId     :: !Int
   , mvSrcLoc :: !SrcLoc
-  } deriving (Generic)
+  } deriving (Show, Read, Generic)
 
 instance Eq MetaVar where
   (==) = (==) `on` mvId
@@ -579,10 +573,7 @@ instance Hashable MetaVar where
   hashWithSalt s = hashWithSalt s . mvId
 
 instance PP.Pretty MetaVar where
-    prettyPrec _ = PP.text . show
-
-instance Show MetaVar where
-   show (MetaVar mv _) = "_" ++ show mv
+    prettyPrec _ (MetaVar mv _) = PP.text $ "_" ++ show mv
 
 instance HasSrcLoc MetaVar where
   srcLoc = mvSrcLoc
