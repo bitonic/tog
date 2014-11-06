@@ -82,20 +82,13 @@ instance T.IsTerm GraphReduceUnpack where
           T.App h els -> App h els
     GRU <$> liftIO (newIORef t)
 
-  set = setGRU
-  refl = reflGRU
-  typeOfJ = typeOfJGRU
+  {-# NOINLINE set #-}
+  set = unsafePerformIO $ GRU <$> newIORef Set
+
+  {-# NOINLINE refl #-}
+  refl = unsafePerformIO $ GRU <$> newIORef Refl
+
+  {-# NOINLINE typeOfJ #-}
+  typeOfJ = unsafePerformIO $ T.runTermM Sig.empty genericTypeOfJ
 
   canStrengthen = genericCanStrengthen
-
-{-# NOINLINE setGRU #-}
-setGRU :: GraphReduceUnpack
-setGRU = unsafePerformIO $ GRU <$> newIORef Set
-
-{-# NOINLINE reflGRU #-}
-reflGRU :: GraphReduceUnpack
-reflGRU = unsafePerformIO $ GRU <$> newIORef Refl
-
-{-# NOINLINE typeOfJGRU #-}
-typeOfJGRU :: GraphReduceUnpack
-typeOfJGRU = unsafePerformIO $ T.runTermM Sig.empty genericTypeOfJ

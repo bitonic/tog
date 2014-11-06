@@ -47,20 +47,13 @@ instance IsTerm GraphReduce where
   view = liftIO . readIORef . unGR
   unview tView = GR <$> liftIO (newIORef tView)
 
-  set = setGR
-  refl = reflGR
-  typeOfJ = typeOfJGR
+  {-# NOINLINE set #-}
+  set = unsafePerformIO $ GR <$> newIORef Set
+
+  {-# NOINLINE refl #-}
+  refl = unsafePerformIO $ GR <$> newIORef Refl
+
+  {-# NOINLINE typeOfJ #-}
+  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 
   canStrengthen = genericCanStrengthen
-
-{-# NOINLINE setGR #-}
-setGR :: GraphReduce
-setGR = unsafePerformIO $ GR <$> newIORef Set
-
-{-# NOINLINE reflGR #-}
-reflGR :: GraphReduce
-reflGR = unsafePerformIO $ GR <$> newIORef Refl
-
-{-# NOINLINE typeOfJGR #-}
-typeOfJGR :: GraphReduce
-typeOfJGR = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ

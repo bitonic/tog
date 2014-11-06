@@ -36,11 +36,9 @@ instance IsTerm Simple where
 
   set = S Set
   refl = S Refl
-  typeOfJ = typeOfJS
+
+  {-# NOINLINE typeOfJ #-}
+  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 
   canStrengthen = genericCanStrengthen
-
-{-# NOINLINE typeOfJS #-}
-typeOfJS :: Closed Simple
-typeOfJS = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 

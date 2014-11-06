@@ -51,13 +51,11 @@ instance IsTerm Hashed where
 
   set = H (hash (Set :: Closed (TermView Hashed))) Set
   refl = H (hash (Refl :: Closed (TermView Hashed))) Refl
-  typeOfJ = typeOfJH
+
+  {-# NOINLINE typeOfJ #-}
+  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 
   canStrengthen = genericCanStrengthen
-
-{-# NOINLINE typeOfJH #-}
-typeOfJH :: Closed Hashed
-typeOfJH = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
 
 -- Table
 
