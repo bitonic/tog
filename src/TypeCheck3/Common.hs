@@ -28,7 +28,6 @@ import qualified Syntax.Internal                  as SI
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import qualified Term.Signature                   as Sig
 import           PrettyPrint                      (($$), (<+>), (//>), group, (//), hang)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
