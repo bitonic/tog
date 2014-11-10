@@ -180,16 +180,16 @@ unrollPi type_ = do
 type Constraints t = [Constraint t]
 
 data Constraint t
-  = JMEq (Ctx t)
+  = JmEq (Ctx t)
          (Type t) (Term t)
          (Type t) (Term t)
 
 jmEq :: Ctx t -> Type t -> Term t -> Type t -> Term t -> Constraints t
-jmEq ctx type1 t1 type2 t2 = [JMEq ctx type1 t1 type2 t2]
+jmEq ctx type1 t1 type2 t2 = [JmEq ctx type1 t1 type2 t2]
 
 instance PrettyM t (Constraint t) where
   prettyM c = case c of
-    JMEq ctx type1 t1 type2 t2 -> do
+    JmEq ctx type1 t1 type2 t2 -> do
       ctxDoc <- prettyM ctx
       type1Doc <- prettyM type1
       t1Doc <- prettyM t1

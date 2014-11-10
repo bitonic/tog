@@ -43,13 +43,12 @@ import           TypeCheck3.Solve
 
 data CheckState t = CheckState
   { _csSolveState     :: !(SolveState t)
-  , _csElaborateState :: !(ElaborateState t)
   }
 
 L.makeLenses ''CheckState
 
 initCheckState :: (IsTerm t) => IO (CheckState t)
-initCheckState = CheckState <$> initSolveState <*> initElaborateState
+initCheckState = CheckState <$> initSolveState
 
 type CheckM t = TC t (CheckState t)
 
@@ -79,7 +78,7 @@ checkExpr
   => Ctx t -> SI.Expr -> Type t -> CheckM t (Term t)
 checkExpr ctx synT type_ = do
   debugBracket_ "checkExpr" "" $ do
-    (t, constrs) <- mapTC csElaborateState $ elaborate ctx type_ synT
+    (t, constrs) <- elaborate ctx type_ synT
     debug "constraints" $ PP.list <$> mapM prettyM constrs
     mapTC csSolveState $ mapM_ solve constrs
     check ctx t type_
