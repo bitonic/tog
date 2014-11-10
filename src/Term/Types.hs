@@ -86,7 +86,7 @@ import qualified Data.HashMap.Strict              as HMS
 import           Conf
 import           Prelude.Extended
 import           Syntax
-import qualified Syntax.Internal                  as SI
+import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      ((<+>))
 import           Term.Telescope.Types             (Tel)
@@ -548,10 +548,10 @@ ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
 
 definitionToNameInfo :: Name -> Definition t -> NameInfo
-definitionToNameInfo n (Constant _ _)       = SI.DefName n 0
-definitionToNameInfo n (DataCon _ args _ _) = SI.ConName n 0 $ fromIntegral args
-definitionToNameInfo n (Projection _ _ _ _) = SI.ProjName n 0
-definitionToNameInfo n (Function _ _)       = SI.DefName n 0
+definitionToNameInfo n (Constant _ _)       = SA.DefName n 0
+definitionToNameInfo n (DataCon _ args _ _) = SA.ConName n 0 $ fromIntegral args
+definitionToNameInfo n (Projection _ _ _ _) = SA.ProjName n 0
+definitionToNameInfo n (Function _ _)       = SA.DefName n 0
 
 -- 'MetaVar'iables
 ------------------------------------------------------------------------

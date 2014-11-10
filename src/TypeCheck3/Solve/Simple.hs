@@ -10,7 +10,7 @@ import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
-import           Syntax.Internal                  (Name)
+import           Syntax
 
 import           Conf
 import           Prelude.Extended

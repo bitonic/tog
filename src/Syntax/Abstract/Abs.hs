@@ -4,7 +4,7 @@
 {-| Abstract syntax produced by scope checker, input for the type checker.
  -}
 
-module Syntax.Internal.Abs where
+module Syntax.Abstract.Abs where
 
 import Prelude.Extended
 import PrettyPrint

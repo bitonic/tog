@@ -18,7 +18,7 @@ module Term.Context
 
 import           Prelude.Extended                 hiding (length, (++))
 import qualified Prelude.Extended                 as Prelude
-import           Syntax.Internal                  (Name)
+import           Syntax
 import           Term.Types                       (IsTerm, Var, MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms

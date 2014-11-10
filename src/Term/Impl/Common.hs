@@ -21,7 +21,7 @@ import           Data.Traversable                 (mapM, sequence)
 import           Conf
 import           Prelude.Extended                 hiding (foldr, mapM, sequence)
 import           Syntax
-import qualified Syntax.Internal                  as SI
+import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Types                       (unview, view)
@@ -249,39 +249,39 @@ genericPrettyPrecM p t = do
     return $ PP.prettyPrec p synT
 
 internalToTerm
-  :: (IsTerm t, MonadTerm t m) => t -> m SI.Expr
+  :: (IsTerm t, MonadTerm t m) => t -> m SA.Expr
 internalToTerm t0 = do
   dontNormalize <- confDontNormalizePP <$> readConf
   tView <- view =<< if dontNormalize then return t0 else nf t0
   case tView of
     Lam body -> do
       n <- getAbsName_ body
-      SI.Lam n <$> internalToTerm body
+      SA.Lam n <$> internalToTerm body
     Pi dom cod -> do
       mbN <- canStrengthen cod
       case mbN of
         Just n -> do
-          SI.Pi n <$> internalToTerm dom <*> internalToTerm cod
+          SA.Pi n <$> internalToTerm dom <*> internalToTerm cod
         Nothing -> do
-          SI.Fun <$> internalToTerm dom <*> internalToTerm cod
+          SA.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
-      SI.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
+      SA.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
     Refl ->
-      return $ SI.Refl SI.noSrcLoc
+      return $ SA.Refl SA.noSrcLoc
     Con dataCon args ->
-      SI.Con dataCon <$> mapM internalToTerm args
+      SA.Con dataCon <$> mapM internalToTerm args
     Set ->
-      return $ SI.Set SI.noSrcLoc
+      return $ SA.Set SA.noSrcLoc
     App h args -> do
       let h' = case h of
-            Var v -> SI.Var (SI.name (PP.render v))
-            Def f -> SI.Def f
-            J -> SI.J SI.noSrcLoc
-            Meta mv -> SI.Var (SI.Name (SI.srcLoc mv) (PP.render mv))
+            Var v -> SA.Var (SA.name (PP.render v))
+            Def f -> SA.Def f
+            J -> SA.J SA.noSrcLoc
+            Meta mv -> SA.Var (SA.Name (SA.srcLoc mv) (PP.render mv))
       args' <- forM args $ \arg -> case arg of
-        Apply t -> SI.Apply <$> internalToTerm t
-        Proj p  -> return $ SI.Proj $ pName p
-      return $ SI.App h' args'
+        Apply t -> SA.Apply <$> internalToTerm t
+        Proj p  -> return $ SA.Proj $ pName p
+      return $ SA.App h' args'
 
 
 genericMetaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet

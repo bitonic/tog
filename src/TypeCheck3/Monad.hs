@@ -53,7 +53,7 @@ import           Prelude.Extended                 hiding (any)
 import           Conf
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
-import           Syntax.Internal                  (Name, SrcLoc, noSrcLoc, HasSrcLoc, srcLoc)
+import           Syntax
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel

@@ -24,7 +24,7 @@ import           Prelude                          hiding (abs, pi)
 
 import           Prelude.Extended
 import           Syntax
-import qualified Syntax.Internal                  as SI
+import qualified Syntax.Abstract                  as SA
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
@@ -44,7 +44,7 @@ data CheckError t
     | OccursCheckFailed MetaVar (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord SI.Pattern Name -- Record type constructor
+    | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
 
 checkError :: (IsTerm t) => CheckError t -> TC t s a
 checkError err = typeError =<< renderError err
