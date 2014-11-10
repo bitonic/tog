@@ -48,15 +48,17 @@ instance Hashable Name where
 
 type Program = [Decl]
 
-data Decl = TypeSig TypeSig
-          | Postulate TypeSig
-          | FunDef  Name [Clause]
-          | DataDef Name [Name] [TypeSig]
-          | RecDef  Name [Name] Name [TypeSig]
+data Decl
+  = TypeSig TypeSig
+  | Postulate TypeSig
+  | FunDef  Name [Clause]
+  | DataDef Name [Name] [TypeSig]
+  | RecDef  Name [Name] Name [TypeSig]
 
-data TypeSig = Sig { typeSigName :: Name
-                   , typeSigType :: Expr
-                   }
+data TypeSig = Sig
+  { typeSigName :: Name
+  , typeSigType :: Expr
+  }
 
 data Clause = Clause [Pattern] Expr
 
@@ -70,17 +72,20 @@ data Expr = Lam Name Expr
           | Refl SrcLoc
           | Con Name [Expr]
 
-data Head = Var Name
-          | Def Name
-          | J SrcLoc
+data Head
+  = Var Name
+  | Def Name
+  | J SrcLoc
 
-data Elim = Apply Expr
-          | Proj Name
+data Elim
+  = Apply Expr
+  | Proj Name
   deriving Eq
 
-data Pattern = VarP Name
-             | WildP SrcLoc
-             | ConP Name [Pattern]
+data Pattern
+  = VarP Name
+  | WildP SrcLoc
+  | ConP Name [Pattern]
 
 -- | Number of variables bound by a list of pattern.
 patternsBindings :: [Pattern] -> Int
