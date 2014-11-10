@@ -1,10 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
+
+{-| Abstract syntax produced by scope checker, input for the type checker.
+ -}
+
 module Syntax.Internal.Abs where
 
 import Prelude.Extended
 import PrettyPrint
 
+-- * Source locations.
+------------------------------------------------------------------------
+
+-- | Source locations (single file only).
 data SrcLoc = SrcLoc { pLine :: !Int, pCol :: !Int }
   deriving (Show, Read)
 
@@ -13,6 +21,10 @@ noSrcLoc = SrcLoc 0 0
 instance Pretty SrcLoc where
   pretty (SrcLoc line col) = text $ concat [show line, ":", show col]
 
+-- * Concrete names.
+------------------------------------------------------------------------
+
+-- | Concrete names coming from input.
 data Name = Name { nameLoc :: !SrcLoc, nameString :: !String }
     deriving (Show, Read, Typeable, Generic)
 
@@ -30,6 +42,9 @@ instance Ord Name where
 
 instance Hashable Name where
   hashWithSalt s (Name _ x) = hashWithSalt s x
+
+-- * Abstract syntax.
+------------------------------------------------------------------------
 
 type Program = [Decl]
 
@@ -67,13 +82,18 @@ data Pattern = VarP Name
              | WildP SrcLoc
              | ConP Name [Pattern]
 
+-- | Number of variables bound by a list of pattern.
 patternsBindings :: [Pattern] -> Int
 patternsBindings = sum . map patternBindings
 
+-- | Number of variables bound by a pattern.
 patternBindings :: Pattern -> Int
 patternBindings (VarP _)      = 1
 patternBindings (WildP _)     = 1
 patternBindings (ConP _ pats) = patternsBindings pats
+
+-- * Instances
+------------------------------------------------------------------------
 
 class HasSrcLoc a where
   srcLoc :: a -> SrcLoc
