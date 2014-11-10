@@ -43,8 +43,11 @@ freeVars = go Just
       case tView of
         Lam body ->
           go (lift' strengthen') body
-        Pi domain codomain ->
-          (<>) <$> go strengthen' domain <*> go (lift' strengthen') codomain
+        Pi impl dom cod -> do
+          fvs1 <- go strengthen' impl
+          fvs2 <- go (lift' strengthen') dom
+          fvs3 <- go (lift' (lift' strengthen')) cod
+          return $ mconcat [fvs1, fvs2, fvs3]
         Equal type_ x y ->
           mconcat <$> mapM (go strengthen') [type_, x, y]
         App (Var v) elims -> do

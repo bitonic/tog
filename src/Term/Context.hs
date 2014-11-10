@@ -95,7 +95,7 @@ vars = toList . go 0
 -- terminating with the provided 't'.
 pi :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Type t -> m (Type t)
 pi Empty                  t = return t
-pi (Snoc ctx (_n, type_)) t = pi ctx =<< Term.pi type_ t
+pi (Snoc ctx (_n, type_)) t = pi ctx =<< Term.pi_ type_ t
 
 -- | Creates a 'Lam' term with as many arguments there are in the
 -- 'Ctx'.

@@ -9,6 +9,8 @@ module Term.Substitution.Utils
   , instantiate
   , instantiate_
   , strengthenTerm
+  , pi_
+
   , eliminate
   ) where
 
@@ -47,6 +49,9 @@ strengthenTerm t = do
   case mbN of
     Nothing -> Just <$> strengthen_ 1 t
     Just _  -> return Nothing
+
+pi_ :: (IsTerm t, MonadTerm t m) => t -> (Abs t) -> m t
+pi_ dom cod = join $ pi top <$> weaken_  1 dom <*> weaken 1 1 cod 
 
 -- Elimination
 ------------------------------------------------------------------------

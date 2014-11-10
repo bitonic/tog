@@ -201,11 +201,13 @@ instance PP.Pretty Projection where
 -- implementation of terms might be different, but we must be able to
 -- get a 'TermView' out of it.  See 'View'.
 data TermView t
-    = Pi !t !(Abs t)
+    = Pi !t !(Abs t) !(Abs (Abs t))
     | Lam !(Abs t)
     | Equal !(Type t) !t !t
     | Refl
     | Set
+    | Top
+    | Tt
     | Con !Name [t]
     | App !Head [Elim t]
     deriving (Eq, Generic, Show)
@@ -327,6 +329,8 @@ class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t
     -- We require these to be un-monadic mostly because having them
     -- monadic is a huge PITA when writing the type-checker/unifier.
     -- And, for 'typeOfJ', for performance reasons.
+    top     :: Closed (Term t)
+    tt      :: Closed (Term t)
     set     :: Closed (Term t)
     refl    :: Closed (Term t)
     typeOfJ :: Closed (Type t)
@@ -397,8 +401,8 @@ var v = app (Var v) []
 lam :: (IsTerm t, MonadTerm t m) => Abs t -> m t
 lam body = unview $ Lam body
 
-pi :: (IsTerm t, MonadTerm t m) => t -> Abs t -> m t
-pi domain codomain = unview $ Pi domain codomain
+pi :: (IsTerm t, MonadTerm t m) => t -> (Abs t) -> (Abs (Abs t)) -> m t
+pi impl domain codomain = unview $ Pi impl domain codomain
 
 equal :: (IsTerm t, MonadTerm t m) => t -> t -> t -> m t
 equal type_ x y = unview $ Equal type_ x y

@@ -9,6 +9,7 @@ import           Control.Monad.State              (modify)
 
 import qualified Data.Bwd                         as Bwd
 import           Prelude.Extended
+import           Syntax
 import qualified Syntax.Abstract                  as SA
 import           Term
 import qualified Term.Context                     as Ctx
@@ -53,11 +54,15 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
     case absT of
       SA.Set _ -> do
         expect_ set set
-      SA.Pi name synDom synCod -> do
-        dom <- elaborate' ctx set synDom
-        cod <- elaborate' (Ctx.Snoc ctx (name, dom)) set synCod
-        t <- pi dom cod
+      SA.PiImpl implName synImpl domName synDom synCod -> do
+        impl <- elaborate' ctx set synImpl
+        let ctx' = Ctx.Snoc ctx (implName, impl)
+        dom  <- elaborate' ctx' set synDom
+        cod  <- elaborate' (Ctx.Snoc ctx' (domName, dom)) set synCod
+        t    <- pi impl dom cod 
         expect_ set t
+      SA.Pi name synDom synCod -> do
+        elaborate' ctx type_ (SA.PiImpl "_" (SA.Top (srcLoc name)) name synDom synCod)
       SA.Fun synDom synCod -> do
         elaborate' ctx type_ (SA.Pi "_" synDom synCod)
       SA.Meta _ -> do
@@ -70,11 +75,13 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         t <- equal type' t1 t2
         expect_ set t
       SA.Lam name synBody -> do
-        dom <- addMetaVarInCtx ctx set
-        let ctx' = Ctx.Snoc ctx (name, dom)
-        cod <- addMetaVarInCtx ctx' set
-        body <- elaborate' ctx' cod synBody
-        type' <- pi dom cod
+        impl <- addMetaVarInCtx ctx set
+        let ctx' = Ctx.Snoc ctx ("_", impl)
+        dom <- addMetaVarInCtx ctx' set
+        let ctx'' = Ctx.Snoc ctx' (name, dom)
+        cod <- addMetaVarInCtx ctx'' set
+        body <- elaborate' ctx'' cod synBody
+        type' <- pi impl dom cod
         t <- lam body
         expect_ type' t
       SA.Refl _ -> do
@@ -82,6 +89,10 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         t1 <- addMetaVarInCtx ctx eqType
         type' <- equal eqType t1 t1
         expect_ type' refl
+      SA.Top _ -> do 
+        expect_ set top
+      SA.Tt _ -> do
+        expect_ top tt
       SA.Con dataCon synArgs -> do
         DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
         tyConType <- definitionType =<< getDefinition tyCon

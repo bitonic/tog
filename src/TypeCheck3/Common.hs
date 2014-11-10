@@ -148,31 +148,35 @@ unrollPiWithNames
   -> TC t s (Ctx (Type t), Type t)
   -- ^ A telescope with accumulated domains of the pis and the final
   -- codomain.
-unrollPiWithNames type_ [] =
-  return (Ctx.Empty, type_)
-unrollPiWithNames type_ (name : names) = do
-  typeView <- whnfView type_
-  case typeView of
-    Pi domain codomain -> do
-      (ctx, endType) <- unrollPiWithNames codomain names
-      return (Ctx.singleton name domain Ctx.++ ctx, endType)
-    _ -> do
-      checkError $ ExpectingPi type_
+unrollPiWithNames = error "TODO: unrollPiWithNames"
+-- unrollPiWithNames type_ [] =
+--   return (Ctx.Empty, type_)
+-- unrollPiWithNames type_ (name : names) = do
+--   typeView <- whnfView type_
+--   case typeView of
+--     Pi domain codomain -> do
+--       (ctx, endType) <- unrollPiWithNames codomain names
+--       return (Ctx.singleton name domain Ctx.++ ctx, endType)
+--     _ -> do
+--       checkError $ ExpectingPi type_
+
+
 
 unrollPi
   :: (IsTerm t)
   => Type t
   -- ^ Type to unroll
   -> TC t s (Ctx (Type t), Type t)
-unrollPi type_ = do
-  typeView <- whnfView type_
-  case typeView of
-    Pi domain codomain -> do
-      name <- getAbsName_ codomain
-      (ctx, endType) <- unrollPi codomain
-      return (Ctx.singleton name domain Ctx.++ ctx, endType)
-    _ ->
-      return (Ctx.Empty, type_)
+unrollPi = error "TODO: unrollPi"
+-- unrollPi type_ = do
+--   typeView <- whnfView type_
+--   case typeView of
+--     Pi domain codomain -> do
+--       name <- getAbsName_ codomain
+--       (ctx, endType) <- unrollPi codomain
+--       return (Ctx.singleton name domain Ctx.++ ctx, endType)
+--     _ ->
+--       return (Ctx.Empty, type_)
 
 -- Constraints
 --------------
