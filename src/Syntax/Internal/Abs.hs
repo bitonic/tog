@@ -47,6 +47,7 @@ data Clause = Clause [Pattern] Expr
 
 data Expr = Lam Name Expr
           | Pi Name Expr Expr
+          | PiImpl Name Expr Name Expr Expr
           | Fun Expr Expr
           | Equal Expr Expr Expr
           | App Head [Elim]
@@ -54,6 +55,8 @@ data Expr = Lam Name Expr
           | Meta SrcLoc
           | Refl SrcLoc
           | Con Name [Expr]
+          | Top SrcLoc
+          | Tt SrcLoc
 
 data Head = Var Name
           | Def Name
@@ -97,15 +100,18 @@ instance HasSrcLoc TypeSig where
 
 instance HasSrcLoc Expr where
   srcLoc e = case e of
-    Lam x _     -> srcLoc x
-    Pi x _ _    -> srcLoc x
-    Fun a _     -> srcLoc a
-    Equal _ a _ -> srcLoc a
-    App h _     -> srcLoc h
-    Set p       -> p
-    Meta p      -> p
-    Con c _     -> srcLoc c
-    Refl p      -> p
+    Lam x _          -> srcLoc x
+    Pi x _ _         -> srcLoc x
+    PiImpl x _ _ _ _ -> srcLoc x
+    Fun a _          -> srcLoc a
+    Equal _ a _      -> srcLoc a
+    App h _          -> srcLoc h
+    Set p            -> p
+    Meta p           -> p
+    Con c _          -> srcLoc c
+    Refl p           -> p
+    Top s            -> s
+    Tt s             -> s
 
 instance HasSrcLoc Head where
   srcLoc h = case h of
@@ -129,6 +135,7 @@ instance HasSrcLoc Elim where
 instance Eq Expr where
   Lam x e     == Lam x' e'      = x == x' && e == e'
   Pi x a b    == Pi x' a' b'    = x == x' && a == a' && b == b'
+  PiImpl _ _ _ _ _ == PiImpl _ _ _ _ _ = error "TODO: Implement pointwise equality" 
   Fun a b     == Fun a' b'      = a == a' && b == b'
   Equal a x y == Equal a' x' y' = a == a' && x == x' && y == y'
   App h es    == App h' es'     = h == h' && es == es'
@@ -216,6 +223,7 @@ instance Pretty Expr where
         (tel, b) = piView e
         piView (Pi x a b) = ((x, a) :) *** id $ piView b
         piView a          = ([], a)
+    PiImpl{} -> error "TODO: Implement proper printing of PiImpl"
     Lam{} ->
       condParens (p > 0) $
       text "\\" <> hsep (map pretty xs) <+> text "->" <+> pretty b
@@ -235,6 +243,8 @@ instance Pretty Expr where
         buildApp h es []               = (h, es)
     Refl{} -> text "refl"
     Con c args -> prettyApp p (pretty c) args
+    Tt{} -> error "TODO: Implement proper printing of PiImpl"
+    Top{} -> error "TODO: Implement proper printing of PiImpl"
 
 prettyTel :: [(Name, Expr)] -> Doc
 prettyTel = group . prs . reverse
