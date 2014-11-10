@@ -41,7 +41,7 @@ Top-level module interface:
     import           PrettyPrint
     import           Syntax
     import qualified Syntax.Raw                       as SR
-    import qualified Syntax.Internal                  as SI
+    import qualified Syntax.Abstract                  as SA
     import           Term
     import qualified Term.Context                     as Ctx
     import qualified Term.Substitution                as Sub

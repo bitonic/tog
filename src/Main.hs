@@ -14,8 +14,7 @@ import qualified PrettyPrint                      as PP
 import           Prelude.Extended
 import           Term
 import           TypeCheck3
-import           Syntax.Internal                  (scopeCheckProgram)
-import           Syntax.Raw                       (parseProgram)
+import           Syntax
 
 -- Modules that we don't need, but should compile
 import           Term.Testing                     ()

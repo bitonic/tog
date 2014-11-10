@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
-module Syntax.Internal.Scope
+module Syntax.Abstract.Scope
     ( scopeCheckProgram
     , scopeCheckExpr
     , Scope(..)
@@ -17,7 +17,7 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 
 import qualified Syntax.Raw as C
-import Syntax.Internal.Abs
+import Syntax.Abstract.Abs
 import qualified PrettyPrint                      as PP
 
 data ScopeError = ScopeError SrcLoc String

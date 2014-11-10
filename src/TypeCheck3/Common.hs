@@ -24,7 +24,7 @@ import           Prelude                          hiding (abs, pi)
 
 import           Prelude.Extended
 import           Syntax
-import qualified Syntax.Internal                  as SI
+import qualified Syntax.Abstract                  as SA
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
@@ -44,7 +44,7 @@ data CheckError t
     | OccursCheckFailed MetaVar (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord SI.Pattern Name -- Record type constructor
+    | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
 
 checkError :: (IsTerm t) => CheckError t -> TC t s a
 checkError err = typeError =<< renderError err
@@ -180,16 +180,16 @@ unrollPi type_ = do
 type Constraints t = [Constraint t]
 
 data Constraint t
-  = JMEq (Ctx t)
+  = JmEq (Ctx t)
          (Type t) (Term t)
          (Type t) (Term t)
 
 jmEq :: Ctx t -> Type t -> Term t -> Type t -> Term t -> Constraints t
-jmEq ctx type1 t1 type2 t2 = [JMEq ctx type1 t1 type2 t2]
+jmEq ctx type1 t1 type2 t2 = [JmEq ctx type1 t1 type2 t2]
 
 instance PrettyM t (Constraint t) where
   prettyM c = case c of
-    JMEq ctx type1 t1 type2 t2 -> do
+    JmEq ctx type1 t1 type2 t2 -> do
       ctxDoc <- prettyM ctx
       type1Doc <- prettyM type1
       t1Doc <- prettyM t1

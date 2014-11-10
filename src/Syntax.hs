@@ -6,16 +6,17 @@
 --
 -- @
 -- import qualified Syntax.Raw                       as SR
--- import qualified Syntax.Internal                  as SI
+-- import qualified Syntax.Abstract                  as SA
 -- @
 module Syntax
   ( -- * Parsing
     parseProgram
   , parseExpr
     -- * Name
-  , Syntax.Internal.Name(..)
-  , Syntax.Internal.SrcLoc(..)
-  , Syntax.Internal.HasSrcLoc(..)
+  , Syntax.Abstract.Name(..)
+  , Syntax.Abstract.SrcLoc(..)
+  , Syntax.Abstract.noSrcLoc
+  , Syntax.Abstract.HasSrcLoc(..)
     -- * Scope checking
   , scopeCheckProgram
   , scopeCheckExpr
@@ -23,5 +24,5 @@ module Syntax
   , NameInfo(..)
   ) where
 
-import Syntax.Internal
+import Syntax.Abstract
 import Syntax.Raw

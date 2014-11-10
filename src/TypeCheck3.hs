@@ -24,7 +24,7 @@ import qualified Text.ParserCombinators.ReadP     as ReadP
 import           Conf
 import           Prelude.Extended
 import           Syntax
-import qualified Syntax.Internal                  as SI
+import qualified Syntax.Abstract                  as SA
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Context                     as Ctx
@@ -43,32 +43,31 @@ import           TypeCheck3.Solve
 
 data CheckState t = CheckState
   { _csSolveState     :: !(SolveState t)
-  , _csElaborateState :: !(ElaborateState t)
   }
 
 L.makeLenses ''CheckState
 
 initCheckState :: (IsTerm t) => IO (CheckState t)
-initCheckState = CheckState <$> initSolveState <*> initElaborateState
+initCheckState = CheckState <$> initSolveState
 
 type CheckM t = TC t (CheckState t)
 
 -- Decls
 ------------------------------------------------------------------------
 
-checkDecl :: (IsTerm t) => SI.Decl -> CheckM t ()
+checkDecl :: (IsTerm t) => SA.Decl -> CheckM t ()
 checkDecl decl = do
   debugSection_ "checkDecl" (PP.pretty decl) $ atSrcLoc decl $ do
     case decl of
-      SI.TypeSig sig      -> checkTypeSig sig
-      SI.Postulate sig    -> checkPostulate sig
-      SI.DataDef d xs cs  -> checkData d xs cs
-      SI.RecDef d xs c fs -> checkRec d xs c fs
-      SI.FunDef f clauses -> checkFunDef f clauses
+      SA.TypeSig sig      -> checkTypeSig sig
+      SA.Postulate sig    -> checkPostulate sig
+      SA.DataDef d xs cs  -> checkData d xs cs
+      SA.RecDef d xs c fs -> checkRec d xs c fs
+      SA.FunDef f clauses -> checkFunDef f clauses
 
 inferExpr
   :: (IsTerm t)
-  => Ctx t -> SI.Expr -> CheckM t (Term t, Type t)
+  => Ctx t -> SA.Expr -> CheckM t (Term t, Type t)
 inferExpr ctx synT = do
   type_ <- addMetaVarInCtx ctx set
   t <- checkExpr ctx synT type_
@@ -76,22 +75,22 @@ inferExpr ctx synT = do
 
 checkExpr
   :: (IsTerm t)
-  => Ctx t -> SI.Expr -> Type t -> CheckM t (Term t)
+  => Ctx t -> SA.Expr -> Type t -> CheckM t (Term t)
 checkExpr ctx synT type_ = do
   debugBracket_ "checkExpr" "" $ do
-    (t, constrs) <- mapTC csElaborateState $ elaborate ctx type_ synT
+    (t, constrs) <- elaborate ctx type_ synT
     debug "constraints" $ PP.list <$> mapM prettyM constrs
     mapTC csSolveState $ mapM_ solve constrs
     check ctx t type_
     return t
 
-checkTypeSig :: (IsTerm t) => SI.TypeSig -> CheckM t ()
-checkTypeSig (SI.Sig name absType) = do
+checkTypeSig :: (IsTerm t) => SA.TypeSig -> CheckM t ()
+checkTypeSig (SA.Sig name absType) = do
     type_ <- checkExpr Ctx.Empty absType set
     addConstant name TypeSig type_
 
-checkPostulate :: (IsTerm t) => SI.TypeSig -> CheckM t ()
-checkPostulate (SI.Sig name absType) = do
+checkPostulate :: (IsTerm t) => SA.TypeSig -> CheckM t ()
+checkPostulate (SA.Sig name absType) = do
     type_ <- checkExpr Ctx.Empty absType set
     addConstant name Postulate type_
 
@@ -101,7 +100,7 @@ checkData
     -- ^ Name of the tycon.
     -> [Name]
     -- ^ Names of parameters to the tycon.
-    -> [SI.TypeSig]
+    -> [SA.TypeSig]
     -- ^ Types for the data constructors.
     -> CheckM t ()
 checkData tyCon tyConPars dataCons = do
@@ -120,10 +119,10 @@ checkConstr
     -- ^ Ctx with the parameters of the tycon.
     -> Type t
     -- ^ Tycon applied to the parameters.
-    -> SI.TypeSig
+    -> SA.TypeSig
     -- ^ Data constructor.
     -> CheckM t ()
-checkConstr tyCon tyConPars appliedTyConType (SI.Sig dataCon synDataConType) = do
+checkConstr tyCon tyConPars appliedTyConType (SA.Sig dataCon synDataConType) = do
   atSrcLoc dataCon $ do
     dataConType <- checkExpr tyConPars synDataConType set
     (vs, endType) <- unrollPi dataConType
@@ -140,7 +139,7 @@ checkRec
     -- ^ Name of the parameters to the tycon.
     -> Name
     -- ^ Name of the data constructor.
-    -> [SI.TypeSig]
+    -> [SA.TypeSig]
     -- ^ Fields of the record.
     -> CheckM t ()
 checkRec tyCon tyConPars dataCon fields = do
@@ -152,7 +151,7 @@ checkRec tyCon tyConPars dataCon fields = do
     appliedTyConType <- Ctx.app (def tyCon []) tyConPars'
     fieldsTel' <- weaken_ 1 fieldsTel
     addProjections
-      tyCon tyConPars' (boundVar "_") (map SI.typeSigName fields)
+      tyCon tyConPars' (boundVar "_") (map SA.typeSigName fields)
       fieldsTel'
     let fieldsCtx = Tel.unTel fieldsTel
     appliedTyConType' <- Ctx.weaken_ fieldsCtx appliedTyConType
@@ -160,13 +159,13 @@ checkRec tyCon tyConPars dataCon fields = do
 
 checkFields
     :: forall t. (IsTerm t)
-    => Ctx t -> [SI.TypeSig] -> CheckM t (Tel.Tel (Type t))
+    => Ctx t -> [SA.TypeSig] -> CheckM t (Tel.Tel (Type t))
 checkFields ctx0 = go Ctx.Empty
   where
-    go :: Ctx.Ctx (Type t) -> [SI.TypeSig] -> CheckM t (Tel.Tel (Type t))
+    go :: Ctx.Ctx (Type t) -> [SA.TypeSig] -> CheckM t (Tel.Tel (Type t))
     go ctx [] =
         return $ Tel.tel ctx
-    go ctx (SI.Sig field synFieldType : fields) = do
+    go ctx (SA.Sig field synFieldType : fields) = do
         fieldType <- checkExpr (ctx0 Ctx.++ ctx) synFieldType set
         ctx' <- extendContext ctx (field, fieldType)
         go ctx' fields
@@ -199,7 +198,7 @@ addProjections tyCon tyConPars self fields0 =
         (go fields' <=< instantiate_ fieldTypes') =<< app (Var self) [Proj proj]
       (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
 
-checkFunDef :: (IsTerm t) => Name -> [SI.Clause] -> CheckM t ()
+checkFunDef :: (IsTerm t) => Name -> [SA.Clause] -> CheckM t ()
 checkFunDef fun synClauses = do
     funDef <- getDefinition fun
     case funDef of
@@ -215,9 +214,9 @@ checkFunDef fun synClauses = do
 checkClause
   :: (IsTerm t)
   => Name -> Closed (Type t)
-  -> SI.Clause
+  -> SA.Clause
   -> CheckM t (Closed (Clause t))
-checkClause fun funType (SI.Clause synPats synClauseBody) = do
+checkClause fun funType (SA.Clause synPats synClauseBody) = do
   (ctx, pats, _, clauseType) <- checkPatterns fun synPats funType
   let msg = do
         ctxDoc <- prettyM ctx
@@ -229,9 +228,9 @@ checkClause fun funType (SI.Clause synPats synClauseBody) = do
 checkPatterns
   :: (IsTerm t)
   => Name
-  -> [SI.Pattern]
+  -> [SA.Pattern]
   -> Type t
-  -- ^ Type of the clause that has the given 'SI.Pattern's in front.
+  -- ^ Type of the clause that has the given 'SA.Pattern's in front.
   -> CheckM t (Ctx (Type t), [Pattern], [Term t], Type t)
   -- ^ A context into the internal variables, list of internal patterns,
   -- a list of terms produced by their bindings, and the type of the
@@ -256,20 +255,20 @@ checkPatterns funName (synPat : synPats) type0 = atSrcLoc synPat $ do
 checkPattern
     :: (IsTerm t)
     => Name
-    -> SI.Pattern
+    -> SA.Pattern
     -> Type t
     -- ^ Type of the matched thing.
     -> CheckM t (Ctx (Type t), Pattern, Term t)
     -- ^ The context, the internal 'Pattern', and a 'Term' containing
     -- the term produced by it.
 checkPattern funName synPat type_ = case synPat of
-    SI.VarP name -> do
+    SA.VarP name -> do
       v <- var $ boundVar name
       return (Ctx.singleton name type_, VarP, v)
-    SI.WildP _ -> do
+    SA.WildP _ -> do
       v <- var $ boundVar "_"
       return (Ctx.singleton "_" type_, VarP, v)
-    SI.ConP dataCon synPats -> do
+    SA.ConP dataCon synPats -> do
       DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
       typeConDef <- getDefinition tyCon
       case typeConDef of
@@ -303,7 +302,7 @@ emptyTCState' ret = do
   ret $ initTCState dummyS
 
 checkProgram
-  :: [SI.Decl]
+  :: [SA.Decl]
   -> (forall t. (IsTerm t) => (TCState' t, Maybe PP.Doc) -> IO a) -> IO a
 checkProgram decls ret = do
   tt <- confTermType <$> readConf
@@ -318,7 +317,7 @@ checkProgram decls ret = do
 
 checkProgram'
     :: forall t a. (IsTerm t)
-    => Proxy t -> [SI.Decl] -> ((TCState' t, Maybe PP.Doc) -> IO a) -> IO a
+    => Proxy t -> [SA.Decl] -> ((TCState' t, Maybe PP.Doc) -> IO a) -> IO a
 checkProgram' _ decls0 ret = do
     quiet <- confQuiet <$> readConf
     unless quiet $ do
@@ -328,7 +327,7 @@ checkProgram' _ decls0 ret = do
     s <- initCheckState
     ret =<< goDecls (initTCState s) decls0
   where
-    goDecls :: TCState' t -> [SI.Decl] -> IO (TCState' t, Maybe PP.Doc)
+    goDecls :: TCState' t -> [SA.Decl] -> IO (TCState' t, Maybe PP.Doc)
     goDecls ts [] = do
       (ts,) <$> checkState ts
     goDecls ts (decl : decls) = do
@@ -336,10 +335,10 @@ checkProgram' _ decls0 ret = do
       unless quiet $ do
         putStrLn $ render decl
         let separate = case decl of
-              SI.TypeSig (SI.Sig n _) -> case decls of
-                SI.FunDef n' _     : _  -> not $ n == n'
-                SI.DataDef n' _ _  : _  -> not $ n == n'
-                SI.RecDef n' _ _ _ : _  -> not $ n == n'
+              SA.TypeSig (SA.Sig n _) -> case decls of
+                SA.FunDef n' _     : _  -> not $ n == n'
+                SA.DataDef n' _ _  : _  -> not $ n == n'
+                SA.RecDef n' _ _ _ : _  -> not $ n == n'
                 []                     -> False
                 _                      -> True
               _ ->
@@ -397,8 +396,8 @@ checkProgram' _ decls0 ret = do
 ------------------------------------------------------------------------
 
 data Command
-  = TypeOf SI.Expr
-  | Normalize SI.Expr
+  = TypeOf SA.Expr
+  | Normalize SA.Expr
   | ShowConstraints
   | ShowMeta MetaVar
   | Help
@@ -421,12 +420,12 @@ parseCommand ts s0 = runReadP $
   where
     scope = Sig.toScope $ tsSignature ts
 
-    parseAndScopeCheck = parseExpr >=> SI.scopeCheckExpr scope
+    parseAndScopeCheck = parseExpr >=> SA.scopeCheckExpr scope
 
     parseMetaVar s =
       case readMay s of
         Just mv ->
-          Right MetaVar{mvId = mv, mvSrcLoc = SI.noSrcLoc}
+          Right MetaVar{mvId = mv, mvSrcLoc = SA.noSrcLoc}
         _ ->
           Left $ "Invalid metavar id" <+> PP.text s
 

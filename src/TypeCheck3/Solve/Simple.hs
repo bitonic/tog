@@ -10,7 +10,7 @@ import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
-import           Syntax.Internal                  (Name)
+import           Syntax
 
 import           Conf
 import           Prelude.Extended
@@ -61,7 +61,7 @@ instance Monoid (Constraint t) where
   c1       `mappend` c2       = Conj [c1, c2]
 
 constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
-constraint (Common.JMEq ctx type1 t1 type2 t2) =
+constraint (Common.JmEq ctx type1 t1 type2 t2) =
   Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
 
 initSolveState :: SolveState t

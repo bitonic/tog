@@ -9,48 +9,48 @@ import           Term.Impl
 import qualified Term                             as Term
 import qualified Term.Signature                   as Sig
 import           Syntax
-import qualified Syntax.Internal                  as SI
+import qualified Syntax.Abstract                  as SA
 
 type Tm = GraphReduce
 
 run :: TermM Tm a -> IO a
 run = runTermM Sig.empty
 
-tm_ :: (MonadTerm Tm m) => SI.Expr -> m Tm
+tm_ :: (MonadTerm Tm m) => SA.Expr -> m Tm
 tm_ = tm B0
 
-tm :: forall m. (MonadTerm Tm m) => Bwd Name -> SI.Expr -> m Tm
+tm :: forall m. (MonadTerm Tm m) => Bwd Name -> SA.Expr -> m Tm
 tm nms e0 = case e0 of
-  SI.Lam n e -> do
+  SA.Lam n e -> do
     Term.lam =<< tm (nms :< n) e
-  SI.Pi n dom cod -> do
+  SA.Pi n dom cod -> do
     dom' <- tm nms dom
     cod' <- tm (nms :< n) cod
     Term.pi dom' cod'
-  SI.Fun dom cod -> do
+  SA.Fun dom cod -> do
     join $ Term.pi <$> tm nms dom
                    <*> (weaken_ 1 =<< tm nms cod)
-  SI.Equal type_ x y -> do
+  SA.Equal type_ x y -> do
     join $ Term.equal <$> tm nms type_ <*> tm nms x <*> tm nms y
-  SI.Set _ -> do
+  SA.Set _ -> do
     return Term.set
-  SI.Refl _ -> do
+  SA.Refl _ -> do
     return Term.refl
-  SI.Meta _ -> do
+  SA.Meta _ -> do
     error "tm.Meta"
-  SI.Con dataCon es -> do
+  SA.Con dataCon es -> do
     join $ Term.con dataCon <$> mapM (tm nms) es
-  SI.App h es -> do
+  SA.App h es -> do
     let h' = case h of
-          SI.Var n -> case n `bwdIndex` nms of
+          SA.Var n -> case n `bwdIndex` nms of
                         Nothing -> Def n
                         Just i   -> Var $ mkVar n i
-          SI.Def n -> Def n
-          SI.J _   -> J
+          SA.Def n -> Def n
+          SA.J _   -> J
     Term.app h' =<< mapM tmElim es
   where
-    tmElim (SI.Proj _)   = error "tm.Proj"
-    tmElim (SI.Apply e') = Apply <$> tm nms e'
+    tmElim (SA.Proj _)   = error "tm.Proj"
+    tmElim (SA.Apply e') = Apply <$> tm nms e'
 
     bwdIndex y (_  :< x) | y == x = Just 0
     bwdIndex y (xs :< _) = succ <$> bwdIndex y xs
@@ -59,38 +59,38 @@ tm nms e0 = case e0 of
 -- Abbreviations
 ------------------------------------------------------------------------
 
-lam :: Name -> SI.Expr -> SI.Expr
-lam = SI.Lam
+lam :: Name -> SA.Expr -> SA.Expr
+lam = SA.Lam
 
-pi :: Name -> SI.Expr -> SI.Expr -> SI.Expr
-pi = SI.Pi
+pi :: Name -> SA.Expr -> SA.Expr -> SA.Expr
+pi = SA.Pi
 
-(-->) :: SI.Expr -> SI.Expr -> SI.Expr
-(-->) = SI.Fun
+(-->) :: SA.Expr -> SA.Expr -> SA.Expr
+(-->) = SA.Fun
 
-equal :: SI.Expr -> SI.Expr -> SI.Expr -> SI.Expr
-equal = SI.Equal
+equal :: SA.Expr -> SA.Expr -> SA.Expr -> SA.Expr
+equal = SA.Equal
 
-app :: SI.Head -> [SI.Expr] -> SI.Expr
-app h = SI.App h . map SI.Apply
+app :: SA.Head -> [SA.Expr] -> SA.Expr
+app h = SA.App h . map SA.Apply
 
-set :: SI.Expr
-set = SI.Set SI.noSrcLoc
+set :: SA.Expr
+set = SA.Set SA.noSrcLoc
 
-meta :: Name -> SI.Expr
-meta n = SI.App (SI.Def n) []
+meta :: Name -> SA.Expr
+meta n = SA.App (SA.Def n) []
 
-proj :: Name -> SI.Expr
-proj n = SI.App (SI.Def n) []
+proj :: Name -> SA.Expr
+proj n = SA.App (SA.Def n) []
 
-refl :: SI.Expr
-refl = SI.Refl SI.noSrcLoc
+refl :: SA.Expr
+refl = SA.Refl SA.noSrcLoc
 
-con :: Name -> [SI.Expr] -> SI.Expr
-con = SI.Con
+con :: Name -> [SA.Expr] -> SA.Expr
+con = SA.Con
 
-instance IsString SI.Expr where
-  fromString s = SI.App (SI.Var (fromString s)) []
+instance IsString SA.Expr where
+  fromString s = SA.App (SA.Var (fromString s)) []
 
-instance IsString SI.Head where
-  fromString s = SI.Var (fromString s)
+instance IsString SA.Head where
+  fromString s = SA.Var (fromString s)
