@@ -21,11 +21,16 @@
 %format false = "\mathsf{false} "
 %format alpha = "\alpha "
 %format Gamma = "\Gamma "
+%format Gamma_1 = "\Gamma_1 "
+%format Gamma_2 = "\Gamma_2 "
+%format Gamma_3 = "\Gamma_3 "
+%format Gamma_4 = "\Gamma_3 "
 %format !- = "\vdash "
 %format Unit = "\mathsf{Unit} "
 %format Nat = "\mathsf{Nat} "
 %format Pi = "\Pi "
 %format Sg = "\Sigma "
+%format Sg' = "\Sigma^{‎\prime} "
 %format Bot = "\bot "
 %format Set = "\mathsf{Set} "
 %format absurd (a) (b) = "\mathbf{absurd}" ^^ a ^^ b
@@ -37,13 +42,13 @@
 %format BoolOrNat' = "\mathbf{BoolOrNat} "
 %format refl = "\mathsf{refl} "
 %format test = "\mathbf{test} "
-%format ite (x) (a) (u) (v) (t) = if t ^^ "/" x "." A then u else v
-%format ~> = "\leadsto "
+%format ite (x) (a) (u) (v) (t) = if t ^^ "/" x "." a then u else v
+%format ~> = "\ \leadsto\ "
 %format beta = "\beta "
+%format gamma = "\gamma "
 %format nil = "\cdot "
 %format valid = "\uline{\text{valid}} "
 %format sub (x) (u) (t) = t "[" x := u "]"
-%format := = "\mapsto "
 %format (vec (a)) = "\overrightarrow{" a "}"
 %format app (t) (u) = t u
 %format ppa (u) (t) = t ^^ u
@@ -51,11 +56,12 @@
 %format Con = "\mathcal{C} "
 %format Con_1 = "\mathcal{C}_1 "
 %format Con_2 = "\mathcal{C}_2 "
+%format Con_3 = "\mathcal{C}_3 "
+%format Con_4 = "\mathcal{C}_4 "
 %format << = "\llbracket "
 %format >> = "\rrbracket "
 %format Id = "\mathsf{Id} "
 %format Lookup (a) = "\textsc{Lookup}(" a ")"
-%format elaborate (sg) (a) (b) (c) = "\llbracket " sg "," a " \vdash " b " : " c " \rrbracket "
 %format fresh = "\textbf{fresh} "
 %format return = "\textbf{return} "
 %format empty = "\varnothing "
@@ -65,12 +71,32 @@
 %format Sg_0 = "\Sigma_0 "
 %format Sg_1 = "\Sigma_1 "
 %format Sg_2 = "\Sigma_2 "
+%format Sg_3 = "\Sigma_3 "
+%format Sg_4 = "\Sigma_4 "
+%format Sg_5 = "\Sigma_5 "
+%format Sg_i = "\Sigma_i "
 %format Signature = "\mathsf{Signature} "
 %format Term = "\mathsf{Term} "
 %format Type = "\mathsf{Type} "
 %format Constraint = "\mathsf{Constraint} "
 %format Context = "\mathsf{Context} "
 %format t_0     = "t_0 "
+%format t_1     = "t_1 "
+%format t_2     = "t_2 "
+%format t_3     = "t_3 "
+%format u_1     = "u_1 "
+%format u_2     = "u_2 "
+%format v_1     = "v_1 "
+%format v_2     = "v_2 "
+%format Expect (a) (b) = a
+%format Fresh (g) (a) = "\textsc{Fresh}" (g, a)
+%format SolveState = "\mathsf{SolveState} "
+%format elaborate = "\mathsf{elaborate} "
+%format solve = "\mathsf{solve} "
+%format check = "\mathsf{check} "
+%format Map = "\mathsf{Map} "
+%format MetaVar = "\mathsf{MetaVar} "
+%format Maybe = "\mathsf{Maybe} "
 
 %subst dummy = "\_ "
 
@@ -123,9 +149,9 @@ meta-variables in a simple \mytodo{What do you mean by simple?} type
 checking algorithm for dependent types gives rise to complications.  For
 example, consider the task of type checking
 \begin{code}
-  true : if alpha <= 2 then Bool else Nat
+  true : if alpha <= 2 then Bool else Nat {-","-}
 \end{code}
-, where |alpha| is an yet to be determined (\emph{uninstantiated})
+where |alpha| is an yet to be determined (\emph{uninstantiated})
 meta-variable of type |Nat|.  We want \mytodo{We know what the type of
   |Bool| is. Please reformulate the sentence.} the type of |true| to be
 |Bool|, but reduction is impeded by |alpha|.  Thus, we cannot complete
@@ -134,7 +160,9 @@ postpone type checking until it is. Note that we cannot instantiate
 |alpha| without loss of generality, since both |0| and |1| are
 acceptable solutions.  The key observation is that type checking
 dependent types involves reducing terms to their normal forms, something
-that can be obstructed by meta-variables, like in this case.
+that can be obstructed\mytodo{better word} by meta-variables, like in
+this case.\mytodo{Make it more clear that the key observation is that
+  things can be obstructed, not that you need to normalize}
 
 This need \mytodo{The word ``need'' suggests to me that there is no
   other way. However, you argue that there is another way.} to
@@ -307,6 +335,8 @@ different unification ``backends'' used by the same type checking
 \mytodo{Should I add |Bot| and maybe the identity type?}
 \mytodo{Explain why we need spine syntax -- for the same reason we need it
   in bidi type checking}
+\mytodo{Add equality}
+\mytodo{Explain hereditary substitution}
 
 To present the type checking algorithm we will make use of a simple type
 theory, whose syntax is shown in figure \ref{syntax}.  While small, it
@@ -324,7 +354,7 @@ Note that a signature contains only closed terms so we will not have an
 explicit representation of meta-variables in a context.  Instead, when
 creating a new meta-variable |alpha| of type |A| in context |Gamma|, we
 will have |alpha| to abstract over |Gamma| by giving it the type |Gamma
--> A|.
+-> A|.\mytodo{Explain what |Gamma -> A| means}
 
 The typing checking rules are shown in figure \ref{typing-rules}.
 Neutral terms are represented in spine form, a necessary condition to
@@ -346,7 +376,7 @@ universes.\footnote{Note that a simpler theory like Martin-L{\"o}f's
 As mentioned, our type checking rules are bidirectional: the type of
 neutral terms is inferred, everything else is checked.  This allows us
 to have untyped constructors for dependent functions and dependent
-products.\mytodo{Add equality}
+products.
 
 \begin{figure}
   \begin{code}
@@ -496,10 +526,26 @@ products.\mytodo{Add equality}
 
 \section{The algorithm}
 
+\mytodo[inline]{I would hope that the algorithm also satisfies
+  certain properties. I guess that you haven't proved anything, but
+  you could state the properties that you aim for.}
+
+\mytodo[inline]{Note the fact that all constraints are generated in the
+  same way, and bring example to highlight the difference between this
+  elaboration and simple type-checking}
+
+\mytodo[inline]{It's a writer monad for the Signature as well, not only
+  the constraint list.}
+
+As mentioned in section \ref{problem}, our algorithm will elaborate a
+type checking problem into a well typed term and a set of unification
+constraints.
+
 More specifically, we will elaborate a type checking problem into a well
-typed term and a set unification constraints:
+typed term and a set unification constraints, along with an updated
+signature:
 \begin{code}
-  << Gamma !- t : A >> => (t', Con)
+  << Sg, Gamma !- t : A >> ~> Sg', u, Con
 \end{code}
 Where the |Con| is a set of heterogeneous unification constraints
 \mytodo{Explain what a constraint is somewhere.} of the form
@@ -507,53 +553,191 @@ Where the |Con| is a set of heterogeneous unification constraints
   Gamma !- t : A = u : B
 \end{code}
 
-\mytodo[inline]{I would hope that the algorithm also satisfies
-  certain properties. I guess that you haven't proved anything, but
-  you could state the properties that you aim for.}
+The rules will be written implicitly threading the signature in a
+monadic style so that
+\[
+\inference{
+  |<< Sg_1, Gamma_1 !- t_1 : A >> ~> Sg_2, t_2, Con_1| &
+  |<< Sg_2, Gamma_2 !- u_1 : B >> ~> Sg_3, t_2, Con_2| \\
+  |<<Sg_3 , Gamma_3 !- v_1 : S >> ~> Sg_4, v_2, Con_3|
+}{
+  |<<Sg_4 , Gamma_4 !- t_0 : T >> ~> Sg_5, t_3, Con_4|
+}
+\]
+will be typeset as
+\[
+\inference{
+  |<< Gamma_1 !- t_1 : A >> ~> t_2, Con_1| & |<< Gamma_2 !- u_1 : B >> ~> t_2, Con_2| \\
+  |<< Gamma_3 !- v_1 : S >> ~> v_2, Con_3|
+}{
+  |<< Gamma_4 !- t_0 : T >> ~> t_3, Con_4|
+}
+\]
+If we need to generate fresh meta-variables, we use the macro |Fresh|,
+so that
+\[
+|alpha : Fresh Gamma A|
+\]
+stands for
+\[
+|Sg := Sg'; alpha : Gamma -> A|
+\]
+where |alpha| is assumed to be a fresh name in |Sg|.
 
+Additionally, we will write out the conclusion in an abbreviated form,
+since every rule follows the same pattern, so that\mytodo{Add concrete example}
+\[
+\inference{\vdots}{
+  |<< Gamma !- t : A >> ~> Expect (t' : B) Con|
+}
+\]
+stands for to
+\[
+\inference{|alpha : Fresh Gamma A| \\ \vdots}{
+  |<< Gamma !- t : A >> ~> alpha, {Gamma !- t' : B = alpha : A} `union` Con|
+}
+\]
 
 \begin{figure}
-  % \[
-  % \inference{}{
-  %   |Gamma !- Set : A ==> alpha, Set : Set|
-  % }\quad
-  % \inference{}{
-  %   |Gamma !- Bot : A ==> alpha, Bot : Set|
-  % }
-  % \]
-  % \[
-  % \inference{}{
-  %   |Gamma !- Unit : A ==> alpha, Unit : Set|
-  % }\quad
-  % \inference{}{
-  %   |Gamma !- tt : A ==> alpha, tt : Unit|
-  % }
-  % \]
-  % \[
-  % \inference{}{
-  %   |Gamma !- Bool : A ==> alpha, Unit : Set|
-  % }
-  % \]
-  % \[
-  % \inference{}{
-  %   |Gamma !- true : A ==> alpha, true : Bool|
-  % }\quad
-  % \inference{}{
-  %   |Gamma !- false : A ==> alpha, false : Bool|
-  % }
-  % \]
-  % \[
-  % \inference{
-  %   |Gamma !- A : Set ==> A', Con_1| & |Gamma; x : A' !- B : Set ==> B', Con_2|
-  % }{
-  %   |Gamma !- (x : A) -> B : C => alpha, 
-  % }
-  % \]
+  \[
+  \inference{}{
+    |Gamma !- Set : A ~> Expect (Set : Set) empty|
+  }\quad
+  \inference{}{
+    |Gamma !- Bot : A ~> Expect (Bot : Set) empty|
+  }
+  \]
+  \[
+  \inference{}{
+    |Gamma !- Unit : A ~> Expect (Unit : Set) empty|
+  }\quad
+  \inference{}{
+    |Gamma !- tt : A ~> Expect (tt : Unit) empty|
+  }
+  \]
+  \[
+  \inference{}{
+    |Gamma !- Bool : A ~> Expect (Bool : Set) empty|
+  }
+  \]
+  \[
+  \inference{}{
+    |Gamma !- true : A ~> Expect (true : Bool) empty|
+  }\quad
+  \inference{}{
+    |Gamma !- false : A ~> Expect (false : Bool) empty|
+  }
+  \]
+  \[
+  \inference{
+    |Gamma !- A : Set ~> A', Con_1| & |Gamma; x : A' !- B : Set ~> B', Con_2|
+  }{
+    |Gamma !- (x : A) -> B : S ~> Expect ((x : A') -> B' : Set) (Con_1 `union` Con_2)|
+  }
+  \]
+  \[
+  \inference{
+    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
+    |Gamma; x : beta !- t : gamma ~> t', Con|
+  }{
+    |Gamma !- \ x -> t : A ~> Expect ((\ x -> t') : (x : beta) -> gamma) Con|
+  }
+  \]
+  \[
+  \inference{
+    |Gamma !- A : Set ~> A', Con_1| & |Gamma; x : A' !- B : Set ~> B', Con_2|
+  }{
+    |Gamma !- (x : A) * B : S ~> Expect ((x : A') * B' : Set) (Con_1 `union` Con_2)|
+  }
+  \]
+  \[
+  \inference{
+    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
+    |Gamma !- t : beta ~> t', Con_1| & |Gamma; x : beta !- u : gamma ~> u', Con_2|}{
+    |Gamma !- (t, u) : A ~> Expect ((t', u') : (x : beta) * gamma) (Con_1 `union` Con_2)|
+  }
+  \]
+  \[
+  \inference{
+    |x : A `elem` Gamma|
+  }{
+    |Gamma !- x ^^ nil ~> Expect (x ^^ nil : A) empty|
+  }\quad
+  \inference{
+    |alpha : A `elem` Sg|
+  }{
+    |Gamma !- alpha ^^ nil ~> Expect (alpha ^^ nil : A) empty|
+  }\quad
+  \]
+  \[
+  \inference{
+    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
+    |Gamma !- h ^ (vec e) : (x : beta) -> gamma ~> t, Con_1| &
+    |Gamma !- u : beta ~> u', Con_2|
+  }{
+    |Gamma !- h ^ (vec e) ^ u : A ~> Expect (t u' : sub x u' gamma) (Con_1 `union` Con_2)|
+  }
+  \]
+  \[
+  \inference{
+    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
+    |Gamma !- h ^ (vec e) : (x : beta) * gamma ~> t, Con|
+  }{
+    |Gamma !- fst ((h ^ (vec e))) : A ~> Expect (fst t : beta) Con|
+  }
+  \]
+  \[
+  \inference{
+    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
+    |Gamma !- h ^ (vec e) : (x : beta) * gamma ~> t, Con|
+  }{
+    |Gamma !- snd ((h ^ (vec e))) : A ~> Expect (snd t : sub x (fst t) gamma) Con|
+  }
+  \]
+  \[
+  \inference{
+    |Gamma !- B : Set ~> B', Con_1| &
+    |Gamma !- h ^ (vec e) : Bot ~> t, Con_2|
+  }{
+    |Gamma !- absurd B ((h ^ (vec e))) : A ~> Expect (absurd B' t : B') (Con_1 `union` Con_2)|
+  }
+  \]
+  \[
+  \inference{
+    |Gamma !- B : Set ~> B', Con_1| & |Gamma !- h ^ (vec e) : Bool ~> t, Con_2| \\
+    |Gamma !- u : Bool ~> u' : Con_3| & |Gamma !- u : Bool ~> u' : Con_4|
+  }{
+    |Gamma !- ite x B u v (h ^ (vec e)) : A ~> Expect (ite x B' u' v' t : sub x t B') (Con_1 `union` Con_2 `union` Con_3 `union` Con_4)|
+  }
+  \]
+  \caption{\boxed{|Sg, Gamma !- t : A ~> Sg',u,B|}
+    Elaboration}
 \end{figure}
+\mytodo{Add note about the syntactic shortcuts in the caption}
+
+\section{Unification?}
 
 \section{The big picture}
 
-\section{Unification?}
+\begin{code}
+  -- A signature storing types and maybe bodies for meta-variables.
+  type Signature = Map MetaVar (Type, Maybe Term)
+
+  -- A context for de Bruijn variables.
+  type Context = [Type]
+
+  -- Type checking.
+  check :: Signature -> Context -> Term -> Type -> Bool
+
+  -- Elaboration.
+  data Constraint = Constraint Context Term Type Term Type
+  elaborate  ::  Signature -> Context -> Term -> Type
+             ->  (Signature, Term, [Constraint])
+
+  -- Unification.
+  data SolveState
+  solve :: SolveState -> [Constraint] -> SolveState
+\end{code}
 
 \section{Bidirectional type checking}
 
