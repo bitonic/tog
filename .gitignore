@@ -25,3 +25,4 @@ papers/talk.tex
 auto-save-list
 tramp
 .\#*
+/papers/type-checking-metas.tex
