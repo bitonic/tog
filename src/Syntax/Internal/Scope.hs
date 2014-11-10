@@ -7,7 +7,7 @@ module Syntax.Internal.Scope
     ) where
 
 import Prelude
-import Control.Arrow ((***), (&&&), first)
+import Control.Arrow ((***), (&&&), first, second)
 import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -127,7 +127,7 @@ checkShadowing i (Just j)  =
 
 bindName :: NameInfo -> CCheck Name
 bindName i ret = do
-  checkShadowing i =<< asks (Map.lookup s . inScope)
+  checkShadowing i =<< asks (Map.lookup s . inScope) 
   flip local (ret x) $ \e -> e { inScope = Map.insert s i $ inScope e }
   where
     s = infoStringName i
@@ -135,7 +135,7 @@ bindName i ret = do
 
 checkHiding :: C.Expr -> Check (Hiding, C.Expr)
 checkHiding e = case e of
-  C.Fun a b  -> (id *** C.Fun a) <$> checkHiding b
+  C.Fun a b  -> second (C.Fun a) <$> checkHiding b
   C.Pi (C.Tel tel) b -> do
     (n, tel, stop) <- telHiding tel
     if stop then return (n, C.Pi (C.Tel tel) b)
