@@ -62,15 +62,16 @@ data TypeSig = Sig
 
 data Clause = Clause [Pattern] Expr
 
-data Expr = Lam Name Expr
-          | Pi Name Expr Expr
-          | Fun Expr Expr
-          | Equal Expr Expr Expr
-          | App Head [Elim]
-          | Set SrcLoc
-          | Meta SrcLoc
-          | Refl SrcLoc
-          | Con Name [Expr]
+data Expr
+  = Lam Name Expr
+  | Pi Name Expr Expr
+  | Fun Expr Expr
+  | Equal Expr Expr Expr
+  | App Head [Elim]
+  | Set SrcLoc
+  | Meta SrcLoc
+  | Refl SrcLoc
+  | Con Name [Expr]
 
 data Head
   = Var Name
