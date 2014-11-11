@@ -59,8 +59,12 @@ genericApplySubst t rho = do
         J       -> app J els'
 
 genericCanStrengthen
-  :: forall t m. (IsTerm t, MonadTerm t m) => t -> m (Maybe Name)
-genericCanStrengthen = runMaybeT . go 0
+  :: forall t m. (IsTerm t, MonadTerm t m) => t -> m CanStrengthen
+genericCanStrengthen t0 = do
+    mbN <- runMaybeT $ go 0 t0
+    return $ case mbN of
+      Nothing -> CSYes
+      Just n  -> CSNo n
   where
     go :: Natural -> t -> MaybeT m Name
     go ix t = do
@@ -258,11 +262,11 @@ internalToTerm t0 = do
       n <- getAbsName_ body
       SA.Lam n <$> internalToTerm body
     Pi dom cod -> do
-      mbN <- canStrengthen cod
-      case mbN of
-        Just n -> do
+      cs <- canStrengthen cod
+      case cs of
+        CSNo n -> do
           SA.Pi n <$> internalToTerm dom <*> internalToTerm cod
-        Nothing -> do
+        CSYes -> do
           SA.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
       SA.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y

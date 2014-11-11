@@ -43,10 +43,10 @@ instantiate t0 ts0 = applySubst t0 $ go $ reverse ts0
 
 strengthenTerm :: (IsTerm t, MonadTerm t m) => Term t -> m (Maybe (Term t))
 strengthenTerm t = do
-  mbN <- canStrengthen t
-  case mbN of
-    Nothing -> Just <$> strengthen_ 1 t
-    Just _  -> return Nothing
+  cs <- canStrengthen t
+  case cs of
+    CSYes  -> Just <$> strengthen_ 1 t
+    CSNo _ -> return Nothing
 
 -- Elimination
 ------------------------------------------------------------------------

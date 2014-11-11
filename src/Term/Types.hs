@@ -36,6 +36,7 @@ module Term.Types
   , SynEq(..)
     -- * IsTerm
   , IsTerm(..)
+  , CanStrengthen(..)
   , whnfView
   , getAbsName
   , getAbsName_
@@ -333,7 +334,11 @@ class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t
 
     -- TODO Consider having a partial applySubst instead
     --------------------------------------------------------------------
-    canStrengthen :: (MonadTerm t m) => t -> m (Maybe Name)
+    canStrengthen :: (MonadTerm t m) => t -> m CanStrengthen
+
+data CanStrengthen
+  = CSYes
+  | CSNo !Name
 
 whnfView :: (IsTerm t, MonadTerm t m) => Term t -> m (TermView t)
 whnfView t = (view <=< ignoreBlocking <=< whnf) t
@@ -341,7 +346,13 @@ whnfView t = (view <=< ignoreBlocking <=< whnf) t
 getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
 getAbsName t = do
   skip <- confFastGetAbsName <$> readConf
-  if skip then return (Just "_") else canStrengthen t
+  if skip
+    then return (Just "_")
+    else do
+      cs <- canStrengthen t
+      case cs of
+        CSYes  -> return Nothing
+        CSNo n -> return $ Just n
 
 getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
