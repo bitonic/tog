@@ -9,6 +9,9 @@
 \usepackage{subcaption}
 \usepackage{todonotes}
 
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+
 \newcommand{\mytodo}[2][]{\todo[color=blue!20,size=\scriptsize,fancyline,#1]{#2}}
 
 %include polycode.fmt
@@ -89,7 +92,7 @@
 %format v_1     = "v_1 "
 %format v_2     = "v_2 "
 %format Expect (a) = a
-%format Fresh (s) (g) (a) = "\textsc{Fresh}" (s, g, a)
+%format Fresh' (s) (g) (a) = "\textsc{Fresh}" (s, g, a)
 %format Fresh (g) (a) = "\textsc{Fresh}" (g, a)
 %format SolveState = "\mathsf{SolveState} "
 %format elaborate = "\mathsf{elaborate} "
@@ -106,6 +109,7 @@
 %format B_1 = "B_1 "
 %format B_2 = "B_2 "
 %format !! = "\ |\  "
+%format delta = "\delta "
 
 %subst dummy = "\_ "
 
@@ -210,15 +214,15 @@ clarifications.
 
 Going back to the problem of type checking
 \begin{code}
-  true : BoolOrNat alpha
+  true : BoolOrNat alpha {-","-}
 \end{code}
-Given
+given
 \begin{code}
   BoolOrNat : Nat -> Set
   BoolOrNat = \ x -> if x <= 2 then Bool else Nat
 
   alpha : Nat
-  alpha = _
+  alpha = _ {-","-}
 \end{code}
 there are various tempting \mytodo{I suggest that you avoid using
   subjective statements.} ways to approach the problem.  The most
@@ -370,17 +374,16 @@ Note that a signature contains only closed terms -- we do not make use
 of an explicit representation of meta-variables in context. This is for
 the sake of simplicity, since we do not present our unification
 algorithm in detail, where the contextual representation would be most
-convenient. \mytodo{Add this later, in the algorithm part: Instead, when
-  creating a new meta-variable |alpha| of type |A| in context |Gamma|,
-  we will have |alpha| to abstract over |Gamma| by giving it the type
-  |Gamma -> A|.}
+convenient. Throughout the paper, we will use |Gamma -> A| to indicate
+the function type formed by all the types in |Gamma| as the domains, and
+|t Gamma| to indicate the term formed by |t| applied to all the
+variables in |Gamma|.
 
 Neutral terms are represented in spine form, a necessary condition to
 perform bidirectional type checking: if we want to type-check untyped
 lambda abstractions, we need them to appear where we know what their
-type should be, which will be the case if we can easily infer the type
-of their head.  As we will see this is also a necessary condition to
-perform our elaboration algorithm. Note that while neutral terms are
+type should be, which will be the case if they appear as arguments of
+types whose type is always inferrable. Note that while neutral terms are
 denoted by |h (vec e)|, where |(vec e)| is a list of eliminators, we
 adopt a more readable syntax when the eliminators are known -- in their
 syntax definition $\_$ denotes where the head will appear.
@@ -390,7 +393,7 @@ meta-variables by their body, as shown in figure \ref{reduction}.  When
 doing so so, the spine form is immediately restored by using the rules
 shown in figure \ref{elimination}, which assume the application is
 well-typed.  Throughout the paper, we will liberally write |t (vec e)|
-to indicate that |vec e| should be applied to |t| according to the term
+to indicate that |vec e| should be applied to |t| according to such
 elimination rules.  Moreover, every term appearing in a derivation rule
 is implicitly weak-head normalized. \mytodo{Explain what this means.}
 
@@ -578,7 +581,7 @@ rule for |ite| needs it.
   \inference{|Gamma; x : A !- f x = g x : B|}{|Gamma !- f = g : (x : A) -> B|}
   \]
   \[
-  \inference{|Gamma !- h ==> A| & |Gamma !- h : A !! vec e_1 = vec e_2|}{
+  \inference{|Gamma !- h ==> A| & |Gamma !- h ^ nil : A !! vec e_1 = vec e_2|}{
     |Gamma !- h (vec e_1) = h (vec e_2)|
   }
   \]
@@ -596,11 +599,11 @@ rule for |ite| needs it.
   \]
   \[
   \inference{
-    |Gamma !- C = Bool : Set| & |Gamma;x : Bool !- A = B : Set| \\
+    |Gamma;x : Bool !- A = B : Set| &
     |Gamma !- u_1 = u_2 : sub x true A| & |Gamma !- v_1 = v_2 : sub x false A| \\
     |Gamma !- ite x A u_1 v_1 t : sub x t A !! e_1 = e_2|
   }{
-    |Gamma !- t : C !! (ite x A u_1 v_1) (vec e_1) = (ite x B u_2 v_2) (vec e_2)|
+    |Gamma !- t : Bool !! (ite x A u_1 v_1) (vec e_1) = (ite x B u_2 v_2) (vec e_2)|
   }
   \]
   \caption{\boxed{|Gamma !- t : A !! (vec e_1) = (vec e_2)|}}
@@ -642,13 +645,13 @@ Where the |Con| is a set of heterogeneous unification constraints
 \end{code}
 \mytodo{Explain what solving those constraints mean.}
 
-We observe that our rules always monotonically increase the signature by
+We observe that our rules always monotonically augment the signature by
 adding new meta-variables.  Moreover, when elaborating type-checking
 problem |Gamma !- t : A|, every rule generates a fresh meta-variable
 |alpha : Gamma -> A|, and returns the union of all the constraints
 generated in the premise plus |{Gamma !- alpha : A = u : B}|, for some
-term |t| and type |B| -- intuitively we want |t : A| to be |u : B|.
-For these reasons, we will write our rules in the following style:
+term |t| and type |B| -- intuitively we want |t : A| to be |u : B|.  For
+these reasons, we will write our rules in the following style:
 \[
 \inference{
   |<< Gamma_1 !- u : B >> ~> u'| & |<< Gamma_2 !- v : C >> ~> v'| \\
@@ -673,7 +676,50 @@ Sg; alpha : Gamma -> A, ^^ alpha Gamma {-","-}
 |alpha| being a fresh name in |Sg|.  Similarly, we will use
 fresh without mentioning the signature.
 
-The full rules are shown in figure \ref{elaboration}.
+The full rules are shown in figure \ref{elaboration}.  They are
+remarkably similar to the typing rules, however instead of matching
+directly on the type we expect we match through constraints.  For
+example, when elaborating |nil !- true : A|, we will get back a
+meta-variable |alpha| together with constraint
+\begin{code}
+  nil !- true : Bool = alpha : A
+\end{code}
+If |A| is indeed |Bool|, the constraint will be immediately solvable and
+|alpha| will be instantiated to |true|, thus giving back our original
+term. If on the other hand |A| cannot be proved equal to |Bool|
+immediately, for example if it is |BoolOrNat beta|, the unifier will not
+succeed and thus instantiate |alpha| until the types are proved equal --
+and until that moment |alpha| will be used in place of |true|.
+
+When we need to match on a type with subterms, we do it by creating
+fresh meta-variables to match the subterms -- see the rules for lambda
+abstractions and application.  For example, when elaborating problem
+|nil !- \ x -> x : A|, we will get back a meta-variable |alpha| together
+with constraints
+\begin{code}
+  nil !- (\ x -> delta x) : (x : beta) -> gamma x = alpha : A
+  nil; x : beta !- x : beta = delta x : gamma x
+\end{code}
+Where
+\begin{code}
+  alpha : A
+  beta : Set
+  gamma : beta -> Set
+  delta : beta -> gamma
+\end{code}
+Note how these constraints encode the fact that we are type-checking the
+identity function, since we are equating |beta| to |gamma x| in the
+second constraint.  If the provided type is wrong, for example if |A =
+Bool| or |A = Bool -> Bool -> Bool| unification will fail on the first
+and second constraint, respectively.  If the type is correct, for
+example if it is |Bool -> Bool|, all the constraints are solvable by
+pattern unification, resulting in
+\begin{code}
+  beta := Bool
+  gamma := \ x -> Bool
+  alpha := \ x -> delta x
+  delta := \ x -> x
+\end{code}
 
 \begin{figure}
   \[
@@ -742,6 +788,34 @@ The full rules are shown in figure \ref{elaboration}.
 
 \subsection{Some properties}
 
+\begin{lemma}
+  If
+  \begin{code}
+    << Sg, Gamma !- t : A >> ~> Sg', u, Con {-","-}
+  \end{code}
+  then
+  \begin{code}
+    Gamma !- t' : A
+  \end{code}
+\end{lemma}
+
+Follows immediately from the rules in figure \ref{elaboration}, since
+each rule creates a fresh meta-variable of the required type.
+
+\begin{lemma}
+  If
+  \begin{code}
+    << Sg_1, Gamma !- t : A >> ~> Sg_2, u, Con {-","-}
+  \end{code}
+  and unification solves all the constraints in |Con|, generating new
+  signature |Sg_3|, then
+  \begin{code}
+    Sg_3, Gamma !- t : A
+    Sg_3, Gamma !- t = u : A
+  \end{code}
+\end{lemma}
+
+Follows by induction on the term |t|.
 \section{Unification?}
 
 \section{The big picture}
