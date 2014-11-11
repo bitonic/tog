@@ -42,14 +42,14 @@
 %format BoolOrNat' = "\mathbf{BoolOrNat} "
 %format refl = "\mathsf{refl} "
 %format test = "\mathbf{test} "
-%format ite (x) (a) (u) (v) (t) = if t ^^ "/" x "." a then u else v
+%format ite  (x) (a) (u) (v) (t) = if t ^^ "/" x "." a then u else v
 %format ~> = "\ \leadsto\ "
 %format beta = "\beta "
 %format gamma = "\gamma "
 %format nil = "\cdot "
 %format valid = "\uline{\text{valid}} "
 %format sub (x) (u) (t) = t "[" x := u "]"
-%format (vec (a)) = "\overrightarrow{" a "}"
+%format (vec (a)) = "\bar{" a "} "
 %format app (t) (u) = t u
 %format ppa (u) (t) = t ^^ u
 %format Delta = "\Delta "
@@ -88,7 +88,8 @@
 %format u_2     = "u_2 "
 %format v_1     = "v_1 "
 %format v_2     = "v_2 "
-%format Expect (a) (b) = a
+%format Expect (a) = a
+%format Fresh (s) (g) (a) = "\textsc{Fresh}" (s, g, a)
 %format Fresh (g) (a) = "\textsc{Fresh}" (g, a)
 %format SolveState = "\mathsf{SolveState} "
 %format elaborate = "\mathsf{elaborate} "
@@ -97,6 +98,14 @@
 %format Map = "\mathsf{Map} "
 %format MetaVar = "\mathsf{MetaVar} "
 %format Maybe = "\mathsf{Maybe} "
+%format $$ = "\cdot "
+%format e_1 = "e_1 "
+%format e_2 = "e_2 "
+%format A_1 = "A_1 "
+%format A_2 = "A_2 "
+%format B_1 = "B_1 "
+%format B_2 = "B_2 "
+%format !! = "\ |\  "
 
 %subst dummy = "\_ "
 
@@ -332,16 +341,21 @@ different unification ``backends'' used by the same type checking
 
 \section{The type theory}
 
-\mytodo{Should I add |Bot| and maybe the identity type?}
 \mytodo{Explain why we need spine syntax -- for the same reason we need it
   in bidi type checking}
-\mytodo{Add equality}
-\mytodo{Explain hereditary substitution}
 
 To present the type checking algorithm we will make use of a simple type
-theory, whose syntax is shown in figure \ref{syntax}.  While small, it
-contains all the elements necessary to extend the presented ideas to a
-richer language, such as one with user defined data types and records.
+theory, whose syntax is shown in figure \ref{syntax}.  The theory is
+designed to be the simplest fragment that presents the problems
+described in section \ref{problem}.  For this reason we include a
+universe |Set| and means of computing with booleans.  \footnote{Note that
+  a simpler theory like Martin-L{\"o}f's logical framework is not
+  affected by the problems we have mentioned in section \ref{problem},
+  since we have no mean to compute types.}\mytodo{Is this footnote
+  needed?}  The typing rules and algorithms presented in this paper can
+be extended to richer theory, as we have done for our implementation,
+which includes implicit arguments, user defined inductive data types and
+records, and identity types.
 
 Most operations are done under a context (denoted by |Gamma| or
 |Delta|), that stores the types of free variables; and a signature |Sg|,
@@ -350,50 +364,69 @@ Their syntax is shown in figure \ref{contexts-signatures}. In our case
 we use the signature exclusively to store meta-variables, but in a real
 language we would use it to store arbitrary definitions. We tacitly
 assume that no duplicate names are present in contexts and signatures.
-Note that a signature contains only closed terms so we will not have an
-explicit representation of meta-variables in a context.  Instead, when
-creating a new meta-variable |alpha| of type |A| in context |Gamma|, we
-will have |alpha| to abstract over |Gamma| by giving it the type |Gamma
--> A|.\mytodo{Explain what |Gamma -> A| means}
+We make use of a global signature |Sg| throghout the rules -- there is
+no need for the rules to carry it explicitely since it is never changed.
+Note that a signature contains only closed terms -- we do not make use
+of an explicit representation of meta-variables in context. This is for
+the sake of simplicity, since we do not present our unification
+algorithm in detail, where the contextual representation would be most
+convenient. \mytodo{Add this later, in the algorithm part: Instead, when
+  creating a new meta-variable |alpha| of type |A| in context |Gamma|,
+  we will have |alpha| to abstract over |Gamma| by giving it the type
+  |Gamma -> A|.}
 
-The typing checking rules are shown in figure \ref{typing-rules}.
 Neutral terms are represented in spine form, a necessary condition to
-perform bidirectional type checking and as we will see to perform our
-algorithm.  Note that while neutral terms are denoted by |h ^ (vec e)|,
-where |(vec e)| is a list of eliminators, we adopt a more readable
-syntax when the eliminators are known -- in their syntax $\_$ denotes
-where the head will appear.  The signature |Sg| is kept implicit, since
-the rules never modify it.  Every mention of |Gamma| and |Sg| is assumed
-to be valid according to the rules in figure
-\ref{context-signature-validity}.  Our type theory includes a universe
-|Set| equipped with an inconsistent typing rule |Set : Set| for the sake
-of simplicity, but our presentation can be extended with stratified
-universes.\footnote{Note that a simpler theory like Martin-L{\"o}f's
-  logical framework is not affected by the problems we have mentioned in
-  section \ref{problem}, since we have no mean to compute
-  types.}\mytodo{Clarify here}
+perform bidirectional type checking: if we want to type-check untyped
+lambda abstractions, we need them to appear where we know what their
+type should be, which will be the case if we can easily infer the type
+of their head.  As we will see this is also a necessary condition to
+perform our elaboration algorithm. Note that while neutral terms are
+denoted by |h (vec e)|, where |(vec e)| is a list of eliminators, we
+adopt a more readable syntax when the eliminators are known -- in their
+syntax definition $\_$ denotes where the head will appear.
 
-As mentioned, our type checking rules are bidirectional: the type of
-neutral terms is inferred, everything else is checked.  This allows us
-to have untyped constructors for dependent functions and dependent
-products.
+The only reduction rule we have is the one substituting instantiated
+meta-variables by their body, as shown in figure \ref{reduction}.  When
+doing so so, the spine form is immediately restored by using the rules
+shown in figure \ref{elimination}, which assume the application is
+well-typed.  Throughout the paper, we will liberally write |t (vec e)|
+to indicate that |vec e| should be applied to |t| according to the term
+elimination rules.  Moreover, every term appearing in a derivation rule
+is implicitly weak-head normalized. \mytodo{Explain what this means.}
+
+The typing checking rules are shown in figure \ref{typing-rules}.  Every
+mention of |Gamma| and |Sg| is assumed to be valid according to the
+rules in figure \ref{context-signature-validity}.  Our type theory
+includes a universe |Set| equipped with an inconsistent typing rule |Set
+: Set| for the sake of simplicity, but our presentation can be extended
+with stratified universes -- or separating types and terms and adding a
+dedicated ``large elimination'' rule.
+
+Finally, the term conversion rules (needed to defined the typing rules)
+are shown in figure \ref{conversion}.  The conversion rules are
+performed in a type-directed way, so that it can respect the $eta$-laws
+of functions. We separate conversion of terms and of lists of
+eliminators, where
+\[
+|Gamma !- t : A !! vec e_1 = vec e_2|
+\]
+indicates checking the equality of |vec e_1| and |vec e_2| with head |t|
+of type |A|.  We need to carry the head forward since the conversion
+rule for |ite| needs it.
+
 
 \begin{figure}
   \begin{code}
-    A, B, C, t, u, v    
+    A, B, C, t, u, v
         ::=  Set                                          -- Type of types
-        |    Bot                                          -- Empty type
-        |    Unit | tt                                    -- Unit type
         |    Bool | true | false                          -- Booleans
         |    (x : A) -> B | \ x -> t                      -- Dependent functions
-        |    (x : A) *  B | (t, u)                        -- Dependent products
-        |    h ^ (vec e)                                  -- Neutral term
+        |    h (vec e)                                    -- Neutral term
 
     h   ::=  x                                            -- Variables
         |    alpha                                        -- Meta-variables
 
-    e   ::=  absurd A                                     -- |Bot| elimination
-        |    ite x A t u                                  -- |Bool| elimination
+    e   ::=  ite x A t u                                  -- |Bool| elimination
         |    ppa t                                        -- Function application
         |    fst | snd                                    -- Product elimination
   \end{code}
@@ -403,12 +436,90 @@ products.
 
 \begin{figure}
   \begin{code}
-    Gamma, Delta  ::= nil | Gamma; x : A                        -- Contexts
-  
-    Sg            ::= nil | Sg; alpha : A | Sg; alpha : A := t  -- Signatures
+    Gamma, Delta  ::= nil | Gamma; x : A                        
+
+    Sg            ::= nil | Sg; alpha : A | Sg; alpha : A := t  
   \end{code}
   \caption{Context and signature syntax.}
   \label{contexts-signatures}
+\end{figure}
+
+\begin{figure}
+  \[
+  \inference{|alpha : A := t `elem` Sg|}{
+    |alpha (vec e) ~> t (vec e)|
+  }
+  \]
+  \caption{\boxed{|t ~> u|} Term reduction}
+  \label{reduction}
+\end{figure}
+
+\begin{figure}
+  \[
+  \inference{}{
+    |(h (vec e_1)) (vec e_2) ~> h (vec e_1) (vec e_2)|
+  }\quad
+   \inference{|sub x u t (vec e_1) ~> h (vec e_2)|}{
+     |(\ x -> t) u (vec e_1) ~> h (vec e_2)|
+   }
+  \]
+  \[
+  \inference{|t (vec e_1) ~> h (vec e_2)|}{
+    |(ite x A t u true) (vec e_1) ~> h (vec e_2)|
+  }\quad
+  \inference{|u (vec e_1) ~> h (vec e_2)|}{
+    |(ite x A t u false) (vec e_1) ~> h (vec e_2)|
+  }
+  \]
+  \caption{\boxed{|t (vec e) ~> h (vec e)|} Term elimination}
+  \label{elimination}
+\end{figure}
+
+\begin{figure}
+  \begin{subfigure}[b]{1\textwidth}
+    \[
+    \inference{}{|Gamma !- Set <== Set|}\quad
+    \inference{}{|Gamma !- Bool <== Set|}\quad
+    \inference{}{|Gamma !- true <== Bool|}\quad
+    \inference{}{|Gamma !- false <== Bool|}
+    \]
+    \[
+    \inference{|Gamma !- A <== Set| & |Gamma; x : A !- B <== Set|}{
+      |Gamma !- (x : A) -> B <== Set|
+    }
+    \]
+    \[
+    \inference{|Gamma; x : A !- t <== B|}{|Gamma !- \ x -> t <== (x : A) -> B|}\quad
+    \inference{|Gamma !- h (vec e) ==> A| & |Gamma !- A = B : Set|}{
+      |Gamma !- h (vec e) <== A|
+    }
+    \]
+    \caption{\boxed{|Gamma !- t <== A|} Terms type checking}
+  \end{subfigure}
+
+    \vspace{0.3cm}
+
+    \begin{subfigure}[b]{1\textwidth}
+      \[
+      \inference{|x : A `elem` Gamma|}{
+        |Gamma !- x nil ==> A|
+      }\quad
+      \inference{|alpha : A `elem` Sg|}{
+        |Gamma !- alpha nil ==> A|
+      }\quad
+      \inference{|Gamma !- h (vec e) ==> (x : A) -> B| & |Gamma !- u <== A|}{
+        |Gamma !- h ((vec e) u) ==> sub x (h (vec e)) B|
+      }
+      \]
+      \[
+      \inference{|Gamma !- h (vec e) ==> Bool| & |Gamma !- A <== Set|}{
+        |Gamma !- ite x A t u (h (vec e)) ==> sub x (h (vec e)) A|
+      }
+      \]
+      \caption{\boxed{|Gamma !- h (vec e) => A|} Neutral terms type inference}
+    \end{subfigure}
+  \caption{Typing rules}
+  \label{typing-rules}
 \end{figure}
 
 \begin{figure}
@@ -452,83 +563,60 @@ products.
 
 \begin{figure}
   \begin{subfigure}[b]{1\textwidth}
-    \[
-    \inference{}{|Gamma !- Set <== Set|}\quad
-    \inference{}{|Gamma !- Bot <== Set|}\quad
-    \inference{}{|Gamma !- Unit <== Set|}\quad
-    \inference{}{|Gamma !- tt <== Unit|}
-    \]
-    \[
-    \inference{}{|Gamma !- Bool <== Set|}\quad
-    \inference{}{|Gamma !- true <== Bool|}\quad
-    \inference{}{|Gamma !- false <== Bool|}
-    \]
-    \[
-    \inference{|Gamma !- A <== Set| & |Gamma; x : A !- B <== Set|}{
-      |Gamma !- (x : A) -> B <== Set|
-    }\quad
-    \inference{|Gamma; x : A !- t <== B|}{|Gamma !- \ x -> t <== (x : A) -> B|}
-    \]
-    \[
-    \inference{|Gamma !- A <== Set| & |Gamma; x : A !- B <== Set|}{
-      |Gamma !- (x : A) * B <== Set|
-    }\quad
-    \inference{|Gamma !- t <== A| & |Gamma !- u <== sub x t B|}{
-      |Gamma !- (t, u) <== (x : A) * B|  
-    }
-    \]
-    \[
-    \inference{|Gamma !- h ^ (vec e) ==> A|}{
-      |Gamma !- h ^ (vec e) <== A|
-    }
-    \]
-    \caption{\boxed{|Sg, Gamma !- t <== A|} Terms type checking}
+  \[
+  \inference{}{|Gamma !- Set = Set : Set|}\quad
+  \inference{}{|Gamma !- Bool = Bool : Set|}\quad
+  \]
+  \[
+  \inference{}{|Gamma !- true = true : Bool|}\quad
+  \inference{}{|Gamma !- false = false : Bool|}\quad
+  \]
+  \[
+  \inference{|Gamma !- A_1 = A_2 : Set| & |Gamma; x : A_1 !- B_1 = B_2 : Set|}{
+    |Gamma !- (x : A_1) -> B_1 = (x : A_2) -> B_2 : Set|
+  }\quad
+  \inference{|Gamma; x : A !- f x = g x : B|}{|Gamma !- f = g : (x : A) -> B|}
+  \]
+  \[
+  \inference{|Gamma !- h ==> A| & |Gamma !- h : A !! vec e_1 = vec e_2|}{
+    |Gamma !- h (vec e_1) = h (vec e_2)|
+  }
+  \]
+  \caption{\boxed{|Gamma !- t = u : A|}}
   \end{subfigure}
 
-    \vspace{0.3cm}
+  \vspace{0.3cm}
 
-    \begin{subfigure}[b]{1\textwidth}
-      \[
-      \inference{|x : A `elem` Gamma|}{
-        |Gamma !- x ^^ nil ==> A|
-      }\quad
-      \inference{|alpha : A `elem` Sg|}{
-        |Gamma !- alpha ^^ nil ==> A|
-      }
-      \]
-      \[
-      \inference{|Gamma !- h ^ (vec e) ==> Bool| & |Gamma !- A <== Set|}{
-        |Gamma !- ite x A t u ((h ^ (vec e))) ==> sub x (h ^ vec e) A|
-      }
-      \]
-      \[
-      \inference{|Gamma !- h ^ (vec e) ==> Bot| & |Gamma !- A <== Set|}{
-        |Gamma !- absurd A ((h ^ (vec e))) ==> A|
-      }\quad
-      \inference{|Gamma !- h ^ (vec e) ==> (x : A) -> B| & |Gamma !- u <== A|}{
-        |Gamma !- h ^ (vec e) ^ u ==> sub x (h ^ (vec e)) B|
-      }
-      \]
-      \[
-      \inference{|Gamma !- h ^ (vec e) ==> (x : A) * B|}{
-        |Gamma !- fst ((h ^ (vec e))) ==> A|
-      }\quad
-      \inference{|Gamma !- h ^ (vec e) ==> (x : A) * B|}{
-        |Gamma !- snd ((h ^ (vec e))) ==> sub x (fst ((h ^ (vec e)))) B|
-      }
-      \]
-      \caption{\boxed{|Sg, Gamma !- h ^ (vec e) => A|} Neutral terms type inference}
-    \end{subfigure}
-  \caption{Typing rules. A signature |Sg| is kept implicit throughout
-    the rules, since rules never manipulate it.}
-  \label{typing-rules}
+  \begin{subfigure}[b]{1\textwidth}
+  \[
+  \inference{}{|Gamma !- t : A !! nil = nil|}\quad
+  \inference{|Gamma !- u = v : A| & |Gamma !- t u : sub x t B !! vec e_1 = vec e_2|}{
+    |Gamma !- t : (x : A) -> B !! u (vec e_1) = v (vec e_2)|
+  }
+  \]
+  \[
+  \inference{
+    |Gamma !- C = Bool : Set| & |Gamma;x : Bool !- A = B : Set| \\
+    |Gamma !- u_1 = u_2 : sub x true A| & |Gamma !- v_1 = v_2 : sub x false A| \\
+    |Gamma !- ite x A u_1 v_1 t : sub x t A !! e_1 = e_2|
+  }{
+    |Gamma !- t : C !! (ite x A u_1 v_1) (vec e_1) = (ite x B u_2 v_2) (vec e_2)|
+  }
+  \]
+  \caption{\boxed{|Gamma !- t : A !! (vec e_1) = (vec e_2)|}}
+  \end{subfigure}
+  \caption{Term and spine conversion}
+  \label{conversion}
 \end{figure}
+
+\mytodo[inline]{Maybe mention some property of the type theory?
+  Normalization, decidability of type checking, etc?}
 
 \section{The algorithm}
 
-\mytodo[inline]{I would hope that the algorithm also satisfies
-  certain properties. I guess that you haven't proved anything, but
-  you could state the properties that you aim for.}
+\mytodo[inline]{I would hope that the algorithm also satisfies certain
+  properties. I guess that you haven't proved anything, but you could
+  state the properties that you aim for.}
 
 \mytodo[inline]{Note the fact that all constraints are generated in the
   same way, and bring example to highlight the difference between this
@@ -552,168 +640,107 @@ Where the |Con| is a set of heterogeneous unification constraints
 \begin{code}
   Gamma !- t : A = u : B
 \end{code}
+\mytodo{Explain what solving those constraints mean.}
 
-The rules will be written implicitly threading the signature in a
-monadic style so that
+We observe that our rules always monotonically increase the signature by
+adding new meta-variables.  Moreover, when elaborating type-checking
+problem |Gamma !- t : A|, every rule generates a fresh meta-variable
+|alpha : Gamma -> A|, and returns the union of all the constraints
+generated in the premise plus |{Gamma !- alpha : A = u : B}|, for some
+term |t| and type |B| -- intuitively we want |t : A| to be |u : B|.
+For these reasons, we will write our rules in the following style:
 \[
 \inference{
-  |<< Sg_1, Gamma_1 !- t_1 : A >> ~> Sg_2, t_2, Con_1| &
-  |<< Sg_2, Gamma_2 !- u_1 : B >> ~> Sg_3, t_2, Con_2| \\
-  |<<Sg_3 , Gamma_3 !- v_1 : S >> ~> Sg_4, v_2, Con_3|
+  |<< Gamma_1 !- u : B >> ~> u'| & |<< Gamma_2 !- v : C >> ~> v'| \\
 }{
-  |<<Sg_4 , Gamma_4 !- t_0 : T >> ~> Sg_5, t_3, Con_4|
+  |<< Gamma_4 !- t : A >> ~> t' , A' >>|
 }
 \]
-will be typeset as
+standing for the much more tiresome
 \[
 \inference{
-  |<< Gamma_1 !- t_1 : A >> ~> t_2, Con_1| & |<< Gamma_2 !- u_1 : B >> ~> t_2, Con_2| \\
-  |<< Gamma_3 !- v_1 : S >> ~> v_2, Con_3|
+  |<< Sg_1, Gamma_1 !- u : B >> ~> Sg_2, u', Con_1| &
+  |<< Sg_2, Gamma_2 !- v : C >> ~> Sg_3, v', Con_2| \\
+  |Sg_3, alpha := Fresh' Sg_4 Gamma A|
 }{
-  |<< Gamma_4 !- t_0 : T >> ~> t_3, Con_4|
+  |<< Sg_4 , Gamma_4 !- t : A >> ~> Sg_5, t, {Gamma !- t' : A' = alpha : A} `union` Con_1 `union` Con_2|
 }
 \]
-If we need to generate fresh meta-variables, we use the macro |Fresh|,
-so that
-\[
-|alpha : Fresh Gamma A|
-\]
-stands for
-\[
-|Sg := Sg'; alpha : Gamma -> A|
-\]
-where |alpha| is assumed to be a fresh name in |Sg|.
+Where |Fresh' Sg Gamma A| stands for
+\begin{code}
+Sg; alpha : Gamma -> A, ^^ alpha Gamma {-","-}
+\end{code}
+|alpha| being a fresh name in |Sg|.  Similarly, we will use
+fresh without mentioning the signature.
 
-Additionally, we will write out the conclusion in an abbreviated form,
-since every rule follows the same pattern, so that\mytodo{Add concrete example}
-\[
-\inference{\vdots}{
-  |<< Gamma !- t : A >> ~> Expect (t' : B) Con|
-}
-\]
-stands for to
-\[
-\inference{|alpha : Fresh Gamma A| \\ \vdots}{
-  |<< Gamma !- t : A >> ~> alpha, {Gamma !- t' : B = alpha : A} `union` Con|
-}
-\]
+The full rules are shown in figure \ref{elaboration}.
 
 \begin{figure}
   \[
   \inference{}{
-    |Gamma !- Set : A ~> Expect (Set : Set) empty|
+    |Gamma !- Set : A ~> Expect (Set : Set)|
   }\quad
   \inference{}{
-    |Gamma !- Bot : A ~> Expect (Bot : Set) empty|
+    |Gamma !- Bool : A ~> Expect (Bool : Set)|
   }
   \]
   \[
   \inference{}{
-    |Gamma !- Unit : A ~> Expect (Unit : Set) empty|
+    |Gamma !- true : A ~> Expect (true : Bool)|
   }\quad
   \inference{}{
-    |Gamma !- tt : A ~> Expect (tt : Unit) empty|
-  }
-  \]
-  \[
-  \inference{}{
-    |Gamma !- Bool : A ~> Expect (Bool : Set) empty|
-  }
-  \]
-  \[
-  \inference{}{
-    |Gamma !- true : A ~> Expect (true : Bool) empty|
-  }\quad
-  \inference{}{
-    |Gamma !- false : A ~> Expect (false : Bool) empty|
+    |Gamma !- false : A ~> Expect (false : Bool)|
   }
   \]
   \[
   \inference{
-    |Gamma !- A : Set ~> A', Con_1| & |Gamma; x : A' !- B : Set ~> B', Con_2|
+    |Gamma !- A : Set ~> A'| & |Gamma; x : A' !- B : Set ~> B'|
   }{
-    |Gamma !- (x : A) -> B : S ~> Expect ((x : A') -> B' : Set) (Con_1 `union` Con_2)|
+    |Gamma !- (x : A) -> B : S ~> Expect ((x : A') -> B' : Set)|
   }
   \]
   \[
   \inference{
     |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
-    |Gamma; x : beta !- t : gamma ~> t', Con|
+    |Gamma; x : beta !- t : gamma ~> t'|
   }{
-    |Gamma !- \ x -> t : A ~> Expect ((\ x -> t') : (x : beta) -> gamma) Con|
-  }
-  \]
-  \[
-  \inference{
-    |Gamma !- A : Set ~> A', Con_1| & |Gamma; x : A' !- B : Set ~> B', Con_2|
-  }{
-    |Gamma !- (x : A) * B : S ~> Expect ((x : A') * B' : Set) (Con_1 `union` Con_2)|
-  }
-  \]
-  \[
-  \inference{
-    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
-    |Gamma !- t : beta ~> t', Con_1| & |Gamma; x : beta !- u : gamma ~> u', Con_2|}{
-    |Gamma !- (t, u) : A ~> Expect ((t', u') : (x : beta) * gamma) (Con_1 `union` Con_2)|
+    |Gamma !- \ x -> t : A ~> Expect ((\ x -> t') : (x : beta) -> gamma)|
   }
   \]
   \[
   \inference{
     |x : A `elem` Gamma|
   }{
-    |Gamma !- x ^^ nil ~> Expect (x ^^ nil : A) empty|
+    |Gamma !- x nil ~> Expect (x nil : A)|
   }\quad
   \inference{
     |alpha : A `elem` Sg|
   }{
-    |Gamma !- alpha ^^ nil ~> Expect (alpha ^^ nil : A) empty|
+    |Gamma !- alpha nil ~> Expect (alpha nil : A)|
   }\quad
   \]
   \[
   \inference{
     |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
-    |Gamma !- h ^ (vec e) : (x : beta) -> gamma ~> t, Con_1| &
-    |Gamma !- u : beta ~> u', Con_2|
+    |Gamma !- h (vec e) : (x : beta) -> gamma ~> t| &
+    |Gamma !- u : beta ~> u'|
   }{
-    |Gamma !- h ^ (vec e) ^ u : A ~> Expect (t u' : sub x u' gamma) (Con_1 `union` Con_2)|
+    |Gamma !- h ((vec e) u) : A ~> Expect (t u' : sub x u' gamma)|
   }
   \]
   \[
   \inference{
-    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
-    |Gamma !- h ^ (vec e) : (x : beta) * gamma ~> t, Con|
+    |Gamma; x : Bool !- B : Set ~> B'| & |Gamma !- h (vec e) : Bool ~> t| \\
+    |Gamma !- u : sub x true B' ~> u'| & |Gamma !- v : sub x false B' ~> v'|
   }{
-    |Gamma !- fst ((h ^ (vec e))) : A ~> Expect (fst t : beta) Con|
+    |Gamma !- ite x B u v (h (vec e)) : A ~> Expect (ite x B' u' v' t : sub x t B')|
   }
   \]
-  \[
-  \inference{
-    |beta : Fresh Gamma Set| & |gamma : Fresh (Gamma; x : beta) Set| \\
-    |Gamma !- h ^ (vec e) : (x : beta) * gamma ~> t, Con|
-  }{
-    |Gamma !- snd ((h ^ (vec e))) : A ~> Expect (snd t : sub x (fst t) gamma) Con|
-  }
-  \]
-  \[
-  \inference{
-    |Gamma !- B : Set ~> B', Con_1| &
-    |Gamma !- h ^ (vec e) : Bot ~> t, Con_2|
-  }{
-    |Gamma !- absurd B ((h ^ (vec e))) : A ~> Expect (absurd B' t : B') (Con_1 `union` Con_2)|
-  }
-  \]
-  \[
-  \inference{
-    |Gamma !- B : Set ~> B', Con_1| & |Gamma !- h ^ (vec e) : Bool ~> t, Con_2| \\
-    |Gamma !- u : Bool ~> u' : Con_3| & |Gamma !- u : Bool ~> u' : Con_4|
-  }{
-    |Gamma !- ite x B u v (h ^ (vec e)) : A ~> Expect (ite x B' u' v' t : sub x t B') (Con_1 `union` Con_2 `union` Con_3 `union` Con_4)|
-  }
-  \]
-  \caption{\boxed{|Sg, Gamma !- t : A ~> Sg',u,B|}
-    Elaboration}
+  \caption{\boxed{|Sg, Gamma !- t : A ~> Sg',u,Con|} Elaboration}
+  \label{elaboration}
 \end{figure}
-\mytodo{Add note about the syntactic shortcuts in the caption}
+
+\subsection{Some properties}
 
 \section{Unification?}
 
