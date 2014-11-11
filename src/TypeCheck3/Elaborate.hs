@@ -111,10 +111,12 @@ fillArgsWithMetas :: IsTerm t => Ctx t -> Type t -> ElabM t [Term t]
 fillArgsWithMetas ctx' type' = do
   typeView <- whnfView type'
   case typeView of
-    Pi dom cod -> do
-      arg <- addMetaVarInCtx ctx' dom
-      cod' <- instantiate_ cod arg
-      (arg :) <$> fillArgsWithMetas ctx' cod'
+    Pi impl dom cod -> do
+      arg   <- addMetaVarInCtx ctx' impl
+      dom'  <- instantiate_ dom arg
+      arg'  <- addMetaVarInCtx ctx' dom'
+      cod'  <- instantiate_ cod arg'
+      (arg:) . (arg':) <$> fillArgsWithMetas ctx' cod'
     Set -> do
       return []
     _ -> do
@@ -124,12 +126,16 @@ elaborateDataConArgs
   :: (IsTerm t) => Ctx t -> Type t -> [SA.Expr] -> ElabM t [Term t]
 elaborateDataConArgs _ _ [] =
   return []
-elaborateDataConArgs ctx type_ (synArg : synArgs) = do
-  Pi dom cod <- whnfView type_
-  arg <- elaborate' ctx dom synArg
-  cod' <- instantiate_ cod arg
+elaborateDataConArgs ctx type_ (synArg1 : synArg2 : synArgs) = do
+  Pi impl dom cod <- whnfView type_
+  arg  <- elaborate' ctx impl synArg1
+  dom' <- instantiate_ dom arg
+  arg' <- elaborate' ctx dom synArg2
+  cod' <- instantiate_ cod arg'
   args <- elaborateDataConArgs ctx cod' synArgs
-  return (arg : args)
+  return (arg : arg' : args)
+elaborateDataConArgs _ _ (_:[]) =
+  fatalError "Doesn't allow single arguments - this may be changed."
 
 inferHead
   :: (IsTerm t)
@@ -189,7 +195,9 @@ elaborateApp ctx type_ h (elims :< SA.Proj projName) = atSrcLoc projName $ do
   typeRec <- app (Def tyCon) (map Apply tyConArgs)
   rec_ <- elaborateApp' ctx typeRec h elims
   type0 <- Tel.discharge projTypeTel projType tyConArgs
-  Pi _ type1 <- whnfView type0
+  -- TODO assert that implicit is Top
+  Pi _ _ type1 <- whnfView type0
   type' <- instantiate_ type1 rec_
   t <- eliminate rec_ [Proj proj]
   expect ctx type_ type' t
+

@@ -7,6 +7,7 @@ import           Prelude.Extended
 import           Term                             hiding (lam, pi, equal, set, refl, con, app)
 import           Term.Impl
 import qualified Term                             as Term
+import qualified Term.Substitution                as Term
 import qualified Term.Signature                   as Sig
 import           Syntax
 import qualified Syntax.Abstract                  as SA
@@ -26,10 +27,10 @@ tm nms e0 = case e0 of
   SA.Pi n dom cod -> do
     dom' <- tm nms dom
     cod' <- tm (nms :< n) cod
-    Term.pi dom' cod'
+    Term.pi_ dom' cod'
   SA.Fun dom cod -> do
-    join $ Term.pi <$> tm nms dom
-                   <*> (weaken_ 1 =<< tm nms cod)
+    join $ Term.pi_ <$> tm nms dom
+                    <*> (weaken_ 1 =<< tm nms cod)
   SA.Equal type_ x y -> do
     join $ Term.equal <$> tm nms type_ <*> tm nms x <*> tm nms y
   SA.Set _ -> do

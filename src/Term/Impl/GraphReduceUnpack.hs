@@ -23,6 +23,7 @@ type Ref = GraphReduceUnpack
 data Tm
     = Pi {-# UNPACK #-} !Ref
          {-# UNPACK #-} !Ref
+         {-# UNPACK #-} !Ref
     | Lam {-# UNPACK #-} !Ref
     | Equal {-# UNPACK #-} !Ref
             {-# UNPACK #-} !Ref
@@ -63,7 +64,7 @@ instance T.IsTerm GraphReduceUnpack where
   view ref = do
     t <- liftIO $ readIORef $ unGRU ref
     return $ case t of
-      Pi dom cod -> T.Pi dom cod
+      Pi impl dom cod -> T.Pi impl dom cod
       Lam body -> T.Lam body
       Equal type_ x y -> T.Equal type_ x y
       Refl -> T.Refl
@@ -74,7 +75,7 @@ instance T.IsTerm GraphReduceUnpack where
   unview tView = do
     let t = case tView of
           T.Lam body -> Lam body
-          T.Pi dom cod -> Pi dom cod
+          T.Pi impl dom cod -> Pi impl dom cod
           T.Equal type_ x y -> Equal type_ x y
           T.Refl -> Refl
           T.Con dataCon args -> Con dataCon args

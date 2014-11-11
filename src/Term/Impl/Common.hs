@@ -27,6 +27,7 @@ import           Term
 import           Term.Types                       (unview, view)
 import qualified Term.Substitution                as Sub
 import           Term.Substitution.Types          as Sub
+import           Term.Substitution.Utils          as Sub
 import qualified Term.Signature                   as Sig
 
 genericApplySubst
@@ -38,8 +39,10 @@ genericApplySubst t rho = do
   case tView of
     Lam body ->
       lam =<< applySubst body (Sub.lift 1 rho)
-    Pi dom cod ->
-      join $ pi <$> applySubst dom rho <*> applySubst cod (Sub.lift 1 rho)
+    Pi impl dom cod ->
+      join $ pi <$> applySubst impl rho 
+                <*> applySubst dom (Sub.lift 1 rho) 
+                <*> applySubst cod (Sub.lift 2 rho)
     Equal type_ x y  ->
       join $ equal <$> applySubst type_ rho
                    <*> applySubst x rho
@@ -70,8 +73,8 @@ genericCanStrengthen = runMaybeT . go 0
           return $ varName v
         App _ es -> do
           msum $ map goElim es
-        Pi dom cod -> do
-          go ix dom <|> go (ix+1) cod
+        Pi impl dom cod -> do
+          go ix impl <|> go (ix+1) dom <|> go (ix+2) cod
         Lam body -> do
           go (ix+1) body
         Equal type_ x y -> do
@@ -169,8 +172,8 @@ genericNf t = do
   case tView of
     Lam body ->
       lam =<< nf body
-    Pi domain codomain ->
-      join $ pi <$> nf domain <*> nf codomain
+    Pi impl domain codomain ->
+      join $ pi <$> nf impl <*> nf domain <*> nf codomain
     Equal type_ x y ->
       join $ equal <$> nf type_ <*> nf x <*> nf y
     Refl ->
@@ -207,7 +210,7 @@ genericTypeOfJ =
 
     infixr 9 -->
     (-->) :: (Name, m t) -> m t -> m t
-    (_, type_) --> t = join $ pi <$> type_ <*> t
+    (_, type_) --> t = join $ Sub.pi_ <$> type_ <*> t
 
 genericSynEq
   :: (IsTerm t, MonadTerm t m)
@@ -222,8 +225,9 @@ genericTermViewEq tView1 tView2 = do
   case (tView1, tView2) of
     (Lam body1, Lam body2) ->
       synEq body1 body2
-    (Pi domain1 codomain1, Pi domain2 codomain2) ->
-      (&&) <$> synEq domain1 domain2 <*> synEq codomain1 codomain2
+    (Pi impl1 domain1 codomain1, Pi impl2 domain2 codomain2) ->
+      (&&) <$> ((&&) <$> synEq impl1 impl2 <*> synEq domain1 domain2)
+           <*> synEq codomain1 codomain2
     (Equal type1 x1 y1, Equal type2 x2 y2) ->
       (&&) <$> ((&&) <$> synEq type1 type2 <*> synEq x1 x2)
            <*> synEq y1 y2
@@ -257,7 +261,7 @@ internalToTerm t0 = do
     Lam body -> do
       n <- getAbsName_ body
       SA.Lam n <$> internalToTerm body
-    Pi dom cod -> do
+    Pi _ dom cod -> do
       mbN <- canStrengthen cod
       case mbN of
         Just n -> do
@@ -289,7 +293,11 @@ genericMetaVars t = do
   tView <- whnfView t
   case tView of
     Lam body           -> metaVars body
-    Pi domain codomain -> (<>) <$> metaVars domain <*> metaVars codomain
+    Pi impl domain codomain -> do
+      impMetas <- metaVars impl
+      domMetas <- metaVars domain
+      codMetas <- metaVars codomain
+      return . mconcat $ [impMetas, domMetas, codMetas]
     Equal type_ x y    -> mconcat <$> mapM metaVars [type_, x, y]
     App h elims        -> (<>) <$> metaVarsHead h <*> metaVars elims
     Set                -> return mempty
