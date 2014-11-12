@@ -82,7 +82,7 @@ data Head
   | J SrcLoc
 
 data Elim
-  = Apply Expr
+  = Apply Expr Expr
   | Proj Name
   deriving Eq
 
@@ -153,7 +153,7 @@ instance HasSrcLoc Pattern where
 
 instance HasSrcLoc Elim where
   srcLoc e = case e of
-    Apply e -> srcLoc e
+    Apply _ e -> srcLoc e
     Proj x  -> srcLoc x
 
 -- | Syntactic equality (ignoring source locations).
@@ -228,7 +228,7 @@ instance Pretty Pattern where
 ------------------------------------------------------------------------
 
 instance Pretty Elim where
-  prettyPrec p (Apply e) = condParens (p > 0) $ "$" <+> prettyPrec p e
+  prettyPrec p (Apply ei e) = condParens (p > 0) $ "$" <+> ("{" <> prettyPrec p ei) <+> "}" <> prettyPrec p e
   prettyPrec _ (Proj x)  = "." <> pretty x
 
 instance Pretty Expr where
@@ -264,8 +264,8 @@ instance Pretty Expr where
         appView e = error $ "impossible: pretty application"
 
         buildApp :: Head -> [Expr] -> [Elim] -> (Head, [Expr])
-        buildApp h es0 (Apply e : es1) = buildApp h (es0 ++ [e]) es1
-        buildApp h es0 (Proj f  : es1) = buildApp (Def f) [App h $ map Apply es0] es1
+        buildApp h es0 (Apply ei e : es1) = buildApp h (es0 ++ [ei,e]) es1
+        buildApp h es0 (Proj f  : es1) = buildApp (Def f) [App h $ map (Apply (Top (srcLoc f)) es0] es1
         buildApp h es []               = (h, es)
     Refl{} -> text "refl"
     Con c args -> prettyApp p (pretty c) args

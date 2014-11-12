@@ -22,7 +22,7 @@ import           Syntax
 import           Term.Types                       (IsTerm, Var, MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
-import qualified Term.Subst.Utils          as Term
+import qualified Term.Subst.Utils                 as Term
 
 -- Ctx
 ------------------------------------------------------------------------
@@ -106,4 +106,4 @@ lam (Snoc ctx _) t = lam ctx =<< Term.lam t
 app :: (IsTerm t, MonadTerm t m) => m (Term t) -> Ctx (Type t) -> m (Term t)
 app t ctx0 = do
   t' <- t
-  Term.eliminate t' . map Term.Apply =<< mapM Term.var (vars ctx0)
+  Term.eliminate t' . map (Term.Apply Term.tt)  =<< mapM Term.var (vars ctx0)

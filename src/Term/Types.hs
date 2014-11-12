@@ -182,7 +182,8 @@ instance Hashable Head
 -- | 'Elim's are applied to 'Head's.  They're either arguments applied
 -- to functions, or projections applied to records.
 data Elim t
-    = Apply !t
+    = Apply !t -- ^ Implicit argument 
+            !t -- ^ Explicit argument
     | Proj !Projection
     deriving (Eq, Show, Read, Generic, Functor, Foldable, Traversable)
 
@@ -227,7 +228,7 @@ class MetaVars t a where
   metaVars :: (IsTerm t, MonadTerm t m) => a -> m (HS.HashSet MetaVar)
 
 instance MetaVars t (Elim t) where
-  metaVars (Apply t) = metaVars t
+  metaVars (Apply impl t) = (<>) <$> (metaVars impl) <*> (metaVars t)
   metaVars (Proj _)  = return mempty
 
 instance MetaVars t a => MetaVars t [a] where
@@ -241,7 +242,7 @@ class Nf t a where
 
 instance Nf t (Elim t) where
   nf (Proj p)  = return $ Proj p
-  nf (Apply t) = Apply <$> nf t
+  nf (Apply impl t) = Apply <$> nf impl <*> nf t
 
 instance Nf t a => Nf t [a] where
   nf = mapM nf
@@ -259,9 +260,10 @@ class PrettyM t a where
   prettyM = prettyPrecM 0
 
 instance PrettyM t (Elim t) where
-  prettyPrecM p (Apply t) = do
+  prettyPrecM p (Apply impl t) = do
     tDoc <- prettyPrecM p t
-    return $ PP.condParens (p > 0) $ "$" <+> tDoc
+    implDoc <- prettyPrecM p impl
+    return $ PP.condParens (p > 0) $ "$" <+> "{" <+> implDoc <+> "}" <+> tDoc
   prettyPrecM _ (Proj p) = do
     return $ "." <> PP.pretty (pName p)
 
@@ -276,7 +278,7 @@ class ApplySubst t a where
 
 instance ApplySubst t (Elim t) where
   applySubst (Proj p)  _   = return $ Proj p
-  applySubst (Apply t) sub = Apply <$> applySubst t sub
+  applySubst (Apply impl t) sub = Apply <$> applySubst impl sub <*> applySubst t sub
 
 instance ApplySubst t a => ApplySubst t [a] where
   applySubst t rho = mapM (`applySubst` rho) t
@@ -290,7 +292,7 @@ class SynEq t a where
 instance SynEq t (Elim t) where
   synEq e1 e2 = case (e1, e2) of
     (Proj p1,  Proj p2)  -> return $ p1 == p2
-    (Apply t1, Apply t2) -> synEq t1 t2
+    (Apply impl1 t1, Apply impl2 t2) -> (&&) <$> (synEq t1 t2) <*> (synEq impl1 impl2)
     (_,        _)        -> return False
 
 instance SynEq t (Blocked t) where
@@ -477,8 +479,8 @@ instance Monad m => Monad (TermTraverseT err m) where
   return = TTT . return . pure
 
   TTT m >>= f = TTT $ do
-    tt <- m
-    case tt of
+    tt' <- m
+    case tt' of
       TTOK x -> runTermTraverseT $ f x
       TTFail err -> return $ TTFail err
       TTMetaVars mvs -> return $ TTMetaVars mvs

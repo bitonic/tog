@@ -90,8 +90,8 @@ genericCanStrengthen t0 = do
         Con _ ts -> do
           msum $ map (go ix) ts
       where
-        goElim (Proj _)   = mzero
-        goElim (Apply t') = go ix t'
+        goElim (Proj _)     = mzero
+        goElim (Apply i t') = go ix i <|> go ix t'
 
 genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
@@ -108,7 +108,8 @@ genericWhnf t = do
       case mbT of
         Just t' -> return t'
         Nothing -> return $ NotBlocked t
-    App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
+    App J es0@(_ : x : _ : _ : Apply _ p : Apply _' refl' : es) -> do
+    -- TODO: Verify that there will be no implicit arguments for eliminators applied to J
       refl'' <- whnf refl'
       case refl'' of
         MetaVarHead mv _ ->
@@ -287,7 +288,7 @@ internalToTerm t0 = do
             J -> SA.J SA.noSrcLoc
             Meta mv -> SA.Var (SA.Name (SA.srcLoc mv) (PP.render mv))
       args' <- forM args $ \arg -> case arg of
-        Apply t -> SA.Apply <$> internalToTerm t
+        Apply impl t -> SA.Apply <$> internalToTerm impl <*> internalToTerm t
         Proj p  -> return $ SA.Proj $ pName p
       return $ SA.App h' args'
 

@@ -221,7 +221,7 @@ checkDecls ds0 ret = case ds0 of
     xs <- checkHiddenNames n xs
     let is = map mkVarInfo xs
     xs <- mapC bindName is $ return
-    let t = App (Def x) (map (\x -> Apply (App (Var x) [])) xs)
+    let t = App (Def x) (map (\x -> Apply (Top (srcLoc x)) (App (Var x) [])) xs)
     mapC (checkConstructor t is) cs $ \cs -> checkDecls ds $ \ds' ->
       ret (DataDef x xs cs : ds')
   C.Record x pars (C.RecordBody con fs) : ds | Just xs <- isParamDef pars -> do
@@ -412,7 +412,7 @@ checkExpr e = case e of
               C.HArg _ : _ -> scopeError e $ "Unexpected implicit argument to projection function: " ++ C.printTree e
               C.Arg e : es -> do
                 e <- checkExpr e
-                doProj x e . map Apply =<< checkArgs e n es (\ _ -> return ())
+                doProj x e . map (Apply (Top (srcLoc e))) =<< checkArgs e n es (\ _ -> return ())
             IsRefl p | [] <- es ->
               return $ Refl p
             IsRefl p ->
@@ -420,7 +420,8 @@ checkExpr e = case e of
             IsCon c args -> do
               Con c <$> checkArgs z n es
                         (\es -> checkNumberOfConstructorArguments e c es args)
-            Other h    -> App h . map Apply <$> checkArgs z n es (\ _ -> return ())
+-- does Other refer to anything other than function application?
+            Other h    -> App h . map (Apply (error "Unsure if Top or not")) <$> checkArgs z n es (\ _ -> return ())
             HeadSet p  -> return $ Set p
             HeadMeta p -> return $ Meta p
     doProj x (App h es1) es2 = return $ App h (es1 ++ [Proj x] ++ es2)
@@ -466,6 +467,7 @@ data AppView = CApp C.Name [C.Arg]
 
 appView :: C.Expr -> Check AppView
 appView e = case e of
+-- TODO: Maybe allow implicit arguments to be given for function applications?
   C.App (arg@C.HArg{} : _) ->
     scopeError arg $ "Unexpected curly braces: " ++ C.printTree arg
   C.App (C.Arg e : es) -> applyTo es =<< appView e

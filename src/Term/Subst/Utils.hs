@@ -75,8 +75,8 @@ eliminate t elims = do
         if unField (pField proj) >= length args
         then badElimination
         else eliminate (args !! unField (pField proj)) es
-    (Lam body, Apply argument : es) -> do
-        body' <- instantiate_ body argument
+    (Lam body, Apply impl argument : es) -> do
+        body' <- instantiate body [impl,argument]
         eliminate body' es
     (App h es1, es2) ->
         app h (es1 ++ es2)
