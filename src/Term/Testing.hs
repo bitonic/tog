@@ -50,7 +50,7 @@ tm nms e0 = case e0 of
     Term.app h' =<< mapM tmElim es
   where
     tmElim (SA.Proj _)   = error "tm.Proj"
-    tmElim (SA.Apply e') = Apply <$> tm nms e'
+    tmElim (SA.Apply impl e') = Apply <$> tm nms impl <*> tm nms e'
 
     bwdIndex y (_  :< x) | y == x = Just 0
     bwdIndex y (xs :< _) = succ <$> bwdIndex y xs

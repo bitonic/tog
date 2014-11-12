@@ -206,9 +206,9 @@ genericTypeOfJ =
           ("eq", join (equal <$> v "A" 4 <*> v "x" 1 <*> v "y" 0)) -->
           r set
     ) -->
-    ("p", ("x", v "A" 3) --> (app (Var (mkVar "P" 1)) . map Apply =<< sequence [v "x" 0, v "x" 0, r refl])) -->
+    ("p", ("x", v "A" 3) --> (app (Var (mkVar "P" 1)) . map (Apply Term.tt) =<< sequence [v "x" 0, v "x" 0, r refl])) -->
     ("eq", join (equal <$> v "A" 4 <*> v "x" 3 <*> v "y" 2)) -->
-    (app (Var (mkVar "P" 2)) . map Apply =<< sequence [v "x" 4, v "y" 3, v "eq" 0])
+    (app (Var (mkVar "P" 2)) . map (Apply Term.tt) =<< sequence [v "x" 4, v "y" 3, v "eq" 0])
   where
     v n ix = var $ mkVar n ix
     r = return

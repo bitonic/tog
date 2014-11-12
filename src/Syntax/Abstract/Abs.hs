@@ -265,7 +265,7 @@ instance Pretty Expr where
 
         buildApp :: Head -> [Expr] -> [Elim] -> (Head, [Expr])
         buildApp h es0 (Apply ei e : es1) = buildApp h (es0 ++ [ei,e]) es1
-        buildApp h es0 (Proj f  : es1) = buildApp (Def f) [App h $ map (Apply (Top (srcLoc f)) es0] es1
+        buildApp h es0 (Proj f  : es1) = buildApp (Def f) [App h $ map (Apply (Top (srcLoc f))) es0] es1
         buildApp h es []               = (h, es)
     Refl{} -> text "refl"
     Con c args -> prettyApp p (pretty c) args
