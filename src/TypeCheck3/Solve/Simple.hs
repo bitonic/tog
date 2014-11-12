@@ -19,7 +19,7 @@ import qualified PrettyPrint                      as PP
 import           Term
 
 import qualified Term.Telescope                   as Tel
-import qualified Term.Substitution                as Sub
+import qualified Term.Subst                as Sub
 import qualified TypeCheck3.Common                as Common
 import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
 import           TypeCheck3.Monad

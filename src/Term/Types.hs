@@ -31,11 +31,12 @@ module Term.Types
     -- ** Pretty
   , PrettyM(..)
     -- ** Subst
-  , Subst(..)
+  , ApplySubst(..)
     -- ** SynEq
   , SynEq(..)
     -- * IsTerm
   , IsTerm(..)
+  , CanStrengthen(..)
   , whnfView
   , getAbsName
   , getAbsName_
@@ -90,7 +91,7 @@ import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      ((<+>))
 import           Term.Telescope.Types             (Tel)
-import           Term.Substitution.Types          (Substitution)
+import           Term.Subst.Types          (Subst)
 import           Term.Synonyms
 
 -- Var
@@ -270,14 +271,14 @@ instance PrettyM t a => PrettyM t [a] where
 -- Subst
 ------------------------------------------------------------------------
 
-class Subst t a where
-  applySubst :: (IsTerm t, MonadTerm t m) => a -> Substitution t -> m a
+class ApplySubst t a where
+  applySubst :: (IsTerm t, MonadTerm t m) => a -> Subst t -> m a
 
-instance Subst t (Elim t) where
+instance ApplySubst t (Elim t) where
   applySubst (Proj p)  _   = return $ Proj p
   applySubst (Apply t) sub = Apply <$> applySubst t sub
 
-instance Subst t a => Subst t [a] where
+instance ApplySubst t a => ApplySubst t [a] where
   applySubst t rho = mapM (`applySubst` rho) t
 
 -- SynEq
@@ -316,7 +317,7 @@ instance (SynEq t a, SynEq t b) => SynEq t (a, b) where
 -- HasAbs
 ---------
 
-class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t t) => IsTerm t where
+class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, ApplySubst t t, SynEq t t) => IsTerm t where
     -- Evaluation
     --------------------------------------------------------------------
     whnf :: MonadTerm t m => Term t -> m (Blocked (Term t))
@@ -337,7 +338,11 @@ class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t
 
     -- TODO Consider having a partial applySubst instead
     --------------------------------------------------------------------
-    canStrengthen :: (MonadTerm t m) => t -> m (Maybe Name)
+    canStrengthen :: (MonadTerm t m) => t -> m CanStrengthen
+
+data CanStrengthen
+  = CSYes
+  | CSNo !Name
 
 whnfView :: (IsTerm t, MonadTerm t m) => Term t -> m (TermView t)
 whnfView t = (view <=< ignoreBlocking <=< whnf) t
@@ -345,7 +350,13 @@ whnfView t = (view <=< ignoreBlocking <=< whnf) t
 getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
 getAbsName t = do
   skip <- confFastGetAbsName <$> readConf
-  if skip then return (Just "_") else canStrengthen t
+  if skip
+    then return (Just "_")
+    else do
+      cs <- canStrengthen t
+      case cs of
+        CSYes  -> return Nothing
+        CSNo n -> return $ Just n
 
 getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t

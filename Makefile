@@ -39,3 +39,8 @@ install-prof: $(bnfc_output) $(hs_sources)
 .PHONY: install
 install: $(bnfc_output) $(hs_source)
 	cabal install --disable-documentation
+
+.PHONY: ghci
+ghci: $(bnfc_output) $(alex_file).hs $(happy_file).hs
+	ghci src/Main.hs
+
