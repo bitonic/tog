@@ -103,12 +103,11 @@ curryMetaVar t = do
                 -- This means that the type was unit.
                 then do
                   tel' <- instantiate_ tel recordTerm
-                  type1 <- applySubst type0 $ Sub.lift telLen $ Sub.singleton recordTerm
+                  type1 <- applySubst type0 . Sub.lift telLen =<< Sub.singleton recordTerm
                   (_, args, type2) <- go (dataConPars Tel.++ tel') type1
                   return (True, Nothing : args, type2)
                 else do
-                  let sub = Sub.instantiate recordTerm $
-                            Sub.weaken numDataConPars Sub.id
+                  sub <- Sub.instantiate recordTerm $ Sub.weaken numDataConPars Sub.id
                   tel' <- applySubst tel sub
                   type1 <- applySubst type0 $ Sub.lift telLen sub
                   (_, args, type2) <- go (dataConPars Tel.++ tel') type1
@@ -372,7 +371,7 @@ etaExpandVar type_ tel = do
   dataConT <- con dataCon =<< mapM var (Ctx.vars dataConPars)
   -- TODO isn't this broken?  don't we have to handle unit types
   -- specially like in metavar expansion?
-  let sub = Sub.instantiate dataConT $ Sub.weaken (Ctx.length dataConPars) Sub.id
+  sub <- Sub.instantiate dataConT $ Sub.weaken (Ctx.length dataConPars) Sub.id
   tel' <- applySubst tel sub
   let telLen = Tel.length tel'
   return (dataConPars Tel.++ tel', Sub.lift telLen sub)

@@ -36,10 +36,10 @@ instantiate_ :: (IsTerm t, ApplySubst t a, MonadTerm t m) => a -> Term t -> m a
 instantiate_ body arg = instantiate body [arg]
 
 instantiate :: (IsTerm t , ApplySubst t a, MonadTerm t m) => a -> [Term t] -> m a
-instantiate t0 ts0 = applySubst t0 $ go $ reverse ts0
+instantiate t0 ts0 = applySubst t0 =<< go (reverse ts0)
   where
-    go []       = Sub.id
-    go (t : ts) = Sub.instantiate t (go ts)
+    go []       = return Sub.id
+    go (t : ts) = Sub.instantiate t =<< go ts
 
 strengthenTerm :: (IsTerm t, MonadTerm t m) => Term t -> m (Maybe (Term t))
 strengthenTerm t = do
