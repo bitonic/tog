@@ -12,7 +12,7 @@
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
 
-\newcommand{\mytodo}[2][]{\todo[color=blue!20,size=\scriptsize,fancyline,#1]{#2}}
+\newcommand{\mytodo}[2][]{\todo[color=gray!20,size=\scriptsize,fancyline,#1]{#2}}
 
 %include polycode.fmt
 
@@ -52,7 +52,7 @@
 %format nil = "\cdot "
 %format valid = "\uline{\text{valid}} "
 %format sub (x) (u) (t) = t "[" x := u "]"
-%format (vec (a)) = "\bar{" a "} "
+%format (vec (a)) = "\overline{" a "} "
 %format app (t) (u) = t u
 %format ppa (u) (t) = t ^^ u
 %format Delta = "\Delta "
@@ -110,6 +110,7 @@
 %format B_2 = "B_2 "
 %format !! = "\ |\  "
 %format delta = "\delta "
+%format !--> = ^^ "\mapsto " ^^
 
 %subst dummy = "\_ "
 
@@ -411,9 +412,9 @@ performed in a type-directed way, so that it can respect the $eta$-laws
 of functions. We separate conversion of terms and of lists of
 eliminators, where
 \[
-|Gamma !- t : A !! vec e_1 = vec e_2|
+|Gamma !- t : A !! vec e = vec d|
 \]
-indicates checking the equality of |vec e_1| and |vec e_2| with head |t|
+indicates checking the equality of |vec e| and |vec d| with head |t|
 of type |A|.  We need to carry the head forward since the conversion
 rule for |ite| needs it.
 
@@ -421,17 +422,16 @@ rule for |ite| needs it.
 \begin{figure}
   \begin{code}
     A, B, C, t, u, v
-        ::=  Set                                          -- Type of types
-        |    Bool | true | false                          -- Booleans
-        |    (x : A) -> B | \ x -> t                      -- Dependent functions
-        |    h (vec e)                                    -- Neutral term
+          ::=  Set                                          -- Type of types
+          |    Bool | true | false                          -- Booleans
+          |    (x : A) -> B | \ x -> t                      -- Dependent functions
+          |    h (vec e)                                    -- Neutral term
 
-    h   ::=  x                                            -- Variables
-        |    alpha                                        -- Meta-variables
+    h     ::=  x                                            -- Variables
+          |    alpha                                        -- Meta-variables
 
-    e   ::=  ite x A t u                                  -- |Bool| elimination
-        |    ppa t                                        -- Function application
-        |    fst | snd                                    -- Product elimination
+    e, d  ::=  ppa t                                        -- Function application
+          |    ite x A t u                                  -- |Bool| elimination
   \end{code}
   \caption{Terms, heads, and eliminators syntax.}
   \label{syntax}
@@ -460,21 +460,21 @@ rule for |ite| needs it.
 \begin{figure}
   \[
   \inference{}{
-    |(h (vec e_1)) (vec e_2) ~> h (vec e_1) (vec e_2)|
+    |(h (vec e)) (vec d) ~> h (vec e) (vec d)|
   }\quad
-   \inference{|sub x u t (vec e_1) ~> h (vec e_2)|}{
-     |(\ x -> t) u (vec e_1) ~> h (vec e_2)|
+   \inference{|sub x u t (vec e) ~> h (vec d)|}{
+     |(\ x -> t) u (vec e) ~> h (vec d)|
    }
   \]
   \[
-  \inference{|t (vec e_1) ~> h (vec e_2)|}{
-    |(ite x A t u true) (vec e_1) ~> h (vec e_2)|
+  \inference{|t (vec e) ~> h (vec d)|}{
+    |(ite x A t u true) (vec e) ~> h (vec d)|
   }\quad
-  \inference{|u (vec e_1) ~> h (vec e_2)|}{
-    |(ite x A t u false) (vec e_1) ~> h (vec e_2)|
+  \inference{|u (vec e) ~> h (vec d)|}{
+    |(ite x A t u false) (vec e) ~> h (vec d)|
   }
   \]
-  \caption{\boxed{|t (vec e) ~> h (vec e)|} Term elimination}
+  \caption{\boxed{|t (vec e) ~> h (vec d)|} Term elimination}
   \label{elimination}
 \end{figure}
 
@@ -581,8 +581,8 @@ rule for |ite| needs it.
   \inference{|Gamma; x : A !- f x = g x : B|}{|Gamma !- f = g : (x : A) -> B|}
   \]
   \[
-  \inference{|Gamma !- h ==> A| & |Gamma !- h ^ nil : A !! vec e_1 = vec e_2|}{
-    |Gamma !- h (vec e_1) = h (vec e_2)|
+  \inference{|Gamma !- h ==> A| & |Gamma !- h ^ nil : A !! vec e = vec d|}{
+    |Gamma !- h (vec e) = h (vec d)|
   }
   \]
   \caption{\boxed{|Gamma !- t = u : A|}}
@@ -593,20 +593,20 @@ rule for |ite| needs it.
   \begin{subfigure}[b]{1\textwidth}
   \[
   \inference{}{|Gamma !- t : A !! nil = nil|}\quad
-  \inference{|Gamma !- u = v : A| & |Gamma !- t u : sub x t B !! vec e_1 = vec e_2|}{
-    |Gamma !- t : (x : A) -> B !! u (vec e_1) = v (vec e_2)|
+  \inference{|Gamma !- u = v : A| & |Gamma !- t u : sub x t B !! vec e = vec d|}{
+    |Gamma !- t : (x : A) -> B !! u (vec e) = v (vec d)|
   }
   \]
   \[
   \inference{
     |Gamma;x : Bool !- A = B : Set| &
     |Gamma !- u_1 = u_2 : sub x true A| & |Gamma !- v_1 = v_2 : sub x false A| \\
-    |Gamma !- ite x A u_1 v_1 t : sub x t A !! e_1 = e_2|
+    |Gamma !- ite x A u_1 v_1 t : sub x t A !! e = d|
   }{
-    |Gamma !- t : Bool !! (ite x A u_1 v_1) (vec e_1) = (ite x B u_2 v_2) (vec e_2)|
+    |Gamma !- t : Bool !! (ite x A u_1 v_1) (vec e) = (ite x B u_2 v_2) (vec d)|
   }
   \]
-  \caption{\boxed{|Gamma !- t : A !! (vec e_1) = (vec e_2)|}}
+  \caption{\boxed{|Gamma !- t : A !! (vec e) = (vec d)|}}
   \end{subfigure}
   \caption{Term and spine conversion}
   \label{conversion}
@@ -616,17 +616,6 @@ rule for |ite| needs it.
   Normalization, decidability of type checking, etc?}
 
 \section{The algorithm}
-
-\mytodo[inline]{I would hope that the algorithm also satisfies certain
-  properties. I guess that you haven't proved anything, but you could
-  state the properties that you aim for.}
-
-\mytodo[inline]{Note the fact that all constraints are generated in the
-  same way, and bring example to highlight the difference between this
-  elaboration and simple type-checking}
-
-\mytodo[inline]{It's a writer monad for the Signature as well, not only
-  the constraint list.}
 
 As mentioned in section \ref{problem}, our algorithm will elaborate a
 type checking problem into a well typed term and a set of unification
@@ -674,7 +663,7 @@ Where |Fresh' Sg Gamma A| stands for
 Sg; alpha : Gamma -> A, ^^ alpha Gamma {-","-}
 \end{code}
 |alpha| being a fresh name in |Sg|.  Similarly, we will use
-fresh without mentioning the signature.
+|Fresh| without mentioning the signature.
 
 The full rules are shown in figure \ref{elaboration}.  They are
 remarkably similar to the typing rules, however instead of matching
@@ -816,7 +805,74 @@ each rule creates a fresh meta-variable of the required type.
 \end{lemma}
 
 Follows by induction on the term |t|.
+
+\mytodo[inline]{Some remark regarding the fact that the most important
+  property would be the one showing that we type-check enough things --
+  or in other words that the constraints are solvable when they should}
+
 \section{Unification?}
+
+We described how the elaboration procedure generates constraints of the
+form
+\begin{code}
+  Gamma !- t : A = u : B {-","-}
+\end{code}
+where solving the constraint means proving both |A| and |B| and |t| and
+|u| definitionally equal, possibly by instanting meta-variables.
+
+Heterogenous constraints are needed to have the elaboration algorithm to
+produce a set of ``flat'' constraints, without having to record
+dependencies between them.  Moreover, a complete unification algorithm
+for dependent types will need to be heterogeneous, as we will explain.
+\mytodo{Insert Conor citation}
+
+Since the unifier will need to instantiate and add new meta-variables,
+it will need to update the signature.  Thus, 
+
+\begin{figure}
+  \begin{code}
+    Gamma  !-  alpha (vec x)   : A  =  Delta !- alpha (vec y)  : B   !-->   intersect
+    Gamma  !-  alpha (vec x)   : A  =  Delta !- t              : B   !-->   assign
+    Gamma  !-  t               : A  =  Delta !- alpha (vec y)  : B   !-->   assign
+
+    Gamma  !-  Set    : Set   =    Delta  !- Set    : Set   !-->  empty
+    Gamma  !-  Bool   : Set   =    Delta  !- Bool   : Set   !-->  empty
+    Gamma  !-  true   : Bool  =    Delta  !- true   : Bool  !-->  empty
+    Gamma  !-  false  : Bool  =    Delta  !- false  : Bool  !-->  empty
+
+    (Gamma  !- (x : A_1) -> B_1 : Set) = (Delta !- (x : A_2) -> B_2 : Set) !-->
+      ^^  {  ^^  (Gamma !- A_1 : Set) = (Delta !- A_2 : Set)
+          ,      (Gamma; x : A_1 !- B_1 : Set) = (Delta; x : A_2 !- B_2 : Set) ^^ }
+
+    (Gamma !- t : (x : A_1) -> B_1) = (Delta !- u : (x : A_2) -> B_2) !-->
+      ^^  { ^^ (Gamma; x : A_1 !- t x : B_1) = (Gamma; x : A_2 !- u x : B_2) ^^ }
+
+    (Gamma !- h (vec e) : _) = (Delta !- h (vec d) : _) !-->
+          (Gamma !- h nil : A !! vec e) = (Delta !- h nil : B !! vec d)
+
+    (Gamma !- t : A) = (Delta !- u : B) !--> Bot
+  \end{code}
+
+  \begin{code}
+    (Gamma !- t : _ !! nil) = (Delta !- t : _ !! nil) !--> empty
+
+    (Gamma !-  t_1 : (x : A_1) -> B_1 !! u_1 (vec e_1)) = (Delta !- t_2 : (x : A_2) -> B_2 !! u_2 (vec e_2)) !-->
+      ^^  {(Gamma !- u_1 : A_1) = (Delta !- u_2 : A_2)} `union`
+          (Gamma !-  t_1 u_1 : sub x u_1 B_1 !! vec e_1) = (Delta !- t_2 u_2 : sub x u_2 B_2 !! vec e_2)
+
+    (Gamma !- t_1 : Bool !! (ite x A_1 u_1 v_1) (vec e_1))
+      =
+    (Gamma !- t_2 : Bool !! (ite x A_2 u_2 v_2) (vec e_2)) !-->
+      ^^  {  (Gamma;x : Bool !- A_1 : Set) = (Delta;x : Bool !- A_2 : Set)
+          ,  (Gamma !- u_1 : sub x true A_1) = (Delta !- u_2 : sub x true A_2)
+          ,  (Gamma !- v_1 : sub x false A_1) = (Delta !- v_2 : sub x false A_2) ^^ } `union`
+          (Gamma !- ite x A_1 u_1 v_1 t_1 : sub x t_1 A_1 !! (vec e_1))
+             =
+          (Delta !- ite x A_2 u_2 v_2 t_2 : sub x t_2 A_2 !! (vec e_2))
+
+    (Gamma !- t : A !! vec e) = (Delta !- u : B !! vec d) !--> Bot
+  \end{code}
+\end{figure}
 
 \section{The big picture}
 
