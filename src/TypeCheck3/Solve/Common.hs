@@ -14,7 +14,7 @@ import qualified PrettyPrint                      as PP
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import qualified Term.Substitution                as Sub
+import qualified Term.Subst                as Sub
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
 import           TypeCheck3.Check
@@ -334,7 +334,7 @@ collectProjectedVar elims = runMaybeT $ do
 etaExpandContextVar
   :: (IsTerm t)
   => Ctx t -> Var
-  -> TC t s (Either MetaVarSet (Ctx t, Substitution t))
+  -> TC t s (Either MetaVarSet (Ctx t, Subst t))
 etaExpandContextVar ctx v = do
   let msg = do
         ctxDoc <- prettyM ctx
@@ -360,7 +360,7 @@ etaExpandVar
   => Type t
   -- ^ The type of the variable we're expanding.
   -> Tel t
-  -> TC t s (Tel.Tel t, Substitution t)
+  -> TC t s (Tel.Tel t, Subst t)
 etaExpandVar type_ tel = do
   App (Def tyCon) tyConPars0 <- whnfView type_
   Constant (Record dataCon projs) _ <- getDefinition tyCon
@@ -485,7 +485,7 @@ lambdaAbstract 0 t = return t
 lambdaAbstract n t = (lam <=< lambdaAbstract (n - 1)) t
 
 data InvertMetaVar t = InvertMetaVar
-  { imvSubstitution :: [(Var, Term t)]
+  { imvSubst :: [(Var, Term t)]
     -- ^ A substitution from variables in equated term to variables by
     -- the metavariable to terms in the context abstracted by the
     -- metavariable.
@@ -506,7 +506,7 @@ invertMetaVarVars (InvertMetaVar sub _) = map fst sub
 invertMetaVar
   :: (IsTerm t)
   => Ctx t -> [Elim (Term t)]
-  -> TC t s (TermTraverse' (Ctx t, Substitution t, InvertMetaVar t))
+  -> TC t s (TermTraverse' (Ctx t, Subst t, InvertMetaVar t))
 invertMetaVar ctx elims = do
   let msg = do
         ctxDoc <- prettyM ctx
@@ -539,7 +539,7 @@ invertMetaVar ctx elims = do
         return (ctx', acts, inv)
 
 mvaApplyActions
-  :: (IsTerm t, MonadTerm t m) => Substitution t -> MetaVarArg' -> m MetaVarArg'
+  :: (IsTerm t, MonadTerm t m) => Subst t -> MetaVarArg' -> m MetaVarArg'
 mvaApplyActions acts (MVAVar (v, ps)) = do
   vt <- var v
   vt' <- applySubst vt acts
@@ -550,7 +550,7 @@ mvaApplyActions acts (MVARecord n args) = do
   MVARecord n <$> mapM (mvaApplyActions acts) args
 
 varApplyActions
-  :: (IsTerm t) => Substitution t -> Var -> TC t s (MetaVarArg Var)
+  :: (IsTerm t) => Subst t -> Var -> TC t s (MetaVarArg Var)
 varApplyActions acts v = do
   tView <- whnfView =<< ((`applySubst` acts) =<< var v)
   case tView of
@@ -567,7 +567,7 @@ removeProjections
   :: forall t s .
      (IsTerm t)
   => Ctx t -> [MetaVarArg']
-  -> TC t s (Ctx t, [MetaVarArg Var], Substitution t)
+  -> TC t s (Ctx t, [MetaVarArg Var], Subst t)
 removeProjections ctx0 mvArgs0 = do
     let msg = do
           ctxDoc <- prettyM ctx0
@@ -577,7 +577,7 @@ removeProjections ctx0 mvArgs0 = do
     debugBracket "removeProjections" msg $ go ctx0 mvArgs0
   where
     go :: Ctx t -> [MetaVarArg']
-       -> TC t s (Ctx t, [MetaVarArg Var], Substitution t)
+       -> TC t s (Ctx t, [MetaVarArg Var], Subst t)
     go ctx [] = do
       return (ctx, [], Sub.id)
     go ctx (MVAVar (v, []) : mvArgs) = do

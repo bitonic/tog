@@ -21,7 +21,7 @@ instance Nf Simple Simple where
 instance PrettyM Simple Simple where
   prettyPrecM = genericPrettyPrecM
 
-instance Subst Simple Simple where
+instance ApplySubst Simple Simple where
   applySubst = genericApplySubst
 
 instance SynEq Simple Simple where

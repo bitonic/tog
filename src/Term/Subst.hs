@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module Term.Substitution
+module Term.Subst
   ( -- * Type
-    Substitution
+    Subst
   , id
   , singleton
   , weaken
@@ -16,20 +16,20 @@ module Term.Substitution
   ) where
 
 import           Prelude.Extended                 hiding (lift, length, lookup, (++), drop, id, null)
-import           Term.Substitution.Types
+import           Term.Subst.Types
 import           Term.Synonyms
 import           Term.Types
 
 -- Smart constructors
 ------------------------------------------------------------------------
 
-id :: Substitution t
+id :: Subst t
 id = Id
 
-singleton :: Term t -> Substitution t
+singleton :: Term t -> Subst t
 singleton t = instantiate t id
 
-weaken :: Natural -> Substitution t -> Substitution t
+weaken :: Natural -> Subst t -> Subst t
 weaken 0 rho            = rho
 weaken n (Weaken m rho)     = Weaken (n + m) rho
 weaken n (Strengthen m rho) = case n - m of
@@ -38,7 +38,7 @@ weaken n (Strengthen m rho) = case n - m of
                                 k         -> Strengthen k rho
 weaken n rho                = Weaken n rho
 
-strengthen :: Natural -> Substitution t -> Substitution t
+strengthen :: Natural -> Subst t -> Subst t
 strengthen 0 rho                = rho
 strengthen n (Strengthen m rho) = Strengthen (m + n) rho
 strengthen n (Weaken m rho)     = case n - m of
@@ -49,24 +49,24 @@ strengthen n rho                = Strengthen n rho
 
 -- TODO here we could pattern match on the term and optimize away -- see
 -- Agda.TypeChecking.Substitute
-instantiate :: Term t -> Substitution t -> Substitution t
+instantiate :: Term t -> Subst t -> Subst t
 instantiate = Instantiate
 
-lift :: Natural -> Substitution t -> Substitution t
+lift :: Natural -> Subst t -> Subst t
 lift n _            | n < 0 = error "lift.impossible"
 lift 0 rho          = rho
 lift _ Id           = Id
 lift k (Lift n rho) = Lift (n + k) rho
 lift k rho          = Lift k rho
 
-null :: Substitution t -> Bool
+null :: Subst t -> Bool
 null Id = True
 null _  = False
 
 -- Operations
 ------------------------------------------------------------------------
 
-drop :: Natural -> Substitution t -> Substitution t
+drop :: Natural -> Subst t -> Subst t
 drop n rho                 | n <= 0 = rho
 drop n Id                  = weaken n id
 drop n (Weaken m rho)      = weaken m (drop n rho)
@@ -77,7 +77,7 @@ drop n (Lift m rho)        = weaken 1 $ drop (n - 1) $ lift (m - 1) rho
 
 compose
   :: (IsTerm t, MonadTerm t m)
-  => Substitution t -> Substitution t -> m (Substitution t)
+  => Subst t -> Subst t -> m (Subst t)
 compose rho Id =
   return rho
 compose Id  rho =
@@ -96,7 +96,7 @@ compose rho (Lift n sgm) =
   instantiate <$> lookup (boundVar "_") rho
               <*> compose rho (weaken 1 (lift (n - 1) sgm))
 
-lookup :: (IsTerm t, MonadTerm t m) => Var -> Substitution t -> m (Term t)
+lookup :: (IsTerm t, MonadTerm t m) => Var -> Subst t -> m (Term t)
 lookup v0 rho0 = go rho0 (varIndex v0)
   where
     nm = varName v0

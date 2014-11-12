@@ -1,4 +1,4 @@
-module Term.Substitution.Types where
+module Term.Subst.Types where
 
 import           Prelude.Extended
 import           Term.Synonyms
@@ -10,28 +10,28 @@ import           Term.Synonyms
 --   with Aᵢ from Δ, that can be applied to a term Δ ⊢ u : B yielding
 --   Γ ⊢ uσ : Bσ by substituting the vs for the variables in u. In other
 --   words, if σ : Δ → Γ then applySubst σ : Term Δ -> Term Γ.
-data Substitution t
+data Subst t
   = Id
     --
     -- --------------------------------
     --   Id : Γ → Γ
 
-  | Weaken !Natural (Substitution t)
+  | Weaken !Natural (Subst t)
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Weaken |Ψ| ρ : Δ → Γ;Ψ
 
-  | Strengthen !Natural (Substitution t)
+  | Strengthen !Natural (Subst t)
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Strengthen |Ψ| ρ : Γ;Ψ →  Δ
 
-  | Instantiate (Term t) (Substitution t)
+  | Instantiate (Term t) (Subst t)
     --   Γ ⊢ u : Aρ    ρ : Δ → Γ
     -- --------------------------------
     --   Instantiate u ρ : Δ;A → Γ
 
-  | Lift !Natural (Substitution t)
+  | Lift !Natural (Subst t)
     --   ρ : Δ → Γ
     -- --------------------------------
     --   Lift |Ψ| ρ : Δ;Ψ → Γ;Ψρ

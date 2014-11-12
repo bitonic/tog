@@ -30,7 +30,7 @@ instance Nf GraphReduce GraphReduce where
 instance PrettyM GraphReduce GraphReduce where
   prettyPrecM = genericPrettyPrecM
 
-instance Subst GraphReduce GraphReduce where
+instance ApplySubst GraphReduce GraphReduce where
   applySubst = genericApplySubst
 
 instance SynEq GraphReduce GraphReduce where

@@ -17,8 +17,8 @@ import qualified Term.Context                     as Ctx
 import           Term.Types                       (MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
-import           Term.Substitution                as Sub
-import qualified Term.Substitution.Utils          as Term
+import           Term.Subst                as Sub
+import qualified Term.Subst.Utils          as Term
 import           Term.Telescope.Types
 
 -- Tel
@@ -52,7 +52,7 @@ Ctx.Empty            ++ tel' = tel'
 
 -- Methods
 
-instance Term.Subst t (Tel t) where
+instance Term.ApplySubst t (Tel t) where
   applySubst Empty _ = do
     return Empty
   applySubst (Cons (n, type_) tel') rho = do

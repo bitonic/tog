@@ -8,7 +8,7 @@ import qualified PrettyPrint                      as PP
 import           Term.Types
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import qualified Term.Substitution.Types          as Sub
+import qualified Term.Subst.Types          as Sub
 
 instance PrettyM t (Definition t) where
   prettyM (Constant Postulate type_) = do
@@ -74,7 +74,7 @@ instance PrettyM t (Tel.Tel t) where
 instance PrettyM t (Ctx.Ctx t) where
   prettyM = prettyM . Tel.tel
 
-instance PrettyM t (Sub.Substitution t) where
+instance PrettyM t (Sub.Subst t) where
   prettyM sub0 = case sub0 of
     Sub.Id -> do
       return "Id"

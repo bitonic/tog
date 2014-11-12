@@ -27,7 +27,7 @@ instance Nf Hashed Hashed where
 instance PrettyM Hashed Hashed where
   prettyPrecM = genericPrettyPrecM
 
-instance Subst Hashed Hashed where
+instance ApplySubst Hashed Hashed where
   applySubst = genericApplySubst
 
 instance SynEq Hashed Hashed where

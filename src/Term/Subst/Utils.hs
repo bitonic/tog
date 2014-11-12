@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module Term.Substitution.Utils
-  ( -- * Term operations through 'Substitution'
+module Term.Subst.Utils
+  ( -- * Term operations through 'Subst'
     weaken
   , weaken_
   , strengthen
@@ -15,14 +15,14 @@ module Term.Substitution.Utils
 import           Prelude.Extended
 import           Term.Synonyms
 import           Term.Types
-import qualified Term.Substitution                as Sub
+import qualified Term.Subst                as Sub
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      (($$), (//>))
 
-weaken :: (IsTerm t, Subst t a, MonadTerm t m) => Natural -> Natural -> a -> m a
+weaken :: (IsTerm t, ApplySubst t a, MonadTerm t m) => Natural -> Natural -> a -> m a
 weaken from by t = applySubst t $ Sub.lift from $ Sub.weaken by Sub.id
 
-weaken_ :: (IsTerm t, Subst t a, MonadTerm t m) => Natural -> a -> m a
+weaken_ :: (IsTerm t, ApplySubst t a, MonadTerm t m) => Natural -> a -> m a
 weaken_ n t = weaken 0 n t
 
 strengthen :: (IsTerm t, MonadTerm t m) => Natural -> Natural -> Abs t -> m t
@@ -32,10 +32,10 @@ strengthen from by t =
 strengthen_ :: (IsTerm t, MonadTerm t m) => Natural -> t -> m t
 strengthen_ = strengthen 0
 
-instantiate_ :: (IsTerm t, Subst t a, MonadTerm t m) => a -> Term t -> m a
+instantiate_ :: (IsTerm t, ApplySubst t a, MonadTerm t m) => a -> Term t -> m a
 instantiate_ body arg = instantiate body [arg]
 
-instantiate :: (IsTerm t , Subst t a, MonadTerm t m) => a -> [Term t] -> m a
+instantiate :: (IsTerm t , ApplySubst t a, MonadTerm t m) => a -> [Term t] -> m a
 instantiate t0 ts0 = applySubst t0 $ go $ reverse ts0
   where
     go []       = Sub.id

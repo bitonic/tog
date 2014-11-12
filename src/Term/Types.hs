@@ -31,7 +31,7 @@ module Term.Types
     -- ** Pretty
   , PrettyM(..)
     -- ** Subst
-  , Subst(..)
+  , ApplySubst(..)
     -- ** SynEq
   , SynEq(..)
     -- * IsTerm
@@ -91,7 +91,7 @@ import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      ((<+>))
 import           Term.Telescope.Types             (Tel)
-import           Term.Substitution.Types          (Substitution)
+import           Term.Subst.Types          (Subst)
 import           Term.Synonyms
 
 -- Var
@@ -269,14 +269,14 @@ instance PrettyM t a => PrettyM t [a] where
 -- Subst
 ------------------------------------------------------------------------
 
-class Subst t a where
-  applySubst :: (IsTerm t, MonadTerm t m) => a -> Substitution t -> m a
+class ApplySubst t a where
+  applySubst :: (IsTerm t, MonadTerm t m) => a -> Subst t -> m a
 
-instance Subst t (Elim t) where
+instance ApplySubst t (Elim t) where
   applySubst (Proj p)  _   = return $ Proj p
   applySubst (Apply t) sub = Apply <$> applySubst t sub
 
-instance Subst t a => Subst t [a] where
+instance ApplySubst t a => ApplySubst t [a] where
   applySubst t rho = mapM (`applySubst` rho) t
 
 -- SynEq
@@ -315,7 +315,7 @@ instance (SynEq t a, SynEq t b) => SynEq t (a, b) where
 -- HasAbs
 ---------
 
-class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, Subst t t, SynEq t t) => IsTerm t where
+class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, ApplySubst t t, SynEq t t) => IsTerm t where
     -- Evaluation
     --------------------------------------------------------------------
     whnf :: MonadTerm t m => Term t -> m (Blocked (Term t))

@@ -46,7 +46,7 @@ instance T.Nf GraphReduceUnpack GraphReduceUnpack where
 instance T.PrettyM GraphReduceUnpack GraphReduceUnpack where
   prettyPrecM = genericPrettyPrecM
 
-instance T.Subst GraphReduceUnpack GraphReduceUnpack where
+instance T.ApplySubst GraphReduceUnpack GraphReduceUnpack where
   applySubst = genericApplySubst
 
 instance T.SynEq GraphReduceUnpack GraphReduceUnpack where

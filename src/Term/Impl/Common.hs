@@ -25,12 +25,12 @@ import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Types                       (unview, view)
-import qualified Term.Substitution                as Sub
-import           Term.Substitution.Types          as Sub
+import qualified Term.Subst                as Sub
+import           Term.Subst.Types          as Sub
 import qualified Term.Signature                   as Sig
 
 genericApplySubst
-  :: (IsTerm t, MonadTerm t m) => t -> Substitution t -> m t
+  :: (IsTerm t, MonadTerm t m) => t -> Subst t -> m t
 genericApplySubst t Sub.Id = do
   return t
 genericApplySubst t rho = do

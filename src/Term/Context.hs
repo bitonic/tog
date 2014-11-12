@@ -22,7 +22,7 @@ import           Syntax
 import           Term.Types                       (IsTerm, Var, MonadTerm)
 import qualified Term.Types                       as Term
 import           Term.Synonyms
-import qualified Term.Substitution.Utils          as Term
+import qualified Term.Subst.Utils          as Term
 
 -- Ctx
 ------------------------------------------------------------------------
