@@ -7,7 +7,6 @@ import           Prelude.Extended
 import           Term                             hiding (lam, pi, equal, set, refl, con, app)
 import           Term.Impl
 import qualified Term                             as Term
-import qualified Term.Substitution                as Term
 import qualified Term.Signature                   as Sig
 import           Syntax
 import qualified Syntax.Abstract                  as SA
