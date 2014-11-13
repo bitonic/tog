@@ -3,7 +3,7 @@ all: $(patsubst %.tex,%.pdf,$(wildcard *.tex)) $(patsubst %.lhs,%.pdf,$(wildcard
 type-checking-metas.tex: type-checking-metas.lhs
 	lhs2TeX $< -o $@
 
-type-checking-metas.pdf: type-checking-metas.tex type-checking-metas.bib
+type-checking-metas.pdf: type-checking-metas.tex type-checking-metas.bib lipics.cls
 	pdflatex -halt-on-error $< -o $@
 	bibtex $(patsubst %.tex,%,$<)
 	pdflatex -halt-on-error $< -o $@
