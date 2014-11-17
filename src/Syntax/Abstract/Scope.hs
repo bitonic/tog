@@ -103,7 +103,7 @@ mkProjInfo (C.Name ((l, c), s)) = ProjName (mkName l c s)
 
 resolveName'' :: C.Name -> Check (Maybe NameInfo)
 resolveName'' (C.Name ((l, c), s))
-  | elem s reservedNames = impossible "reserved names should not end up in resolveName"
+  | s `elem` reservedNames = impossible "reserved names should not end up in resolveName"
   | otherwise = asks $ Map.lookup s . inScope
 
 resolveName' :: C.Name -> Check NameInfo
@@ -152,13 +152,13 @@ checkHiding e = case e of
 
 scopeCheckProgram :: C.Program -> Either PP.Doc Program
 scopeCheckProgram (C.Prog _ ds) =
-  case flip runReaderT initScope (unCheck (checkDecls ds return)) of
+  case runReaderT (unCheck (checkDecls ds return)) initScope of
     Left err -> Left $ PP.text $ show err
     Right x  -> Right x
 
 scopeCheckExpr :: Scope -> C.Expr -> Either PP.Doc Expr
 scopeCheckExpr s e =
-  case flip runReaderT s (unCheck (checkExpr e)) of
+  case runReaderT (unCheck (checkExpr e)) s of
     Left err -> Left $ PP.text $ show err
     Right x  -> Right x
 
@@ -238,9 +238,9 @@ checkDecls ds0 ret = case ds0 of
         checkDecls ds $ \ds' ->
           ret (RecDef x xs con fs : ds')
   (d@C.Data{} : _) ->
-    scopeError d $ "Bad data declaration"
+    scopeError d "Bad data declaration"
   (d@C.Record{} : _) ->
-    scopeError d $ "Bad record declaration"
+    scopeError d "Bad record declaration"
   C.FunDef f _ _ _ : _ -> do
     let (clauses, ds) = takeFunDefs f ds0
     (f, n) <- resolveDef f
