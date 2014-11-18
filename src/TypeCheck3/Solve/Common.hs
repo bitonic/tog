@@ -255,7 +255,7 @@ prune allowedVs oldMv elims = do
           if not kill
             then notKilled
             else do
-              mbType <- strengthenTerm =<< nf type'
+              mbType <- safeStrengthen =<< nf type'
               case mbType of
                 Just type'' -> do return (type'', named name True : kills')
                 Nothing     -> do debug_ "couldn't strengthen" ""

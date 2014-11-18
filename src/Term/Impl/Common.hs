@@ -1,14 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Term.Impl.Common
-  ( genericApplySubst
+  ( genericSafeApplySubst
   , genericWhnf
   , genericTypeOfJ
   , genericNf
   , genericSynEq
   , genericMetaVars
   , genericPrettyPrecM
-  , genericCanStrengthen
 
   , view
   , unview
@@ -29,66 +28,39 @@ import qualified Term.Subst                as Sub
 import           Term.Subst.Types          as Sub
 import qualified Term.Signature                   as Sig
 
-genericApplySubst
-  :: (IsTerm t, MonadTerm t m) => t -> Subst t -> m t
-genericApplySubst t Sub.Id = do
+genericSafeApplySubst
+  :: (IsTerm t, MonadTerm t m) => t -> Subst t -> ApplySubstM m t
+genericSafeApplySubst t Sub.Id = do
   return t
-genericApplySubst t rho = do
-  tView <- whnfView t
+genericSafeApplySubst t rho = do
+  tView <- lift $ whnfView t
   case tView of
     Lam body ->
-      lam =<< applySubst body (Sub.lift 1 rho)
-    Pi dom cod ->
-      join $ pi <$> applySubst dom rho <*> applySubst cod (Sub.lift 1 rho)
-    Equal type_ x y  ->
-      join $ equal <$> applySubst type_ rho
-                   <*> applySubst x rho
-                   <*> applySubst y rho
+      lift . lam =<< safeApplySubst body (Sub.lift 1 rho)
+    Pi dom cod -> do
+      dom' <- safeApplySubst dom rho
+      cod' <- safeApplySubst cod $ Sub.lift 1 rho
+      lift $ pi dom' cod'
+    Equal type_ x y  -> do
+      type' <- safeApplySubst type_ rho
+      x' <- safeApplySubst x rho
+      y' <- safeApplySubst y rho
+      lift $ equal type' x' y'
     Refl ->
       return refl
-    Con dataCon args ->
-      join $ con dataCon <$> applySubst args rho
+    Con dataCon args -> do
+      args' <- safeApplySubst args rho
+      lift $ con dataCon args'
     Set ->
       return set
     App h els  -> do
-      els' <- applySubst els rho
+      els' <- safeApplySubst els rho
       case h of
-        Var v   -> (`eliminate` els') =<< Sub.lookup v rho
-        Def n   -> app (Def n) els'
-        Meta mv -> app (Meta mv) els'
-        J       -> app J els'
-
-genericCanStrengthen
-  :: forall t m. (IsTerm t, MonadTerm t m) => t -> m CanStrengthen
-genericCanStrengthen t0 = do
-    mbN <- runMaybeT $ go 0 t0
-    return $ case mbN of
-      Nothing -> CSYes
-      Just n  -> CSNo n
-  where
-    go :: Natural -> t -> MaybeT m Name
-    go ix t = do
-      tView <- lift $ whnfView t
-      case tView of
-        App (Var v) _ | varIndex v == ix -> do
-          return $ varName v
-        App _ es -> do
-          msum $ map goElim es
-        Pi dom cod -> do
-          go ix dom <|> go (ix+1) cod
-        Lam body -> do
-          go (ix+1) body
-        Equal type_ x y -> do
-          go ix type_ <|> go ix x <|> go ix y
-        Refl -> do
-          mzero
-        Set -> do
-          mzero
-        Con _ ts -> do
-          msum $ map (go ix) ts
-      where
-        goElim (Proj _)   = mzero
-        goElim (Apply t') = go ix t'
+        Var v   -> do u <- Sub.lookup v rho
+                      lift $ eliminate u els'
+        Def n   -> lift $ app (Def n) els'
+        Meta mv -> lift $ app (Meta mv) els'
+        J       -> lift $ app J els'
 
 genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
@@ -287,11 +259,11 @@ internalToTerm t0 = do
       n <- getAbsName_ body
       SA.Lam n <$> internalToTerm body
     Pi dom cod -> do
-      cs <- canStrengthen cod
-      case cs of
-        CSNo n -> do
+      mbN <- runApplySubst $ safeApplySubst cod $ Sub.strengthen 1 Sub.id
+      case mbN of
+        Left n -> do
           SA.Pi n <$> internalToTerm dom <*> internalToTerm cod
-        CSYes -> do
+        Right _ -> do
           SA.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
       SA.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y

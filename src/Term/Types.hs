@@ -33,15 +33,15 @@ module Term.Types
     -- ** Pretty
   , PrettyM(..)
     -- ** Subst
+  , ApplySubstM
+  , runApplySubst
   , ApplySubst(..)
+  , applySubst
     -- ** SynEq
   , SynEq(..)
     -- * IsTerm
   , IsTerm(..)
-  , CanStrengthen(..)
   , whnfView
-  , getAbsName
-  , getAbsName_
     -- ** Blocked
   , Blocked(..)
   , BlockedHead(..)
@@ -85,10 +85,10 @@ module Term.Types
 
 import           Control.Monad.Trans.Reader       (ReaderT, runReaderT, ask)
 import           Control.Monad.Trans.Class        (MonadTrans)
+import           Control.Monad.Trans.Except       (ExceptT, runExceptT)
 import qualified Data.HashSet                     as HS
 import qualified Data.HashMap.Strict              as HMS
 
-import           Conf
 import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Abstract                  as SA
@@ -281,15 +281,27 @@ instance PrettyM t a => PrettyM t [a] where
 -- Subst
 ------------------------------------------------------------------------
 
+type ApplySubstM = ExceptT Name
+
+runApplySubst :: ApplySubstM m a -> m (Either Name a)
+runApplySubst = runExceptT
+
 class ApplySubst t a where
-  applySubst :: (IsTerm t, MonadTerm t m) => a -> Subst t -> m a
+  safeApplySubst :: (IsTerm t, MonadTerm t m) => a -> Subst t -> ApplySubstM m a
 
 instance ApplySubst t (Elim t) where
-  applySubst (Proj p)  _   = return $ Proj p
-  applySubst (Apply t) sub = Apply <$> applySubst t sub
+  safeApplySubst (Proj p)  _   = return $ Proj p
+  safeApplySubst (Apply t) sub = Apply <$> safeApplySubst t sub
 
 instance ApplySubst t a => ApplySubst t [a] where
-  applySubst t rho = mapM (`applySubst` rho) t
+  safeApplySubst t rho = mapM (`safeApplySubst` rho) t
+
+applySubst :: (IsTerm t, MonadTerm t m, ApplySubst t a) => a -> Subst t -> m a
+applySubst x rho = do
+  nameOrRes <- runExceptT $ safeApplySubst x rho
+  case nameOrRes of
+    Left name -> error $ "applySubst: couldn't strengthen because of " ++ show name
+    Right res -> return res
 
 -- SynEq
 ------------------------------------------------------------------------
@@ -344,30 +356,8 @@ class (Typeable t, Show t, MetaVars t t, Nf t t, PrettyM t t, ApplySubst t t, Sy
     refl    :: Closed (Term t)
     typeOfJ :: Closed (Type t)
 
-    -- TODO Consider having a partial applySubst instead
-    --------------------------------------------------------------------
-    canStrengthen :: (MonadTerm t m) => t -> m CanStrengthen
-
-data CanStrengthen
-  = CSYes
-  | CSNo !Name
-
 whnfView :: (IsTerm t, MonadTerm t m) => Term t -> m (TermView t)
 whnfView t = (view <=< ignoreBlocking <=< whnf) t
-
-getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
-getAbsName t = do
-  skip <- confFastGetAbsName <$> readConf
-  if skip
-    then return (Just "_")
-    else do
-      cs <- canStrengthen t
-      case cs of
-        CSYes  -> return Nothing
-        CSNo n -> return $ Just n
-
-getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
-getAbsName_ t = fromMaybe "_" <$> getAbsName t
 
 data Blocked t
     = NotBlocked t

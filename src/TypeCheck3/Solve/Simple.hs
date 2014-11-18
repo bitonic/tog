@@ -377,7 +377,7 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
         res1 <- checkEqual (ctx, dom, arg1, arg2)
-        mbCod <- strengthenTerm cod
+        mbCod <- safeStrengthen cod
         mbH' <- traverse (`eliminate` [Apply arg1]) mbH
         -- If the rest is non-dependent, we can continue immediately.
         case mbCod of

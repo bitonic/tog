@@ -31,7 +31,7 @@ instance PrettyM GraphReduce GraphReduce where
   prettyPrecM = genericPrettyPrecM
 
 instance ApplySubst GraphReduce GraphReduce where
-  applySubst = genericApplySubst
+  safeApplySubst = genericSafeApplySubst
 
 instance SynEq GraphReduce GraphReduce where
   synEq (GR tRef1) (GR tRef2) | tRef1 == tRef2 = return True
@@ -55,5 +55,3 @@ instance IsTerm GraphReduce where
 
   {-# NOINLINE typeOfJ #-}
   typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
-
-  canStrengthen = genericCanStrengthen

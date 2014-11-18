@@ -16,7 +16,10 @@ module Term.Subst
   , null
   ) where
 
-import           Prelude.Extended                 hiding (lift, length, lookup, (++), drop, id, null)
+import           Control.Monad.Trans.Except       (throwE)
+
+import           Prelude.Extended                 hiding (lift, length, lookup, drop, id, null)
+import qualified Prelude.Extended                 as Prelude
 import           Term.Subst.Types
 import           Term.Synonyms
 import           Term.Types
@@ -105,30 +108,40 @@ compose _ (Lift 0 _) =
 compose (Instantiate u rho) (Lift n sgm) =
   join $ instantiate u <$> compose rho (lift (n - 1) sgm)
 compose rho (Lift n sgm) =
-  join $ instantiate <$> lookup (boundVar "_") rho
+  join $ instantiate <$> unsafeLookup (boundVar "_") rho
                      <*> compose rho (weaken 1 (lift (n - 1) sgm))
 
-lookup :: (IsTerm t, MonadTerm t m) => Var -> Subst t -> m (Term t)
+unsafeLookup
+  :: (IsTerm t, MonadTerm t m) => Var -> Subst t -> m (Term t)
+unsafeLookup v rho = do
+  mbT <- runApplySubst $ lookup v rho
+  case mbT of
+    Left n  -> error $ "unsafeLookup: free name " ++ show n
+    Right t -> return t
+
+lookup :: forall t m. (IsTerm t, MonadTerm t m) => Var -> Subst t -> ApplySubstM m (Term t)
 lookup v0 rho0 = go rho0 (varIndex v0)
   where
     nm = varName v0
 
+    go :: Subst t -> Natural -> ApplySubstM m (Term t)
     go rho i = case rho of
       Id -> do
-        var v
+        Prelude.lift $ var v
       Weaken n Id -> do
         let j = i + n
-        var $ mkVar nm j
+        Prelude.lift $ var $ mkVar nm j
       Weaken n rho' -> do
-        (`applySubst` weaken n id) =<< go rho' i
+        Prelude.lift . (`applySubst` weaken n id) =<< go rho' i
       Instantiate u rho' -> do
         if i == 0 then return u else go rho' (i - 1)
       Strengthen n rho' -> do
-        let _assert@True = i >= n
-        go rho' (i - n)
+        if i >= n
+          then go rho' (i - n)
+          else throwE nm
       Lift n rho' -> do
         if i < n
-          then var v
-          else (`applySubst` weaken n id) =<< go rho' (i - n)
+          then Prelude.lift $ var v
+          else Prelude.lift . (`applySubst` weaken n id) =<< go rho' (i - n)
       where
         v = mkVar nm i
