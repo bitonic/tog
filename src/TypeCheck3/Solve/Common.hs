@@ -2,6 +2,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Solve.Common where
 
+import qualified Prelude
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
@@ -631,17 +632,44 @@ checkPatternCondition mvArgs = do
 applyInvertMetaVar
   :: forall t s.
      (IsTerm t)
-  => InvertMetaVar t -> Term t
+  => Ctx t -> InvertMetaVar t -> Term t
   -> TC t s (TermTraverse Var (Closed (Term t)))
-applyInvertMetaVar (InvertMetaVar sub vsNum) t = do
-  tt <- applyInvertMetaSubst sub t
-  case tt of
-    TTFail v ->
-      return $ TTFail v
-    TTMetaVars mvs ->
-      return $ TTMetaVars mvs
-    TTOK t' -> do
-      return . TTOK =<< lambdaAbstract vsNum t'
+applyInvertMetaVar ctx (InvertMetaVar sub vsNum) t = do
+  let fallback = do
+        tt <- applyInvertMetaSubst sub t
+        case tt of
+          TTFail v ->
+            return $ TTFail v
+          TTMetaVars mvs ->
+            return $ TTMetaVars mvs
+          TTOK t' -> do
+            return . TTOK =<< lambdaAbstract vsNum t'
+  let dontTouch = do
+        return . TTOK =<< lambdaAbstract vsNum t
+  -- Optimization: if the substitution is the identity, and if the free
+  -- variables in the term are a subset of the variables that the
+  -- substitution covers, don't touch the term.
+  isId <- isIdentity sub
+  if isId
+    then do
+      let vs = Set.fromList (map fst sub)
+      if Set.size vs == Prelude.length (Ctx.vars ctx)
+        then dontTouch
+        else do
+          fvs <- freeVars t
+          if fvAll fvs `Set.isSubsetOf` vs
+            then dontTouch
+            else fallback
+    else fallback
+  where
+    isIdentity :: [(Var, Term t)] -> TC t s Bool
+    isIdentity [] = do
+      return True
+    isIdentity ((v, u) : sub') = do
+      tView <- whnfView u
+      case tView of
+        App (Var v') [] | v == v' -> isIdentity sub'
+        _                         -> return False
 
 applyInvertMetaSubst
   :: forall t s.

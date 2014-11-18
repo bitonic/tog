@@ -25,3 +25,4 @@
 :set -Wall
 :set -isrc
 :set -ibnfc
+:set -idist/build/tog/tog-tmp/

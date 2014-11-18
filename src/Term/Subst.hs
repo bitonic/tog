@@ -10,6 +10,7 @@ module Term.Subst
   , strengthen
   , lift
     -- * Operations
+  , chain
   , compose
   , lookup
   , null
@@ -80,6 +81,11 @@ drop n (Instantiate _ rho) = drop (n - 1) rho
 drop n (Strengthen m rho)  = drop (n - m) rho
 drop _ (Lift 0 _)          = error "drop.Lift"
 drop n (Lift m rho)        = weaken 1 $ drop (n - 1) $ lift (m - 1) rho
+
+chain
+  :: (IsTerm t, MonadTerm t m)
+  => Subst t -> Subst t -> m (Subst t)
+chain = flip compose
 
 compose
   :: (IsTerm t, MonadTerm t m)

@@ -457,7 +457,7 @@ metaAssign ctx0 type0 mv elims t0 = do
           return $ "inversion:" //> invDoc
         t1 <- pruneTerm (Set.fromList $ invertMetaVarVars inv) t
         debug "pruned term" $ prettyM t1
-        t2 <- applyInvertMetaVar inv t1
+        t2 <- applyInvertMetaVar ctx inv t1
         case t2 of
           TTOK t' -> do
             mvs <- metaVars t'
