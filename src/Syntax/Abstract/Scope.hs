@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
+-- {-# OPTIONS_GHC -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Abstract.Scope
     ( scopeCheckProgram
     , scopeCheckExpr
@@ -70,10 +70,9 @@ newtype Check a = Check { unCheck :: ReaderT Scope (Either ScopeError) a }
   deriving (Functor, Applicative, Monad, MonadReader Scope, MonadError ScopeError)
 
 type CCheck a = forall b. (a -> Check b) -> Check b
-type CCheck_  = forall b. Check b -> Check b
 
 mapC :: (a -> CCheck b) -> [a] -> CCheck [b]
-mapC f [] ret = ret []
+mapC _ [] ret = ret []
 mapC f (x : xs) ret = f x $ \y -> mapC f xs $ \ys -> ret (y : ys)
 
 concatMapC :: (a -> CCheck [b]) -> [a] -> CCheck [b]
@@ -82,27 +81,33 @@ concatMapC f xs ret = mapC f xs $ ret . concat
 scopeError :: HasSrcLoc i => i -> String -> Check a
 scopeError p err = throwError $ ScopeError (srcLoc p) err
 
+reservedNames :: [String]
 reservedNames = ["_", "Set", "refl", "J"]
 
+impossible :: Monad m => String -> m a
 impossible err = fail $ "impossible: " ++ err
 
 mkName :: Int -> Int -> String -> Name
 mkName l c s = Name (SrcLoc l c) s
 
+fromCName :: C.Name -> Name
+fromCName (C.Name ((l, c), s)) = mkName l c s
+
 mkVarInfo :: C.Name -> NameInfo
-mkVarInfo (C.Name ((l, c), s)) = VarName (mkName l c s)
+mkVarInfo = VarName . fromCName 
 
 mkDefInfo :: C.Name -> Hiding -> NameInfo
-mkDefInfo (C.Name ((l, c), s)) = DefName (mkName l c s)
+mkDefInfo = DefName . fromCName
 
 mkConInfo :: C.Name -> Hiding -> NumberOfArguments -> NameInfo
-mkConInfo (C.Name ((l, c), s)) = ConName (mkName l c s)
+mkConInfo = ConName . fromCName 
 
 mkProjInfo :: C.Name -> Hiding -> NameInfo
-mkProjInfo (C.Name ((l, c), s)) = ProjName (mkName l c s)
+mkProjInfo = ProjName . fromCName
+
 
 resolveName'' :: C.Name -> Check (Maybe NameInfo)
-resolveName'' (C.Name ((l, c), s))
+resolveName'' (C.Name (_, s))
   | s `elem` reservedNames = impossible "reserved names should not end up in resolveName"
   | otherwise = asks $ Map.lookup s . inScope
 
