@@ -20,6 +20,8 @@ module Term.Types
   , Projection(..)
   , Head(..)
   , Elim(..)
+  , isApply
+  , isProj
   , Field(..)
     -- * Term typeclasses
     -- ** MetaVars
@@ -76,6 +78,8 @@ module Term.Types
   , TermM
   , runTermM
     -- * Signature
+  , MetaVarBody(..)
+  , metaVarBodyToTerm
   , Signature(..)
   ) where
 
@@ -187,6 +191,14 @@ data Elim t
     deriving (Eq, Show, Read, Generic, Functor, Foldable, Traversable)
 
 instance (Hashable t) => Hashable (Elim t)
+
+isApply :: Elim (Term t) -> Maybe (Term t)
+isApply (Apply v) = Just v
+isApply Proj{}    = Nothing
+
+isProj :: Elim (Term t) -> Maybe Projection
+isProj Apply{}  = Nothing
+isProj (Proj p) = Just p
 
 data Projection = Projection'
   { pName  :: !Name
@@ -606,12 +618,23 @@ runTermM sig (TermM m) = runReaderT m sig
 -- Signature
 ------------------------------------------------------------------------
 
+data MetaVarBody t = MetaVarBody
+  { mvbVars :: !Natural
+  , mvbBody :: !(Term t)
+  }
+
+metaVarBodyToTerm :: (IsTerm t, MonadTerm t m) => MetaVarBody t -> m (Term t)
+metaVarBodyToTerm (MetaVarBody n0 body0) = go n0 body0
+  where
+    go 0 body = return body
+    go n body = lam =<< go (n-1) body
+
 -- | A 'Signature' stores every globally scoped thing.  That is,
 -- 'Definition's and 'MetaVar's bodies and types.
 data Signature t = Signature
     { sigDefinitions    :: HMS.HashMap Name (Closed (Definition t))
     , sigMetasTypes     :: HMS.HashMap MetaVar (Closed (Type t))
-    , sigMetasBodies    :: HMS.HashMap MetaVar (Closed (Term t))
+    , sigMetasBodies    :: HMS.HashMap MetaVar (MetaVarBody t)
     -- ^ INVARIANT: Every 'MetaVar' in 'sMetaBodies' is also in
     -- 'sMetasTypes'.
     , sigMetasCount     :: Int
