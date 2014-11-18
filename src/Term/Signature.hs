@@ -79,7 +79,7 @@ getMetaVarType sig mv =
       Just d -> d
 
 -- | Gets the body of a 'MetaVar', if present.
-getMetaVarBody :: Signature t -> MetaVar -> Maybe (Closed (Term t))
+getMetaVarBody :: Signature t -> MetaVar -> Maybe (MetaVarBody t)
 getMetaVarBody sig mv = HMS.lookup mv (sigMetasBodies sig)
 
 -- | Creates a new 'MetaVar' with the provided type.
@@ -93,7 +93,7 @@ addMetaVar sig loc type_ =
 
 -- | Instantiates the given 'MetaVar' with the given body.  Fails if no
 -- type is present for the 'MetaVar'.
-instantiateMetaVar :: Signature t -> MetaVar -> Closed (Term t) -> Signature t
+instantiateMetaVar :: Signature t -> MetaVar -> MetaVarBody t -> Signature t
 instantiateMetaVar sig mv _ | not (HMS.member mv (sigMetasTypes sig)) =
   error $ "impossible.instantiateMetaVar: " ++ show mv ++ " not present."
 instantiateMetaVar sig mv term =
@@ -112,7 +112,7 @@ metaVarsTypes :: Signature t -> HMS.HashMap MetaVar (Closed (Type t))
 metaVarsTypes = sigMetasTypes
 
 -- | Gets the bodies for the instantiated 'MetaVar's.
-metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (Closed (Term t))
+metaVarsBodies :: Signature t -> HMS.HashMap MetaVar (MetaVarBody t)
 metaVarsBodies = sigMetasBodies
 
 toScope :: Signature t -> Scope

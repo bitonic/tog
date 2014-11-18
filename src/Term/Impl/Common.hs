@@ -96,8 +96,8 @@ genericWhnf t = do
   tView <- view t
   sig <- askSignature
   case tView of
-    App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv -> do
-      whnf =<< eliminate t' es
+    App (Meta mv) es | Just mi <- Sig.getMetaVarBody sig mv -> do
+      eliminateMeta mi es
     -- Note that here we don't want to crash if the definition is not
     -- set, since I want to be able to test non-typechecked terms.
     App (Def defName) es | Just (Function _ cs) <- Sig.getDefinition sig defName -> do
@@ -121,6 +121,31 @@ genericWhnf t = do
       return $ MetaVarHead mv elims
     _ ->
       return $ NotBlocked t
+
+eliminateMeta
+  :: (IsTerm t, MonadTerm t m) => MetaVarBody t -> [Elim t] -> m (Blocked t)
+eliminateMeta mvb@(MetaVarBody n body) es = whnf =<< do
+  if length es >= n
+    then do
+      let (esl, es') = splitAt n es
+      Just args <- return $ mapM isApply esl
+      -- Optimization: if the arguments are all lined up, don't touch
+      -- the body.
+      simple <- isSimple (n-1) args
+      if simple
+        then eliminate body es'
+        else (`eliminate` es') =<< instantiate body args
+    else do
+      mvT <- metaVarBodyToTerm mvb
+      eliminate mvT es
+  where
+    isSimple _ [] = do
+      return True
+    isSimple n' (arg : args') = do
+      argView <- whnfView arg
+      case argView of
+        App (Var v) [] | varIndex v == n' -> isSimple (n'-1) args'
+        _                                 -> return False
 
 whnfFun
   :: (IsTerm t, MonadTerm t m)

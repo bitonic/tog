@@ -118,15 +118,12 @@ lookup v0 rho0 = go rho0 (varIndex v0)
         var v
       Weaken n Id -> do
         let j = i + n
-        let _assert@True = j >= 0
         var $ mkVar nm j
       Weaken n rho' -> do
         (`applySubst` weaken n id) =<< go rho' i
       Instantiate u rho' -> do
-        let _assert@True = i >= 0
         if i == 0 then return u else go rho' (i - 1)
       Strengthen n rho' -> do
-        let _assert@True = n >= 0
         let _assert@True = i >= n
         go rho' (i - n)
       Lift n rho' -> do

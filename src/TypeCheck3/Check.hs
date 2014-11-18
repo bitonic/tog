@@ -299,8 +299,9 @@ checkEqualSpine _ type_ _ elims1 elims2 = do
 
 instantiateMetaVar
   :: (IsTerm t)
-  => MetaVar -> Closed (Term t) -> TC t s ()
-instantiateMetaVar mv t = do
+  => MetaVar -> MetaVarBody t -> TC t s ()
+instantiateMetaVar mv mi = do
+  t <- metaVarBodyToTerm mi
   let msg = do
         tDoc <- prettyM t
         return $
@@ -320,4 +321,4 @@ instantiateMetaVar mv t = do
                "term:" //> tDoc $$
                "err:" //> err
       assert msg' $ check Ctx.Empty t mvType
-    uncheckedInstantiateMetaVar mv t
+    uncheckedInstantiateMetaVar mv mi

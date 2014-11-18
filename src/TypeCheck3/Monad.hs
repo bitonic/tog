@@ -47,7 +47,6 @@ module TypeCheck3.Monad
 
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
-import           System.IO                        (hPutStr, stderr)
 
 import           Prelude.Extended                 hiding (any)
 import           Conf
@@ -188,7 +187,7 @@ data TCErr
 
 instance PP.Pretty TCErr where
   pretty (DocErr p s) =
-    "Error at" <+> PP.text (show p) <+> ":" $$
+    "Error at" <+> PP.pretty p <+> ":" $$
     PP.nest 2 s
 
 instance Show TCErr where
@@ -290,7 +289,7 @@ addMetaVar type_ = do
 
 uncheckedInstantiateMetaVar
   :: (IsTerm t)
-  => MetaVar -> Closed (Term t) -> TC t s ()
+  => MetaVar -> MetaVarBody t -> TC t s ()
 uncheckedInstantiateMetaVar mv t = do
   modify_ $ \ts -> ts{tsSignature = Sig.instantiateMetaVar (tsSignature ts) mv t}
 
@@ -301,7 +300,7 @@ getMetaVarType mv = do
   return $ Sig.getMetaVarType sig mv
 
 getMetaVarBody
-  :: (IsTerm t) => MetaVar -> TC t s (Maybe (Closed (Term t)))
+  :: (IsTerm t) => MetaVar -> TC t s (Maybe (MetaVarBody t))
 getMetaVarBody mv = do
   sig <- tsSignature <$> get
   return $ Sig.getMetaVarBody sig mv

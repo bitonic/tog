@@ -459,11 +459,11 @@ metaAssign ctx0 type0 mv elims t0 = do
         debug "pruned term" $ prettyM t1
         t2 <- applyInvertMetaVar ctx inv t1
         case t2 of
-          TTOK t' -> do
-            mvs <- metaVars t'
+          TTOK mvb -> do
+            mvs <- metaVars $ mvbBody mvb
             when (mv `HS.member` mvs) $
-              checkError $ OccursCheckFailed mv t'
-            instantiateMetaVar mv t'
+              checkError $ OccursCheckFailed mv $ mvbBody mvb
+            instantiateMetaVar mv mvb
             return []
           TTMetaVars mvs -> do
             debug_ ("inversion blocked on" //> PP.pretty (HS.toList mvs)) ""

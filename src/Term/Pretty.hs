@@ -8,7 +8,7 @@ import qualified PrettyPrint                      as PP
 import           Term.Types
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import qualified Term.Subst.Types          as Sub
+import qualified Term.Subst.Types                 as Sub
 
 instance PrettyM t (Definition t) where
   prettyM (Constant Postulate type_) = do
@@ -94,3 +94,6 @@ instance PrettyM t (Sub.Subst t) where
     Sub.Lift i sub -> do
       subDoc <- prettyM sub
       return $ "Lift" <+> PP.pretty i //> subDoc
+
+instance PrettyM t (MetaVarBody t) where
+  prettyM mvb = prettyM =<< metaVarBodyToTerm mvb
