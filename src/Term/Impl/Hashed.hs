@@ -28,7 +28,7 @@ instance PrettyM Hashed Hashed where
   prettyPrecM = genericPrettyPrecM
 
 instance ApplySubst Hashed Hashed where
-  applySubst = genericApplySubst
+  safeApplySubst = genericSafeApplySubst
 
 instance SynEq Hashed Hashed where
   synEq x y = return (x == y)
@@ -54,8 +54,6 @@ instance IsTerm Hashed where
 
   {-# NOINLINE typeOfJ #-}
   typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
-
-  canStrengthen = genericCanStrengthen
 
 -- Table
 

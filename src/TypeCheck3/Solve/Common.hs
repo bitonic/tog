@@ -2,6 +2,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Solve.Common where
 
+import qualified Prelude
 import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
@@ -41,16 +42,17 @@ curryMetaVar t = do
       let abstractions = length args0
       args <- toArgs args0
       newMv <- addMetaVar newMvType
-      mvT <- lambdaAbstract abstractions =<< app (Meta newMv) (map Apply args)
+      mvT <- app (Meta newMv) (map Apply args)
+      let mi = MetaVarBody abstractions mvT
       debug "unrolled" $ do
         mvTypeDoc <- prettyM =<< Ctx.pi ctx mvType
         newMvTypeDoc <- prettyM newMvType
-        mvTDoc <- prettyM mvT
+        mvTDoc <- prettyM =<< metaVarBodyToTerm mi
         return $
           "old type:" //> mvTypeDoc $$
           "new type:" //> newMvTypeDoc $$
           "term:" //> mvTDoc
-      instantiateMetaVar mv mvT
+      instantiateMetaVar mv mi
       -- Now we return the old type, which normalized will give the new
       -- mv.
       return t
@@ -219,9 +221,9 @@ prune allowedVs oldMv elims = do
       lift $ debug_ "new kills" $ PP.pretty (map unNamed kills1)
       guard (any unNamed kills1)
       newMv <- lift $ addMetaVar newMvType
-      mvT <- lift $ killArgs newMv kills1
-      lift $ instantiateMetaVar oldMv mvT
-      return mvT
+      mi <- lift $ killArgs newMv kills1
+      lift $ instantiateMetaVar oldMv mi
+      lift $ metaVarBodyToTerm mi
   where
     -- We build a pi-type with the non-killed types in.  This way, we
     -- can analyze the dependency between arguments and avoid killing
@@ -253,7 +255,7 @@ prune allowedVs oldMv elims = do
           if not kill
             then notKilled
             else do
-              mbType <- strengthenTerm =<< nf type'
+              mbType <- safeStrengthen =<< nf type'
               case mbType of
                 Just type'' -> do return (type'', named name True : kills')
                 Nothing     -> do debug_ "couldn't strengthen" ""
@@ -631,17 +633,44 @@ checkPatternCondition mvArgs = do
 applyInvertMetaVar
   :: forall t s.
      (IsTerm t)
-  => InvertMetaVar t -> Term t
-  -> TC t s (TermTraverse Var (Closed (Term t)))
-applyInvertMetaVar (InvertMetaVar sub vsNum) t = do
-  tt <- applyInvertMetaSubst sub t
-  case tt of
-    TTFail v ->
-      return $ TTFail v
-    TTMetaVars mvs ->
-      return $ TTMetaVars mvs
-    TTOK t' -> do
-      return . TTOK =<< lambdaAbstract vsNum t'
+  => Ctx t -> InvertMetaVar t -> Term t
+  -> TC t s (TermTraverse Var (MetaVarBody t))
+applyInvertMetaVar ctx (InvertMetaVar sub vsNum) t = do
+  let fallback = do
+        tt <- applyInvertMetaSubst sub t
+        case tt of
+          TTFail v ->
+            return $ TTFail v
+          TTMetaVars mvs ->
+            return $ TTMetaVars mvs
+          TTOK t' -> do
+            return $ TTOK $ MetaVarBody vsNum t'
+  let dontTouch = do
+        return $ TTOK $ MetaVarBody vsNum t
+  -- Optimization: if the substitution is the identity, and if the free
+  -- variables in the term are a subset of the variables that the
+  -- substitution covers, don't touch the term.
+  isId <- isIdentity sub
+  if isId
+    then do
+      let vs = Set.fromList (map fst sub)
+      if Set.size vs == Prelude.length (Ctx.vars ctx)
+        then dontTouch
+        else do
+          fvs <- freeVars t
+          if fvAll fvs `Set.isSubsetOf` vs
+            then dontTouch
+            else fallback
+    else fallback
+  where
+    isIdentity :: [(Var, Term t)] -> TC t s Bool
+    isIdentity [] = do
+      return True
+    isIdentity ((v, u) : sub') = do
+      tView <- whnfView u
+      case tView of
+        App (Var v') [] | v == v' -> isIdentity sub'
+        _                         -> return False
 
 applyInvertMetaSubst
   :: forall t s.
@@ -715,13 +744,13 @@ applyInvertMetaSubst sub t0 =
 
 -- | @killArgs α kills@ instantiates @α@ so that it discards the
 --   arguments indicated by @kills@.
-killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (Closed (Term t))
+killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (MetaVarBody t)
 killArgs newMv kills = do
   let vs = reverse [ mkVar n ix
                    | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
                    ]
   body <- metaVar newMv . map Apply =<< mapM var vs
-  foldl' (\body' _ -> lam =<< body') (return body) kills
+  return $ MetaVarBody (length kills) body
 
 -- | If @t = α ts@ and @α : Δ -> D us@ where @D@ is some record type, it
 -- will instantiate @α@ accordingly.
@@ -831,11 +860,12 @@ instantiateDataCon mv dataCon = do
   appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConArgs
   (dataConArgsCtx, _) <- unrollPi appliedDataConType
   dataConArgs <- createMvsPars ctxMvArgs $ Tel.tel dataConArgsCtx
-  mvT <- Ctx.lam ctxMvArgs =<< con dataCon dataConArgs
+  mvT <- con dataCon dataConArgs
+  let mi = MetaVarBody (length (Ctx.vars ctxMvArgs)) mvT
   -- given the usage, here we know that the body is going to be well typed.
   -- TODO make sure that the above holds.
-  instantiateMetaVar mv mvT
-  return mvT
+  instantiateMetaVar mv mi
+  metaVarBodyToTerm mi
 
 -- | @createMvsPars Γ Δ@ unrolls @Δ@ and creates a metavariable for
 --   each of the elements.

@@ -153,4 +153,3 @@ hang n d = PP.hang (fromIntegral n) d
 
 indent :: Natural -> Doc -> Doc
 indent n d = PP.indent (fromIntegral n) d
-

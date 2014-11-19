@@ -377,7 +377,7 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
         res1 <- checkEqual (ctx, dom, arg1, arg2)
-        mbCod <- strengthenTerm cod
+        mbCod <- safeStrengthen cod
         mbH' <- traverse (`eliminate` [Apply arg1]) mbH
         -- If the rest is non-dependent, we can continue immediately.
         case mbCod of
@@ -457,13 +457,13 @@ metaAssign ctx0 type0 mv elims t0 = do
           return $ "inversion:" //> invDoc
         t1 <- pruneTerm (Set.fromList $ invertMetaVarVars inv) t
         debug "pruned term" $ prettyM t1
-        t2 <- applyInvertMetaVar inv t1
+        t2 <- applyInvertMetaVar ctx inv t1
         case t2 of
-          TTOK t' -> do
-            mvs <- metaVars t'
+          TTOK mvb -> do
+            mvs <- metaVars $ mvbBody mvb
             when (mv `HS.member` mvs) $
-              checkError $ OccursCheckFailed mv t'
-            instantiateMetaVar mv t'
+              checkError $ OccursCheckFailed mv $ mvbBody mvb
+            instantiateMetaVar mv mvb
             return []
           TTMetaVars mvs -> do
             debug_ ("inversion blocked on" //> PP.pretty (HS.toList mvs)) ""

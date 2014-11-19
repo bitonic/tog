@@ -53,11 +53,11 @@ Ctx.Empty            ++ tel' = tel'
 -- Methods
 
 instance Term.ApplySubst t (Tel t) where
-  applySubst Empty _ = do
+  safeApplySubst Empty _ = do
     return Empty
-  applySubst (Cons (n, type_) tel') rho = do
-    type' <- Term.applySubst type_ rho
-    tel'' <- Term.applySubst tel' (Sub.lift 1 rho)
+  safeApplySubst (Cons (n, type_) tel') rho = do
+    type' <- Term.safeApplySubst type_ rho
+    tel'' <- Term.safeApplySubst tel' (Sub.lift 1 rho)
     return $ Cons (n, type') tel''
 
 -- | Instantiates an 'Tel' repeatedly until we get to the bottom of

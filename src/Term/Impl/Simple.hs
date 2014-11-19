@@ -22,7 +22,7 @@ instance PrettyM Simple Simple where
   prettyPrecM = genericPrettyPrecM
 
 instance ApplySubst Simple Simple where
-  applySubst = genericApplySubst
+  safeApplySubst = genericSafeApplySubst
 
 instance SynEq Simple Simple where
   synEq x y = return (x == y)
@@ -38,6 +38,4 @@ instance IsTerm Simple where
 
   {-# NOINLINE typeOfJ #-}
   typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
-
-  canStrengthen = genericCanStrengthen
 

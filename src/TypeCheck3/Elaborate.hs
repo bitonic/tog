@@ -149,7 +149,7 @@ elaborateApp' ctx type_ h elims = do
         typeDoc <- prettyM type_
         return $
           "ctx:" //> ctxDoc $$
-          "typeDoc:" //> typeDoc $$
+          "type:" //> typeDoc $$
           "head:" //> PP.pretty h $$
           "elims:" //> PP.pretty elims
   debugBracket "elaborateApp" msg $ elaborateApp ctx type_ h elims

@@ -8,10 +8,15 @@ module Term.Subst.Utils
   , strengthen_
   , instantiate
   , instantiate_
-  , strengthenTerm
+  , safeStrengthen
+  , getAbsName
+  , getAbsName_
+
   , eliminate
   ) where
 
+import           Conf
+import           Syntax
 import           Prelude.Extended
 import           Term.Synonyms
 import           Term.Types
@@ -41,12 +46,26 @@ instantiate t0 ts0 = applySubst t0 =<< go (reverse ts0)
     go []       = return Sub.id
     go (t : ts) = Sub.instantiate t =<< go ts
 
-strengthenTerm :: (IsTerm t, MonadTerm t m) => Term t -> m (Maybe (Term t))
-strengthenTerm t = do
-  cs <- canStrengthen t
-  case cs of
-    CSYes  -> Just <$> strengthen_ 1 t
-    CSNo _ -> return Nothing
+safeStrengthen :: (IsTerm t, MonadTerm t m, ApplySubst t a) => a -> m (Maybe a)
+safeStrengthen t = do
+  nameOrT <- runApplySubst $ safeApplySubst t $ Sub.strengthen 1 Sub.id
+  case nameOrT of
+    Left _   -> return Nothing
+    Right t' -> return $ Just t'
+
+getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
+getAbsName t = do
+  skip <- confFastGetAbsName <$> readConf
+  if skip
+    then return (Just "_")
+    else do
+      nameOrT <- runApplySubst $ safeApplySubst t $ Sub.strengthen 1 Sub.id
+      case nameOrT of
+        Right _ -> return Nothing
+        Left n  -> return $ Just n
+
+getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
+getAbsName_ t = fromMaybe "_" <$> getAbsName t
 
 -- Elimination
 ------------------------------------------------------------------------

@@ -24,7 +24,7 @@ data Subst t
   | Strengthen !Natural (Subst t)
     --   ρ : Δ → Γ
     -- --------------------------------
-    --   Strengthen |Ψ| ρ : Γ;Ψ →  Δ
+    --   Strengthen |Ψ| ρ : Γ;Ψ → Δ
 
   | Instantiate (Term t) (Subst t)
     --   Γ ⊢ u : Aρ    ρ : Δ → Γ
