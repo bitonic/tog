@@ -14,8 +14,6 @@ module TypeCheck3.Common
   , addMetaVarInCtx
   , extendContext
   , definitionType
-  , isApply
-  , isProj
   , unrollPiWithNames
   , unrollPi
   ) where
@@ -119,14 +117,6 @@ extendContext ctx type_ = do
 
 -- Miscellanea
 --------------
-
-isApply :: Elim (Term t) -> Maybe (Term t)
-isApply (Apply v) = Just v
-isApply Proj{}    = Nothing
-
-isProj :: Elim (Term t) -> Maybe Projection
-isProj Apply{}  = Nothing
-isProj (Proj p) = Just p
 
 definitionType :: (IsTerm t) => Closed (Definition t) -> TC t s (Closed (Type t))
 definitionType (Constant _ type_)         = return type_

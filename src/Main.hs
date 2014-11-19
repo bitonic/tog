@@ -73,6 +73,10 @@ parseTypeCheckConf = Conf
       ( long "dontNormalizePP" <>
         help "Don't normalize terms before pretty printing them"
       )
+  <*> switch
+      ( long "whnfApplySubst" <>
+        help "Reduce term when applying a substitution"
+      )
 
 debugLabelsOption
   :: Mod OptionFields [(Bool, [String])]

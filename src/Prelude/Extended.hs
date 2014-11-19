@@ -60,6 +60,9 @@ module Prelude.Extended
   , module Prelude
   , replicate
   , splitAt
+  , hPutStrLn
+  , hPutStr
+  , stderr
   ) where
 
 import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)
@@ -84,6 +87,7 @@ import Debug.Trace
 import Data.String
 import Data.Bwd
 import Numeric.Natural
+import System.IO
 
 #if __GLASGOW_HASKELL__ < 708
 traceM :: (Monad m) => String -> m ()

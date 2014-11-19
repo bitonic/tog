@@ -48,7 +48,7 @@ instance T.PrettyM GraphReduceUnpack GraphReduceUnpack where
   prettyPrecM = genericPrettyPrecM
 
 instance T.ApplySubst GraphReduceUnpack GraphReduceUnpack where
-  applySubst = genericApplySubst
+  safeApplySubst = genericSafeApplySubst
 
 instance T.SynEq GraphReduceUnpack GraphReduceUnpack where
   synEq (GRU tRef1) (GRU tRef2) | tRef1 == tRef2 = return True
@@ -92,4 +92,3 @@ instance T.IsTerm GraphReduceUnpack where
   {-# NOINLINE typeOfJ #-}
   typeOfJ = unsafePerformIO $ T.runTermM Sig.empty genericTypeOfJ
 
-  canStrengthen = genericCanStrengthen

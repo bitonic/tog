@@ -1,14 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Term.Impl.Common
-  ( genericApplySubst
+  ( genericSafeApplySubst
   , genericWhnf
   , genericTypeOfJ
   , genericNf
   , genericSynEq
   , genericMetaVars
   , genericPrettyPrecM
-  , genericCanStrengthen
 
   , view
   , unview
@@ -30,68 +29,44 @@ import           Term.Subst.Types          as Sub
 import           Term.Subst.Utils          as Sub
 import qualified Term.Signature                   as Sig
 
-genericApplySubst
-  :: (IsTerm t, MonadTerm t m) => t -> Subst t -> m t
-genericApplySubst t Sub.Id = do
+genericSafeApplySubst
+  :: (IsTerm t, MonadTerm t m) => t -> Subst t -> ApplySubstM m t
+genericSafeApplySubst t Sub.Id = do
   return t
-genericApplySubst t rho = do
-  tView <- whnfView t
+genericSafeApplySubst t rho = do
+  -- TODO note that here
+  -- * With `view', GR is as fast as S with `whnfView', but S is impossibly slow;
+  -- * With `whnfView', GR is almost twice as slow as S.
+  reduce <- confWhnfApplySubst <$> readConf
+  tView <- lift $ if reduce then whnfView t else view t
   case tView of
     Lam body ->
-      lam =<< applySubst body (Sub.lift 1 rho)
-    Pi impl dom cod ->
-      join $ pi <$> applySubst impl rho 
-                <*> applySubst dom (Sub.lift 1 rho) 
-                <*> applySubst cod (Sub.lift 2 rho)
-    Equal type_ x y  ->
-      join $ equal <$> applySubst type_ rho
-                   <*> applySubst x rho
-                   <*> applySubst y rho
+      lift . lam =<< safeApplySubst body (Sub.lift 1 rho)
+    Pi impl dom cod -> do
+      imp' <- safeApplySubst imp rho
+      dom' <- safeApplySubst dom rho
+      cod' <- safeApplySubst cod $ Sub.lift 1 rho
+      lift $ pi imp' dom' cod'
+    Equal type_ x y  -> do
+      type' <- safeApplySubst type_ rho
+      x' <- safeApplySubst x rho
+      y' <- safeApplySubst y rho
+      lift $ equal type' x' y'
     Refl ->
       return refl
-    Con dataCon args ->
-      join $ con dataCon <$> applySubst args rho
+    Con dataCon args -> do
+      args' <- safeApplySubst args rho
+      lift $ con dataCon args'
     Set ->
       return set
     App h els  -> do
-      els' <- applySubst els rho
+      els' <- safeApplySubst els rho
       case h of
-        Var v   -> (`eliminate` els') =<< Sub.lookup v rho
-        Def n   -> app (Def n) els'
-        Meta mv -> app (Meta mv) els'
-        J       -> app J els'
-
-genericCanStrengthen
-  :: forall t m. (IsTerm t, MonadTerm t m) => t -> m CanStrengthen
-genericCanStrengthen t0 = do
-    mbN <- runMaybeT $ go 0 t0
-    return $ case mbN of
-      Nothing -> CSYes
-      Just n  -> CSNo n
-  where
-    go :: Natural -> t -> MaybeT m Name
-    go ix t = do
-      tView <- lift $ whnfView t
-      case tView of
-        App (Var v) _ | varIndex v == ix -> do
-          return $ varName v
-        App _ es -> do
-          msum $ map goElim es
-        Pi impl dom cod -> do
-          go ix impl <|> go (ix+1) dom <|> go (ix+2) cod
-        Lam body -> do
-          go (ix+1) body
-        Equal type_ x y -> do
-          go ix type_ <|> go ix x <|> go ix y
-        Refl -> do
-          mzero
-        Set -> do
-          mzero
-        Con _ ts -> do
-          msum $ map (go ix) ts
-      where
-        goElim (Proj _)     = mzero
-        goElim (Apply i t') = go ix i <|> go ix t'
+        Var v   -> do u <- Sub.lookup v rho
+                      lift $ eliminate u els'
+        Def n   -> lift $ app (Def n) els'
+        Meta mv -> lift $ app (Meta mv) els'
+        J       -> lift $ app J els'
 
 genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
@@ -99,8 +74,8 @@ genericWhnf t = do
   tView <- view t
   sig <- askSignature
   case tView of
-    App (Meta mv) es | Just t' <- Sig.getMetaVarBody sig mv -> do
-      whnf =<< eliminate t' es
+    App (Meta mv) es | Just mi <- Sig.getMetaVarBody sig mv -> do
+      eliminateMeta mi es
     -- Note that here we don't want to crash if the definition is not
     -- set, since I want to be able to test non-typechecked terms.
     App (Def defName) es | Just (Function _ cs) <- Sig.getDefinition sig defName -> do
@@ -125,6 +100,31 @@ genericWhnf t = do
       return $ MetaVarHead mv elims
     _ ->
       return $ NotBlocked t
+
+eliminateMeta
+  :: (IsTerm t, MonadTerm t m) => MetaVarBody t -> [Elim t] -> m (Blocked t)
+eliminateMeta mvb@(MetaVarBody n body) es = whnf =<< do
+  if length es >= n
+    then do
+      let (esl, es') = splitAt n es
+      Just args <- return $ mapM isApply esl
+      -- Optimization: if the arguments are all lined up, don't touch
+      -- the body.
+      simple <- isSimple (n-1) args
+      if simple
+        then eliminate body es'
+        else (`eliminate` es') =<< instantiate body args
+    else do
+      mvT <- metaVarBodyToTerm mvb
+      eliminate mvT es
+  where
+    isSimple _ [] = do
+      return True
+    isSimple n' (arg : args') = do
+      argView <- view arg
+      case argView of
+        App (Var v) [] | varIndex v == n' -> isSimple (n'-1) args'
+        _                                 -> return False
 
 whnfFun
   :: (IsTerm t, MonadTerm t m)
@@ -266,12 +266,12 @@ internalToTerm t0 = do
     Lam body -> do
       n <- getAbsName_ body
       SA.Lam n <$> internalToTerm body
-    Pi _ dom cod -> do
-      cs <- canStrengthen cod
-      case cs of
-        CSNo n -> do
+    Pi dom cod -> do
+      mbN <- runApplySubst $ safeApplySubst cod $ Sub.strengthen 1 Sub.id -- extend for implicits
+      case mbN of
+        Left n -> do
           SA.Pi n <$> internalToTerm dom <*> internalToTerm cod
-        CSYes -> do
+        Right _ -> do
           SA.Fun <$> internalToTerm dom <*> internalToTerm cod
     Equal type_ x y ->
       SA.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
@@ -291,7 +291,6 @@ internalToTerm t0 = do
         Apply impl t -> SA.Apply <$> internalToTerm impl <*> internalToTerm t
         Proj p  -> return $ SA.Proj $ pName p
       return $ SA.App h' args'
-
 
 genericMetaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet
 genericMetaVars t = do
