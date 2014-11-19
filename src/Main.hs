@@ -106,6 +106,7 @@ parseMain =
       )
 
     typeCheck file interactive conf = do
+      when (confTimeSections conf) Timing.init
       writeConf conf
       checkFile file $ \(ts, mbErr) -> do
         forM_ mbErr $ \err -> do

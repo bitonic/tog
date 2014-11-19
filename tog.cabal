@@ -15,6 +15,7 @@ executable tog
 
   build-depends:       base >= 4.6
                      , array >= 0.4
+                     , boxes >= 0.1
                      , containers >= 0.5
                      , hashable >= 1.2
                      , hashtables >= 1.1
@@ -30,13 +31,20 @@ executable tog
                      , transformers-compat >= 0.3
                      , unordered-containers >= 0.2
                      , wl-pprint >= 1.1
-                     , boxes >= 0.1
-                     , criterion >= 1
 
   hs-source-dirs:      src, bnfc
   default-language:    Haskell2010
   ghc-options:         -Wall
   ghc-prof-options:    -auto-all
+
+  if os(darwin)
+    c-sources: cbits/time-osx.c
+  else {
+    if os(windows)
+      c-sources: cbits/time-windows.c
+    else
+      c-sources: cbits/time-posix.c
+  }
 
   build-tools:         alex, happy
 

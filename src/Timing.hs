@@ -1,3 +1,4 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 module Timing (push, pop, report) where
 
 import           Data.IORef                       (IORef, newIORef, writeIORef, readIORef, modifyIORef)
@@ -10,7 +11,6 @@ import           Data.List                        (sortBy)
 import           Data.Ord                         (comparing)
 import           Text.Printf                      (printf)
 import           Control.Monad.IO.Class           (MonadIO, liftIO)
-import           Criterion.Measurement            (getCPUTime)
 
 type Key = String
 
@@ -41,6 +41,9 @@ writeStackRef x = liftIO $ writeIORef stackRef x
 
 modifyStackRef :: MonadIO m => (Stack -> Stack) -> m ()
 modifyStackRef f = liftIO $ modifyIORef stackRef f
+
+init :: MonadIO m => m ()
+init = liftIO initializeTime
 
 push :: MonadIO m => Key -> m ()
 push key = do
@@ -84,3 +87,13 @@ report = do
   putStrLn $ "-- Timing report"
   putStrLn "------------------------------------------------------------------------"
   putStrLn $ Boxes.render box
+
+------------------------------------------------------------------------
+-- Timing functions ripped from criterion.
+
+-- | Return the amount of elapsed CPU time, combining user and kernel
+-- (system) time into a single measure.
+foreign import ccall unsafe "criterion_getcputime" getCPUTime :: IO Double
+
+-- | Set up time measurement.
+foreign import ccall unsafe "criterion_inittime" initializeTime :: IO ()
