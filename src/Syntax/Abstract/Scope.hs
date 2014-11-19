@@ -6,13 +6,15 @@ module Syntax.Abstract.Scope
     , NameInfo(..)
     ) where
 
+-- Is there a real need to use this rankNType continuation passing style
+
 import Prelude
-import Control.Arrow ((***), (&&&), first, second)
+import Control.Arrow (first, second)
 import Control.Applicative
 import Control.Monad.Reader
-import Control.Monad.Writer
+import Control.Monad.Writer -- rewrite to use this instead
 import Control.Monad.Error
-import Data.Monoid
+import Data.Monoid -- implement instance for the Scope and the Check type (presumably)
 import qualified Data.Map as Map
 import Data.Map (Map)
 
@@ -92,6 +94,7 @@ mkName l c s = Name (SrcLoc l c) s
 
 fromCName :: C.Name -> Name
 fromCName (C.Name ((l, c), s)) = mkName l c s
+
 
 mkVarInfo :: C.Name -> NameInfo
 mkVarInfo = VarName . fromCName 
