@@ -3,27 +3,29 @@ module Timing (push, pop, report) where
 import           Data.IORef                       (IORef, newIORef, writeIORef, readIORef, modifyIORef)
 import qualified Data.HashTable.IO                as HT
 import           System.IO.Unsafe                 (unsafePerformIO)
-import           System.CPUTime                   (getCPUTime)
 import qualified Text.PrettyPrint.Boxes           as Boxes
 import           Data.Functor                     ((<$>))
 import           Data.Maybe                       (fromMaybe)
 import           Data.List                        (sortBy)
 import           Data.Ord                         (comparing)
-import           Data.Ratio                       ((%))
 import           Text.Printf                      (printf)
 import           Control.Monad.IO.Class           (MonadIO, liftIO)
+import           Criterion.Measurement            (getCPUTime)
 
 type Key = String
 
 {-# NOINLINE cumulativeTimes #-}
-cumulativeTimes :: HT.CuckooHashTable Key Integer
+cumulativeTimes :: HT.CuckooHashTable Key Double
 cumulativeTimes = unsafePerformIO HT.new
 
 data StackItem = StackItem
-  { siElapsed :: Integer
-  , siLeftAt  :: Integer
+  { siElapsed :: Double
+  , siLeftAt  :: Double
   , siKey     :: Key
   }
+
+_dummy :: a
+_dummy = error "UNUSED" siElapsed siLeftAt siKey
 
 type Stack = [StackItem]
 
@@ -47,9 +49,9 @@ push key = do
   case stack of
     [] ->
       return ()
-    (StackItem elapsed leftAt oldKey : stack) -> do
+    (StackItem elapsed leftAt oldKey : stack') -> do
       let elapsed' = elapsed + (t - leftAt)
-      writeStackRef $ StackItem elapsed' t oldKey : stack
+      writeStackRef $ StackItem elapsed' t oldKey : stack'
   modifyStackRef (StackItem 0 t key :)
 
 pop :: MonadIO m => m ()
@@ -62,29 +64,20 @@ pop = do
   case stack of
     [] ->
       return ()
-    StackItem oldElapsed oldLeftAt oldKey : oldStack -> do
+    StackItem oldElapsed _oldLeftAt oldKey : oldStack -> do
       writeStackRef $ StackItem oldElapsed t oldKey : oldStack
-
--- section :: String -> IO ()
--- section label = do
---   t <- getCPUTime
---   mbCurrent <- readIORef currentTimer
---   forM_ mbCurrent $ \(oldLabel, t0) -> do
---     existing <- fromMaybe 0 <$> HT.lookup timersTable oldLabel
---     HT.insert timersTable oldLabel (existing + (t - t0))
---   t' <- getCPUTime
---   writeIORef currentTimer $ Just (label, t')
 
 report :: IO ()
 report = do
   kvs <- reverse . sortBy (comparing snd) <$> HT.toList cumulativeTimes
   let total  = sum $ map snd kvs
-  let perc n = printf "%.4f%%" $ (fromRational ((n * 100) % total) :: Double) :: String
+  let fmt n  = printf "%.4f" n :: String
+  let perc n = printf "%.4f%%" $ ((n * 100) / total) :: String
   let vcatl  = Boxes.vcat Boxes.left
   let vcatr  = Boxes.vcat Boxes.right
   let (<+>)  = (Boxes.<+>)
   let box    = (\(x, y, z) -> vcatl x <+> vcatr y <+> vcatr z) $ unzip3
-               [ (Boxes.text label, Boxes.text (show t), Boxes.text (perc t))
+               [ (Boxes.text label, Boxes.text (fmt t), Boxes.text (perc t))
                | (label, t) <- kvs
                ]
   putStrLn "------------------------------------------------------------------------"

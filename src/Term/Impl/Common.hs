@@ -218,7 +218,7 @@ genericSynEq
   :: (IsTerm t, MonadTerm t m)
   => t -> t -> m Bool
 genericSynEq t1 t2 = do
-  join $ genericTermViewEq <$> view t1 <*> view t2
+  join $ genericTermViewEq <$> whnfView t1 <*> whnfView t2
 
 genericTermViewEq
   :: (IsTerm t, MonadTerm t m)

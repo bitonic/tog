@@ -420,4 +420,4 @@ local te (TC m) = TC $ \(_, ts) -> m (te, ts)
 
 -- To suppress "unused" warnings
 _dummy :: a
-_dummy = undefined 
+_dummy = undefined dfDoc

@@ -31,6 +31,7 @@ executable tog
                      , unordered-containers >= 0.2
                      , wl-pprint >= 1.1
                      , boxes >= 0.1
+                     , criterion >= 1
 
   hs-source-dirs:      src, bnfc
   default-language:    Haskell2010
