@@ -7,7 +7,7 @@ module TypeCheck3.Elaborate
 
 import           Control.Monad.State              (modify)
 
-import qualified Data.Bwd                         as Bwd
+import           Instrumentation
 import           Prelude.Extended
 import qualified Syntax.Abstract                  as SA
 import           Term
@@ -92,7 +92,7 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         t <- con dataCon dataConArgs
         expect_ type' t
       SA.App h elims -> do
-        elaborateApp' ctx type_ h (Bwd.fromList elims)
+        elaborateApp' ctx type_ h (fromList elims)
 
 -- | Takes a telescope in the form of a Pi-type and replaces all it's
 -- elements with metavariables.

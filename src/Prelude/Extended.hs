@@ -48,7 +48,6 @@ module Prelude.Extended
   , MonadIO(..)
   , foldlM
   , Bwd(..)
-  , toList
   , fold
   , intersperse
   , isPrefixOf
@@ -63,6 +62,8 @@ module Prelude.Extended
   , hPutStrLn
   , hPutStr
   , stderr
+  , fromList
+  , toList
   ) where
 
 import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)
@@ -88,6 +89,13 @@ import Data.String
 import Data.Bwd
 import Numeric.Natural
 import System.IO
+
+#if __GLASGOW_HASKELL__ >= 708
+import           GHC.Exts                         (fromList)
+#else
+import           Data.IsList                      (fromList)
+#endif
+
 
 #if __GLASGOW_HASKELL__ < 708
 traceM :: (Monad m) => String -> m ()

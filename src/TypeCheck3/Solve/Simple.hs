@@ -12,7 +12,7 @@ import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Syntax
 
-import           Conf
+import           Instrumentation
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, indent, hang)
 import qualified PrettyPrint                      as PP

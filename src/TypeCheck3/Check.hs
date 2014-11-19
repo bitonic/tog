@@ -6,7 +6,7 @@ module TypeCheck3.Check
   ) where
 
 import           Prelude.Extended
-import           Conf
+import           Instrumentation
 import           Syntax
 import           Term
 import qualified Term.Context                     as Ctx

@@ -20,6 +20,7 @@ module TypeCheck3.Common
 
 import           Prelude                          hiding (abs, pi)
 
+import           Instrumentation
 import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Abstract                  as SA

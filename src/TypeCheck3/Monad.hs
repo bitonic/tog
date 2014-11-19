@@ -7,14 +7,11 @@ module TypeCheck3.Monad
   , tcState
   , TCErr(..)
   , initTCState
-  , TCConf(..)
   , runTC
-  , runTC_
   , catchTC
     -- * Operations
     -- ** Errors
   , typeError
-  , fatalError
   , assert
   , assert_
     -- ** Source location
@@ -35,26 +32,19 @@ module TypeCheck3.Monad
     -- ** State handling
   , mapTC
   , nestTC
-    -- * Debugging
-  , debugBracket
-  , debugBracket_
-  , debug
-  , debug_
-  , whenDebug
   ) where
 
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 
 import           Prelude.Extended                 hiding (any)
-import           Conf
+import           Instrumentation
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
 import           Syntax
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
-import qualified Timing                           as Timing
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -100,73 +90,29 @@ catchTC m = TC $ \(te, ts) -> do
     Left e  -> (ts', Right (Left (PP.pretty e)))
     Right x -> (ts', Right (Right x))
 
-data TCConf = TCConf
-  { tccQuiet       :: Bool
-  , tccStackTrace  :: Bool
-  , tccDebugLabels :: DebugLabels
-  }
-
 -- | Takes a 'TCState' and a computation on a closed context and
 -- produces an error or a result with a new state.
 runTC :: (IsTerm t)
-      => TCConf
-      -> TCState t s
-      -> TC t s a -> IO (Either PP.Doc a, TCState t s)
-runTC conf ts (TC m) = do
-  let mbDebug = case () of
-        _ | tccQuiet conf                       -> Nothing
-        _ | tccStackTrace conf                  -> Just initDebug
-        _ | DLSome (_:_) <- tccDebugLabels conf -> Just initDebug
-        _                              -> Nothing
-  mbErr <- m ((initEnv conf){teDebug = mbDebug}, ts)
+      => TCState t s -> TC t s a -> IO (Either PP.Doc a, TCState t s)
+runTC ts (TC m) = do
+  mbErr <- m (initEnv, ts)
   return $ case mbErr of
     (ts', Left e)  -> (Left (PP.pretty e), ts')
     (ts', Right x) -> (Right x, ts')
 
--- | Like 'runTC', but generates the 'TCConf' from the 'Conf'.
-runTC_ :: (IsTerm t)
-       => TCState t s
-       -> TC t s a
-       -> IO (Either PP.Doc a, TCState t s)
-runTC_ ts m = do
-  conf <- TCConf <$> (confQuiet <$> readConf)
-                 <*> (confStackTrace <$> readConf)
-                 <*> (confDebugLabels <$> readConf)
-  runTC conf ts m
-
 data TCEnv = TCEnv
-    { teCurrentSrcLoc    :: !SrcLoc
-    , teConf             :: !TCConf
-    , teDebug            :: !(Maybe Debug)
+    { teCurrentSrcLoc  :: !SrcLoc
     }
 
-data DebugFrame = DebugFrame
-  { dfDoc   :: !PP.Doc
-  , dfLabel :: !DebugLabel
-  }
-
-instance PP.Pretty DebugFrame where
-  pretty (DebugFrame doc label) = "***" <+> PP.text label $$ doc
-
-data Debug = Debug
-  { dStack :: ![DebugFrame]
-  }
-
-initDebug :: Debug
-initDebug = Debug []
-
-initEnv :: TCConf -> TCEnv
-initEnv tcc =
+initEnv :: TCEnv
+initEnv =
   TCEnv{ teCurrentSrcLoc = noSrcLoc
-       , teConf          = tcc
-       , teDebug         = Nothing
        }
 
 data TCState t s = TCState
     { tsSignature        :: !(Sig.Signature t)
     , tsState            :: !s
-    }
-    deriving (Functor)
+    } deriving (Functor)
 
 -- | An empty state.
 initTCState
@@ -194,25 +140,11 @@ instance Show TCErr where
 -- Errors
 ------------------------------------------------------------------------
 
-renderStackTrace :: PP.Doc -> Debug -> PP.Doc
-renderStackTrace err dbg =
-  "error:" //> err $$
-  "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (map PP.pretty (dStack dbg)))
-
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t s b
 typeError err = do
-  mbDebug <- teDebug <$> ask
-  forM_ mbDebug $ \d -> do
-    rawDebug d{dStack = []} ("*** typeError") (renderStackTrace err d)
+  stackTrace "typeError" err
   TC $ \(te, ts) -> return (ts, Left (DocErr (teCurrentSrcLoc te) err))
-
-fatalError :: String -> TC t s b
-fatalError s = do
-  mbDebug <- teDebug <$> ask
-  forM_ mbDebug $ \d ->
-    rawDebug d{dStack = []} ("*** fatalError") (renderStackTrace (PP.text s) d)
-  error s
 
 assert :: (PP.Doc -> TC t s PP.Doc) -> TC t s a -> TC t s a
 assert msg m = do
@@ -309,70 +241,6 @@ unsafeRemoveMetaVar mv = do
   debug_ "unsafeRemoveMeta" (PP.pretty mv)
   modify_ $ \ts -> ts{tsSignature = Sig.unsafeRemoveMetaVar (tsSignature ts) mv}
 
--- Debugging
-------------------------------------------------------------------------
-
-_ERROR_INDENT :: Natural
-_ERROR_INDENT = 2
-
-type DebugLabel = String
-
-rawDebug :: Debug -> PP.Doc -> PP.Doc -> TC t s ()
-rawDebug d label doc =
-  TC $ \(_, ts) -> do
-    let s  = PP.renderPretty 100 $ label $$ doc
-    let pad = replicate (length (dStack d) * _ERROR_INDENT) ' '
-    hPutStr stderr $ unlines $ map (pad ++) $ lines s
-    return (ts, Right ())
-
-matchLabel :: DebugLabel -> TC t s () -> TC t s ()
-matchLabel label m = do
-  debugLabels <- tccDebugLabels . teConf <$> ask
-  case debugLabels of
-    DLAll                       -> m
-    DLSome ls | label `elem` ls -> m
-    _                           -> return ()
-
-debugBracket :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
-debugBracket label docM m = do
-  te <- ask
-  mbD <- forM (teDebug te) $ \d@(Debug stack) -> do
-    doc <- assertDoc docM
-    matchLabel label $ rawDebug d ("***" <+> PP.text label) doc
-    let frame = DebugFrame doc label
-    return $ Debug $ frame : stack
-  -- Start a timer if the config says so
-  time <- confTimeSections <$> readConf
-  when time $ Timing.push label
-  x <- local te{teDebug = mbD} m
-  when time $ Timing.pop
-  return x
-
-debugBracket_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
-debugBracket_ label doc = debugBracket label (return doc)
-
-assertDoc :: TC t s PP.Doc -> TC t s PP.Doc
-assertDoc = assert_ ("assertDoc: the doc action got an error:" <+>)
-
-debug :: PP.Doc -> TC t s PP.Doc -> TC t s ()
-debug label docM = do
-  mbD <- teDebug <$> ask
-  forM_ mbD $ \d -> case dStack d of
-    frame : _ -> do
-      matchLabel (dfLabel frame) $ do
-        doc <- assertDoc docM
-        rawDebug d ("**" <+> label) doc
-    [] -> do
-      return ()
-
-debug_ :: PP.Doc -> PP.Doc -> TC t s ()
-debug_ label doc = debug label (return doc)
-
-whenDebug :: TC t s () -> TC t s ()
-whenDebug m = do
-  mbD <- teDebug <$> ask
-  forM_ mbD $ \_ -> m
-
 -- State
 ------------------------------------------------------------------------
 
@@ -387,7 +255,7 @@ mapTC l (TC m) = TC $ \(te, ts) -> do
   return ((\s -> L.set l s (tsState ts)) <$> ts'', x)
 
 -- | Runs an action with a different state, but with the same
--- environment and signature and debug state.
+-- environment and signature.
 nestTC :: s' -> TC t s' a -> TC t s (a, s')
 nestTC s (TC m) = TC $ \(te, ts) -> do
   (ts', mbX) <- m (te, s <$ ts)
@@ -411,13 +279,3 @@ get = TC $ \(_, ts) -> return (ts, Right ts)
 
 ask :: TC t s (TCEnv)
 ask = TC $ \(te, ts) -> return (ts, Right te)
-
-local :: TCEnv -> TC t s a -> TC t s a
-local te (TC m) = TC $ \(_, ts) -> m (te, ts)
-
--- Garbage
-------------------------------------------------------------------------
-
--- To suppress "unused" warnings
-_dummy :: a
-_dummy = undefined dfDoc

@@ -7,7 +7,7 @@ module TypeCheck3.Solve
 
 import           Control.Monad.State              (get, put)
 
-import           Conf
+import           Instrumentation
 import           Prelude.Extended
 import           Term
 import           TypeCheck3.Monad

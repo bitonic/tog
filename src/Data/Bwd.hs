@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 
-module Data.Bwd (Bwd(..), fromList) where
+module Data.Bwd (Bwd(..)) where
 
 import           Data.Foldable                    (Foldable)
 import           Data.Traversable                 (Traversable)

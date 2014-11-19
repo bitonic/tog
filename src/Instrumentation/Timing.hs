@@ -1,16 +1,13 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
-module Timing (push, pop, report) where
+module Instrumentation.Timing (timingInit, timingBracket, timingReport) where
 
 import           Data.IORef                       (IORef, newIORef, writeIORef, readIORef, modifyIORef)
 import qualified Data.HashTable.IO                as HT
 import           System.IO.Unsafe                 (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes           as Boxes
-import           Data.Functor                     ((<$>))
-import           Data.Maybe                       (fromMaybe)
-import           Data.List                        (sortBy)
-import           Data.Ord                         (comparing)
 import           Text.Printf                      (printf)
-import           Control.Monad.IO.Class           (MonadIO, liftIO)
+
+import           Prelude.Extended
 
 type Key = String
 
@@ -33,22 +30,22 @@ type Stack = [StackItem]
 stackRef :: IORef Stack
 stackRef = unsafePerformIO $ newIORef []
 
-readStackRef :: MonadIO m => m Stack
-readStackRef = liftIO $ readIORef stackRef
+readStackRef :: IO Stack
+readStackRef = readIORef stackRef
 
-writeStackRef :: MonadIO m => Stack -> m ()
-writeStackRef x = liftIO $ writeIORef stackRef x
+writeStackRef :: Stack -> IO ()
+writeStackRef x = writeIORef stackRef x
 
-modifyStackRef :: MonadIO m => (Stack -> Stack) -> m ()
-modifyStackRef f = liftIO $ modifyIORef stackRef f
+modifyStackRef :: (Stack -> Stack) -> IO ()
+modifyStackRef f = modifyIORef stackRef f
 
-init :: MonadIO m => m ()
-init = liftIO initializeTime
+timingInit :: IO ()
+timingInit = initializeTime
 
-push :: MonadIO m => Key -> m ()
-push key = do
+timingPush :: Key -> IO ()
+timingPush key = do
   stack <- readStackRef
-  t <- liftIO getCPUTime
+  t <- getCPUTime
   case stack of
     [] ->
       return ()
@@ -57,21 +54,30 @@ push key = do
       writeStackRef $ StackItem elapsed' t oldKey : stack'
   modifyStackRef (StackItem 0 t key :)
 
-pop :: MonadIO m => m ()
-pop = do
+timingPop :: IO ()
+timingPop = do
   StackItem elapsed leftAt key : stack <- readStackRef
-  t <- liftIO getCPUTime
+  t <- getCPUTime
   let elapsed' = elapsed + (t - leftAt)
-  existing <- liftIO (fromMaybe 0 <$> HT.lookup cumulativeTimes key)
-  liftIO $ HT.insert cumulativeTimes key (existing + elapsed')
+  existing <- fromMaybe 0 <$> HT.lookup cumulativeTimes key
+  HT.insert cumulativeTimes key (existing + elapsed')
   case stack of
     [] ->
       return ()
     StackItem oldElapsed _oldLeftAt oldKey : oldStack -> do
       writeStackRef $ StackItem oldElapsed t oldKey : oldStack
 
-report :: IO ()
-report = do
+-- TODO sadly we can't use bracket here -- because of MonadIO.  Shall we
+-- use lifted-base?
+timingBracket :: (MonadIO m) => Key -> m a -> m a
+timingBracket label m = do
+  liftIO $ timingPush label
+  x <- m
+  liftIO $ timingPop
+  return x
+
+timingReport :: IO ()
+timingReport = do
   kvs <- reverse . sortBy (comparing snd) <$> HT.toList cumulativeTimes
   let total  = sum $ map snd kvs
   let fmt n  = printf "%.4f" n :: String

@@ -17,7 +17,7 @@ import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import           Data.Traversable                 (mapM, sequence)
 
-import           Conf
+import           Instrumentation
 import           Prelude.Extended                 hiding (foldr, mapM, sequence)
 import           Syntax
 import qualified Syntax.Abstract                  as SA

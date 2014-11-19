@@ -8,14 +8,13 @@ import           System.Exit                      (exitFailure)
 import qualified System.Console.Haskeline         as Haskeline
 import           Data.List.Split                  (splitOn)
 
-import           Conf
+import           Instrumentation
 import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
 import           Prelude.Extended
 import           Term
 import           TypeCheck3
 import           Syntax
-import qualified Timing                           as Timing
 
 -- Modules that we don't need, but should compile
 import           Term.Testing                     ()
@@ -105,16 +104,19 @@ parseMain =
         help "Start interpreter once the file is loaded."
       )
 
-    typeCheck file interactive conf = do
-      when (confTimeSections conf) Timing.init
-      writeConf conf
-      checkFile file $ \(ts, mbErr) -> do
-        forM_ mbErr $ \err -> do
-          putStrLn (PP.render err)
-          unless interactive exitFailure
-        when interactive $
-          Haskeline.runInputT interactSettings (interact' ts)
-      when (confTimeSections conf) Timing.report
+    typeCheck file interactive conf0 = do
+      conf <- if interactive && confDebug conf0
+        then do
+          putStrLn "-i incompatible with -d, disabling -d"
+          return $ confDisableDebug conf0
+        else return conf0
+      instrument conf $ do
+        checkFile file $ \(ts, mbErr) -> do
+          forM_ mbErr $ \err -> do
+            putStrLn (PP.render err)
+            unless interactive exitFailure
+          when interactive $
+            Haskeline.runInputT interactSettings (interact' ts)
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"

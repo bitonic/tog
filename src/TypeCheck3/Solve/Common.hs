@@ -8,6 +8,7 @@ import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Data.Tree                        (Tree(Node), subForest, rootLabel, Forest)
 
+import           Instrumentation
 import           Syntax
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>))

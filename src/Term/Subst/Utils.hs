@@ -15,7 +15,7 @@ module Term.Subst.Utils
   , eliminate
   ) where
 
-import           Conf
+import           Instrumentation
 import           Syntax
 import           Prelude.Extended
 import           Term.Synonyms

@@ -21,7 +21,7 @@ import qualified Data.HashMap.Strict              as HMS
 import           Safe                             (readMay)
 import qualified Text.ParserCombinators.ReadP     as ReadP
 
-import           Conf
+import           Instrumentation
 import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Abstract                  as SA
@@ -344,7 +344,7 @@ checkProgram' _ decls0 ret = do
               _ ->
                 not $ null decls
         when separate $ putStrLn ""
-      (mbErr, ts') <- runTC_ ts $ checkDecl decl
+      (mbErr, ts') <- runTC ts $ checkDecl decl
       case mbErr of
         Left err -> return (ts', Just err)
         Right () -> goDecls ts' decls
@@ -469,7 +469,7 @@ runCommand ts cmd =
         ":h, :help\t\t\tDisplay this message"
   where
     runTC' m = do
-      (mbErr, _) <- runTC (TCConf True False mempty) ts m
+      (mbErr, _) <- runTC ts m
       let doc = case mbErr of
                   Left err   -> "Error:" //> err
                   Right doc0 -> doc0

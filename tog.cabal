@@ -46,6 +46,8 @@ executable tog
       c-sources: cbits/time-posix.c
   }
 
+  CC-Options:          -fPIC
+
   build-tools:         alex, happy
 
   default-extensions:  BangPatterns

@@ -1,3 +1,4 @@
+/* Taken from the criterion package from Bryan O'Sullivan */
 /*
  * Windows has the most amazingly cretinous time measurement APIs you
  * can possibly imagine.
