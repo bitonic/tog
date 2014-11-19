@@ -56,6 +56,7 @@ import           Syntax
 import           Term
 import qualified Term.Signature                   as Sig
 import qualified Term.Telescope                   as Tel
+import qualified Timing                           as Timing
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -339,6 +340,10 @@ matchLabels labels0 m = do
 debugSection :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
 debugSection label docM m = do
   te <- ask
+  -- Start a timer if the config says so
+  time <- confTimeSections <$> readConf
+  liftIO $ when time $ Timing.section label
+  -- Debug
   mbD <- forM (teDebug te) $ \d -> do
     let labels = [label]
     doc <- assertDoc docM

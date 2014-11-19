@@ -15,6 +15,7 @@ import           Prelude.Extended
 import           Term
 import           TypeCheck3
 import           Syntax
+import qualified Timing                           as Timing
 
 -- Modules that we don't need, but should compile
 import           Term.Testing                     ()
@@ -77,6 +78,10 @@ parseTypeCheckConf = Conf
       ( long "whnfApplySubst" <>
         help "Reduce term when applying a substitution"
       )
+  <*> switch
+      ( long "timeSections" <>
+        help "Measure how much time is taken by each debug section"
+      )
 
 debugLabelsOption
   :: Mod OptionFields [(Bool, [String])]
@@ -111,6 +116,7 @@ parseMain =
           unless interactive exitFailure
         when interactive $
           Haskeline.runInputT interactSettings (interact' ts)
+      when (confTimeSections conf) Timing.report
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"

@@ -26,10 +26,11 @@ data Conf = Conf
   , confDisableSynEquality      :: Bool
   , confDontNormalizePP         :: Bool
   , confWhnfApplySubst          :: Bool
+  , confTimeSections            :: Bool
   }
 
 defaultConf :: Conf
-defaultConf = Conf "S" "Simple" [] False False False False False False False False False False False False
+defaultConf = Conf "S" "Simple" [] False False False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
 confRef :: IORef (Maybe Conf)

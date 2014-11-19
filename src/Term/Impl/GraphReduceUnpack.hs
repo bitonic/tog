@@ -30,7 +30,7 @@ data Tm
     | Refl
     | Set
     | Con !Name ![Ref]
-    | App T.Head ![T.Elim Ref]
+    | App !T.Head ![T.Elim Ref]
     deriving (Show, Eq, Typeable)
 
 instance T.MetaVars GraphReduceUnpack GraphReduceUnpack where
