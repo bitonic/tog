@@ -48,7 +48,7 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         return $
           "type:" //> typeDoc $$
           "t:" //> absTDoc
-  debugSection "elaborate" msg $ do
+  debugBracket "elaborate" msg $ do
     let expect_ = expect ctx type_
     case absT of
       SA.Set _ -> do
@@ -166,7 +166,7 @@ elaborateApp ctx type_ h (elims :< SA.Apply arg) = atSrcLoc arg $ do
   cod <- addMetaVarInCtx (Ctx.Snoc ctx ("_", dom)) set
   typeF <- pi dom cod
   arg' <- elaborate' ctx dom arg
-  f <- elaborateApp' ctx typeF h elims
+  f <- elaborateApp ctx typeF h elims
   type' <- instantiate_ cod arg'
   t <- eliminate f [Apply arg']
   expect ctx type_ type' t
@@ -176,7 +176,7 @@ elaborateApp ctx type_ h (elims :< SA.Proj projName) = atSrcLoc projName $ do
   tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType
   typeRec <- app (Def tyCon) (map Apply tyConArgs)
-  rec_ <- elaborateApp' ctx typeRec h elims
+  rec_ <- elaborateApp ctx typeRec h elims
   type0 <- Tel.discharge projTypeTel projType tyConArgs
   Pi _ type1 <- whnfView type0
   type' <- instantiate_ type1 rec_

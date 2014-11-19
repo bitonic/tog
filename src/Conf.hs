@@ -1,11 +1,12 @@
 -- | Global configuration, what we get from the command line.  Every
 -- program using tog as a library should start with @'writeConf' conf@.
-module Conf (Conf(..), defaultConf, writeConf, readConf) where
+module Conf (Conf(..), DebugLabels(..), defaultConf, writeConf, readConf) where
 
 import           Control.Monad                    (unless)
 import           System.IO.Unsafe                 (unsafePerformIO)
 import           Control.Monad.IO.Class           (MonadIO, liftIO)
 import           Data.IORef                       (IORef, newIORef, atomicModifyIORef', readIORef)
+import           Data.Monoid                      (Monoid(..))
 
 -- Configuration
 ------------------------------------------------------------------------
@@ -13,7 +14,7 @@ import           Data.IORef                       (IORef, newIORef, atomicModify
 data Conf = Conf
   { confTermType                :: String
   , confSolver                  :: String
-  , confDebugLabels             :: [(Bool, [String])]
+  , confDebugLabels             :: DebugLabels
   , confStackTrace              :: Bool
   , confQuiet                   :: Bool
   , confNoMetaVarsSummary       :: Bool
@@ -29,8 +30,19 @@ data Conf = Conf
   , confTimeSections            :: Bool
   }
 
+data DebugLabels
+  = DLAll
+  | DLSome [String]
+
+instance Monoid DebugLabels where
+  mempty = DLSome []
+
+  DLAll     `mappend` _         = DLAll
+  _         `mappend` DLAll     = DLAll
+  DLSome xs `mappend` DLSome ys = DLSome (xs ++ ys)
+
 defaultConf :: Conf
-defaultConf = Conf "S" "Simple" [] False False False False False False False False False False False False False
+defaultConf = Conf "S" "Simple" mempty False False False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
 confRef :: IORef (Maybe Conf)

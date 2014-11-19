@@ -28,7 +28,7 @@ check ctx t type_ = do
         return $
           "t:" //> tDoc $$
           "type:" //> typeDoc
-  debugSection "check" msg $ do
+  debugBracket "check" msg $ do
     tView <- whnfView t
     case tView of
       Con dataCon args -> do
@@ -179,7 +179,7 @@ checkEqual x@(_, type_, t1, t2) = do
           "type:" //> typeDoc $$
           "t1:" //> t1Doc $$
           "t2:" //> t2Doc
-  debugSection "defEqual" msg $
+  debugBracket "defEqual" msg $
     runCheckEqual [checkSynEq, etaExpand] compareTerms x
   where
     runCheckEqual [] finally x' = do

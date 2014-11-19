@@ -57,7 +57,7 @@ type CheckM t = TC t (CheckState t)
 
 checkDecl :: (IsTerm t) => SA.Decl -> CheckM t ()
 checkDecl decl = do
-  debugSection_ "checkDecl" (PP.pretty decl) $ atSrcLoc decl $ do
+  debugBracket_ "checkDecl" (PP.pretty decl) $ atSrcLoc decl $ do
     case decl of
       SA.TypeSig sig      -> checkTypeSig sig
       SA.Postulate sig    -> checkPostulate sig
@@ -469,7 +469,7 @@ runCommand ts cmd =
         ":h, :help\t\t\tDisplay this message"
   where
     runTC' m = do
-      (mbErr, _) <- runTC (TCConf True False []) ts m
+      (mbErr, _) <- runTC (TCConf True False mempty) ts m
       let doc = case mbErr of
                   Left err   -> "Error:" //> err
                   Right doc0 -> doc0

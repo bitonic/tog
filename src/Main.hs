@@ -31,7 +31,7 @@ parseTypeCheckConf = Conf
         help "Available solvers: S (Simple), H (Hetero), TC (TwoContexts)."
       )
   <*> debugLabelsOption
-      ( long "debug" <> short 'd' <> value [] <>
+      ( long "debug" <> short 'd' <> value mempty <>
         help "Select debug labels to print."
       )
   <*> switch
@@ -84,16 +84,13 @@ parseTypeCheckConf = Conf
       )
 
 debugLabelsOption
-  :: Mod OptionFields [(Bool, [String])]
-  -> Parser [(Bool, [String])]
+  :: Mod OptionFields DebugLabels
+  -> Parser DebugLabels
 debugLabelsOption = option $ do
   s <- readerAsk
-  return [ case x of
-             []       -> (True,  [])
-             '~' : x' -> (False, splitOn "." x')
-             x'       -> (True,  splitOn "." x')
-         | x <- splitOn "|" s
-         ]
+  case s of
+    [] -> return DLAll
+    _  -> return $ DLSome $ splitOn "|" s
 
 parseMain :: Parser (IO ())
 parseMain =

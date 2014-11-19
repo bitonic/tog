@@ -94,7 +94,7 @@ solveConstraint constr0 = do
         constrDoc <- prettyM constr0
         return $
           "constraint:" //> constrDoc
-  debugSection "solveConstraint" msg $ do
+  debugBracket "solveConstraint" msg $ do
     case constr0 of
       Conj constrs -> do
         mconcat <$> forM constrs solveConstraint
@@ -159,7 +159,7 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
           "type:" //> typeDoc $$
           "x:" //> xDoc $$
           "y:" //> yDoc
-  debugSection "unify" msg $ do
+  debugBracket "unify" msg $ do
     runCheckEqual
       [ checkSynEq              -- Optimization: check if the two terms are equal
       , etaExpand'              -- Expand the terms
@@ -352,27 +352,35 @@ checkEqualSpine ctx type_ h elims1 elims2  = do
   h' <- app h []
   checkEqualSpine' ctx type_ (Just h') elims1 elims2
 
+{-
 checkEqualSpine'
   :: (IsTerm t)
   => Ctx t -> Type t -> Maybe (Term t)
   -> [Elim (Term t)] -> [Elim (Term t)]
   -> TC t s (Constraints t)
-checkEqualSpine' _ _ _ [] [] = do
-  return []
-checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+checkEqualSpine' ctx type_ mbH elims1 elims2 = do
   let msg = do
         typeDoc <- prettyM type_
         hDoc <- case mbH of
           Nothing -> return "No head"
           Just h  -> prettyM h
-        elims1Doc <- prettyM $ elim1 : elims1
-        elims2Doc <- prettyM $ elim2 : elims2
+        elims1Doc <- prettyM elims1
+        elims2Doc <- prettyM elims2
         return $
           "type:" //> typeDoc $$
           "head:" //> hDoc $$
           "elims1:" //> elims1Doc $$
           "elims2:" //> elims2Doc
-  debugBracket "checkEqualSpine" msg $ do
+  debugBracket "checkEqualSpine" msg $ checkEqualSpine'' ctx type_ mbH elims2 elims2
+
+checkEqualSpine''
+  :: (IsTerm t)
+  => Ctx t -> Type t -> Maybe (Term t)
+  -> [Elim (Term t)] -> [Elim (Term t)]
+  -> TC t s (Constraints t)
+checkEqualSpine'' _ _ _ [] [] = do
+  return []
+checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
     case (elim1, elim2) of
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
@@ -382,7 +390,7 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
         -- If the rest is non-dependent, we can continue immediately.
         case mbCod of
           Just cod' -> do
-            res2 <- checkEqualSpine' ctx cod' mbH' elims1 elims2
+            res2 <- checkEqualSpine'' ctx cod' mbH' elims1 elims2
             return (res1 <> res2)
           Nothing -> do
             cod' <- instantiate_ cod arg1
@@ -390,10 +398,64 @@ checkEqualSpine' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       (Proj proj, Proj proj') | proj == proj' -> do
           let Just h = mbH
           (h', type') <- applyProjection proj h type_
-          checkEqualSpine' ctx type' (Just h') elims1 elims2
+          checkEqualSpine'' ctx type' (Just h') elims1 elims2
       _ ->
         checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
-checkEqualSpine' _ type_ _ elims1 elims2 = do
+checkEqualSpine'' _ type_ _ elims1 elims2 = do
+  checkError $ SpineNotEqual type_ elims1 type_ elims2
+-}
+
+checkEqualSpine'
+  :: (IsTerm t)
+  => Ctx t -> Type t -> Maybe (Term t)
+  -> [Elim (Term t)] -> [Elim (Term t)]
+  -> TC t s (Constraints t)
+checkEqualSpine' ctx type_ mbH elims1 elims2 = do
+  let msg = do
+        typeDoc <- prettyM type_
+        hDoc <- case mbH of
+          Nothing -> return "No head"
+          Just h  -> prettyM h
+        elims1Doc <- prettyM elims1
+        elims2Doc <- prettyM elims2
+        return $
+          "type:" //> typeDoc $$
+          "head:" //> hDoc $$
+          "elims1:" //> elims1Doc $$
+          "elims2:" //> elims2Doc
+  debugBracket "checkEqualSpine" msg $
+    checkEqualSpine'' ctx type_ mbH elims1 elims2
+
+
+checkEqualSpine''
+  :: (IsTerm t)
+  => Ctx t -> Type t -> Maybe (Term t)
+  -> [Elim (Term t)] -> [Elim (Term t)]
+  -> TC t s (Constraints t)
+checkEqualSpine'' _ _ _ [] [] = do
+  return []
+checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+    case (elim1, elim2) of
+      (Apply arg1, Apply arg2) -> do
+        Pi dom cod <- whnfView type_
+        res1 <- checkEqual (ctx, dom, arg1, arg2)
+        mbCod <- safeStrengthen cod
+        mbH' <- traverse (`eliminate` [Apply arg1]) mbH
+        -- If the rest is non-dependent, we can continue immediately.
+        case mbCod of
+          Just cod' -> do
+            res2 <- checkEqualSpine'' ctx cod' mbH' elims1 elims2
+            return (res1 <> res2)
+          Nothing -> do
+            cod' <- instantiate_ cod arg1
+            return $ sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
+      (Proj proj, Proj proj') | proj == proj' -> do
+          let Just h = mbH
+          (h', type') <- applyProjection proj h type_
+          checkEqualSpine'' ctx type' (Just h') elims1 elims2
+      _ ->
+        checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
+checkEqualSpine'' _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 type_ elims2
 
 metaAssign

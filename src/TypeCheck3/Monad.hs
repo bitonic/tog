@@ -36,8 +36,6 @@ module TypeCheck3.Monad
   , mapTC
   , nestTC
     -- * Debugging
-  , debugSection
-  , debugSection_
   , debugBracket
   , debugBracket_
   , debug
@@ -105,7 +103,7 @@ catchTC m = TC $ \(te, ts) -> do
 data TCConf = TCConf
   { tccQuiet       :: Bool
   , tccStackTrace  :: Bool
-  , tccDebugLabels :: [(Bool, [DebugLabel])]
+  , tccDebugLabels :: DebugLabels
   }
 
 -- | Takes a 'TCState' and a computation on a closed context and
@@ -116,9 +114,9 @@ runTC :: (IsTerm t)
       -> TC t s a -> IO (Either PP.Doc a, TCState t s)
 runTC conf ts (TC m) = do
   let mbDebug = case () of
-        _ | tccQuiet conf              -> Nothing
-        _ | tccStackTrace conf         -> Just initDebug
-        _ | _:_ <- tccDebugLabels conf -> Just initDebug
+        _ | tccQuiet conf                       -> Nothing
+        _ | tccStackTrace conf                  -> Just initDebug
+        _ | DLSome (_:_) <- tccDebugLabels conf -> Just initDebug
         _                              -> Nothing
   mbErr <- m ((initEnv conf){teDebug = mbDebug}, ts)
   return $ case mbErr of
@@ -143,20 +141,19 @@ data TCEnv = TCEnv
     }
 
 data DebugFrame = DebugFrame
-  { dfDoc    :: !PP.Doc
-  , dfLabels :: ![DebugLabel]
+  { dfDoc   :: !PP.Doc
+  , dfLabel :: !DebugLabel
   }
 
 instance PP.Pretty DebugFrame where
-  pretty (DebugFrame doc labels) = "***" <+> PP.text (head labels) $$ doc
+  pretty (DebugFrame doc label) = "***" <+> PP.text label $$ doc
 
 data Debug = Debug
-  { dStack  :: ![DebugFrame]
-  , dLabels :: ![DebugLabel]
+  { dStack :: ![DebugFrame]
   }
 
 initDebug :: Debug
-initDebug = Debug [] []
+initDebug = Debug []
 
 initEnv :: TCConf -> TCEnv
 initEnv tcc =
@@ -328,43 +325,28 @@ rawDebug d label doc =
     hPutStr stderr $ unlines $ map (pad ++) $ lines s
     return (ts, Right ())
 
-matchLabels :: [DebugLabel] -> TC t s () -> TC t s ()
-matchLabels labels0 m = do
-  goodLabels <- tccDebugLabels . teConf <$> ask
-  let labels = reverse labels0
-  let f _      (Just b) = Just b
-      f (b, l) Nothing  = let p = l `isPrefixOf` labels
-                          in if p then Just b else Nothing
-  when (fromMaybe False (foldr f Nothing goodLabels)) m
-
-debugSection :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
-debugSection label docM m = do
-  te <- ask
-  -- Start a timer if the config says so
-  time <- confTimeSections <$> readConf
-  liftIO $ when time $ Timing.section label
-  -- Debug
-  mbD <- forM (teDebug te) $ \d -> do
-    let labels = [label]
-    doc <- assertDoc docM
-    matchLabels labels $ rawDebug d ("***" <+> PP.text label) doc
-    let frame = DebugFrame doc labels
-    return d{dStack = frame : dStack d, dLabels = labels}
-  local te{teDebug = mbD} m
-
-debugSection_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
-debugSection_ label doc = debugSection label (return doc)
+matchLabel :: DebugLabel -> TC t s () -> TC t s ()
+matchLabel label m = do
+  debugLabels <- tccDebugLabels . teConf <$> ask
+  case debugLabels of
+    DLAll                       -> m
+    DLSome ls | label `elem` ls -> m
+    _                           -> return ()
 
 debugBracket :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
 debugBracket label docM m = do
   te <- ask
-  mbD <- forM (teDebug te) $ \d -> do
-    let labels = label : dLabels d
+  mbD <- forM (teDebug te) $ \d@(Debug stack) -> do
     doc <- assertDoc docM
-    matchLabels labels $ rawDebug d ("***" <+> PP.text label) doc
-    let frame = DebugFrame doc labels
-    return d{dStack = frame : dStack d, dLabels = labels}
-  local te{teDebug = mbD} m
+    matchLabel label $ rawDebug d ("***" <+> PP.text label) doc
+    let frame = DebugFrame doc label
+    return $ Debug $ frame : stack
+  -- Start a timer if the config says so
+  time <- confTimeSections <$> readConf
+  when time $ Timing.push label
+  x <- local te{teDebug = mbD} m
+  when time $ Timing.pop
+  return x
 
 debugBracket_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
 debugBracket_ label doc = debugBracket label (return doc)
@@ -375,11 +357,13 @@ assertDoc = assert_ ("assertDoc: the doc action got an error:" <+>)
 debug :: PP.Doc -> TC t s PP.Doc -> TC t s ()
 debug label docM = do
   mbD <- teDebug <$> ask
-  forM_ mbD $ \d -> do
-    let labels = dLabels d
-    matchLabels labels $ do
-      doc <- assertDoc docM
-      rawDebug d ("**" <+> label) doc
+  forM_ mbD $ \d -> case dStack d of
+    frame : _ -> do
+      matchLabel (dfLabel frame) $ do
+        doc <- assertDoc docM
+        rawDebug d ("**" <+> label) doc
+    [] -> do
+      return ()
 
 debug_ :: PP.Doc -> PP.Doc -> TC t s ()
 debug_ label doc = debug label (return doc)
@@ -436,4 +420,4 @@ local te (TC m) = TC $ \(_, ts) -> m (te, ts)
 
 -- To suppress "unused" warnings
 _dummy :: a
-_dummy = undefined dfDoc dfLabels dfDoc dfLabels
+_dummy = undefined 
