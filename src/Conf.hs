@@ -25,10 +25,11 @@ data Conf = Conf
   , confFastGetAbsName          :: Bool
   , confDisableSynEquality      :: Bool
   , confDontNormalizePP         :: Bool
+  , confWhnfApplySubst          :: Bool
   }
 
 defaultConf :: Conf
-defaultConf = Conf "S" "Simple" [] False False False False False False False False False False False
+defaultConf = Conf "S" "Simple" [] False False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
 confRef :: IORef (Maybe Conf)

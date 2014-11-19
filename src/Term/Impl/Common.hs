@@ -33,7 +33,11 @@ genericSafeApplySubst
 genericSafeApplySubst t Sub.Id = do
   return t
 genericSafeApplySubst t rho = do
-  tView <- lift $ whnfView t
+  -- TODO note that here
+  -- * With `view', GR is as fast as S with `whnfView', but S is impossibly slow;
+  -- * With `whnfView', GR is almost twice as slow as S.
+  reduce <- confWhnfApplySubst <$> readConf
+  tView <- lift $ if reduce then whnfView t else view t
   case tView of
     Lam body ->
       lift . lam =<< safeApplySubst body (Sub.lift 1 rho)
@@ -114,7 +118,7 @@ eliminateMeta mvb@(MetaVarBody n body) es = whnf =<< do
     isSimple _ [] = do
       return True
     isSimple n' (arg : args') = do
-      argView <- whnfView arg
+      argView <- view arg
       case argView of
         App (Var v) [] | varIndex v == n' -> isSimple (n'-1) args'
         _                                 -> return False
@@ -283,7 +287,6 @@ internalToTerm t0 = do
         Apply t -> SA.Apply <$> internalToTerm t
         Proj p  -> return $ SA.Proj $ pName p
       return $ SA.App h' args'
-
 
 genericMetaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet
 genericMetaVars t = do
