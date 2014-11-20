@@ -63,7 +63,7 @@ module Term.Types
   , hoistTT
     -- * Definition
   , Definition(..)
-  , ConstantKind(..)
+  , Constant(..)
   , ClauseBody
   , Clause(..)
   , Pattern(..)
@@ -494,7 +494,7 @@ type ClauseBody t = t
 
 -- | One clause of a function definition.
 data Clause t = Clause [Pattern] (ClauseBody t)
-    deriving (Typeable)
+    deriving (Eq, Show, Typeable)
 
 data Pattern
     = VarP
@@ -512,7 +512,7 @@ patternsBindings = sum . map patternBindings
 ------------------------------------------------------------------------
 
 data Definition t
-    = Constant ConstantKind (Type t)
+    = Constant (Type t) (Constant t)
     | DataCon Name Natural (Tel (Type t)) (Type t)
     -- ^ Data type name, number of arguments, telescope ranging over the
     -- parameters of the type constructor ending with the type of the
@@ -524,19 +524,16 @@ data Definition t
     --
     -- Note that the type of the projection is always a pi type from a
     -- member of the record type to the type of the projected thing.
-    | Function (Type t) (Invertible t)
-    -- ^ Function type, clauses.
     deriving (Typeable)
 
-data ConstantKind
+data Constant t
   = Postulate
-  | TypeSig
-  -- ^ A 'TypeSig' is like a 'Postulate', but it can eventually be
-  -- instantiated.
   | Data [Name]
   -- ^ A data type, with constructors.
   | Record Name [Projection]
-  -- ^ A record, with its constructors and projections.
+  -- ^ A record, with its constructor and projections.
+  | Function (Maybe (Invertible t))
+  -- ^ A function, which might be waiting for clauses
   deriving (Eq, Show, Typeable)
 
 -- | A function is invertible if each of its clauses is headed by a
@@ -546,6 +543,7 @@ data Invertible t
   | Invertible [(TermHead, Clause t)]
   -- ^ Each clause is paired with a 'TermHead' that doesn't happend
   -- anywhere else in the list.
+  deriving (Eq, Show, Typeable)
 
 -- | A 'TermHead' is an injective type- or data-former.
 data TermHead
@@ -564,7 +562,6 @@ definitionToNameInfo :: Name -> Definition t -> NameInfo
 definitionToNameInfo n (Constant _ _)       = SA.DefName n 0
 definitionToNameInfo n (DataCon _ args _ _) = SA.ConName n 0 $ fromIntegral args
 definitionToNameInfo n (Projection _ _ _ _) = SA.ProjName n 0
-definitionToNameInfo n (Function _ _)       = SA.DefName n 0
 
 -- 'MetaVar'iables
 ------------------------------------------------------------------------

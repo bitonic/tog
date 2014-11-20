@@ -265,7 +265,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
         debug_ "head is J, couldn't invert." ""
         fallback t1
       BlockedOnFunction fun1 -> do
-        Function _ clauses <- getDefinition fun1
+        Constant _ (Function (Just clauses)) <- getDefinition fun1
         case clauses of
           NotInvertible _ -> do
             debug_ "couldn't invert." ""

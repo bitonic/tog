@@ -212,7 +212,7 @@ etaExpand (ctx, type_, t1, t2) = do
         App (Def tyCon) _ -> do
           tyConDef <- getDefinition tyCon
           case tyConDef of
-            Constant (Record dataCon projs) _ -> return $ \t -> do
+            Constant _ (Record dataCon projs) -> return $ \t -> do
               tView <- whnfView t
               case tView of
                 Con _ _ -> return t

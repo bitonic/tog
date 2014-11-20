@@ -90,7 +90,7 @@ curryMetaVar t = do
         App (Def tyCon) elims -> do
           tyConDef <- getDefinition tyCon
           case tyConDef of
-            Constant (Record dataCon projs) _ -> do
+            Constant _ (Record dataCon projs) -> do
               let Just tyConPars = mapM isApply elims
               DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
               appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConPars
@@ -292,10 +292,10 @@ shouldKill vs t = runMaybeT $ do
     isNeutral f = do
       def' <- getDefinition f
       case def' of
-        Constant{}    -> return False
-        DataCon{}     -> fatalError $ "impossible.isNeutral: constructor " ++ show f
-        Projection{}  -> fatalError $ "impossible.isNeutral: projection " ++ show f
-        Function{}    -> return True
+        Constant _ Function{} -> return True
+        Constant _ _          -> return False
+        DataCon{}             -> fatalError $ "impossible.isNeutral: constructor " ++ show f
+        Projection{}          -> fatalError $ "impossible.isNeutral: projection " ++ show f
         -- TODO: more precise analysis
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
@@ -365,7 +365,7 @@ etaExpandVar
   -> TC t s (Tel.Tel t, Subst t)
 etaExpandVar type_ tel = do
   App (Def tyCon) tyConPars0 <- whnfView type_
-  Constant (Record dataCon projs) _ <- getDefinition tyCon
+  Constant _ (Record dataCon projs) <- getDefinition tyCon
   DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
   let Just tyConPars = mapM isApply tyConPars0
   appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConPars
@@ -437,7 +437,7 @@ checkMetaVarArg arg = do
           DataCon tyCon _ _ _ <- getDefinition dataCon
           tyConDef <- getDefinition tyCon
           case tyConDef of
-            Constant (Record _ _) _ -> do
+            Constant _ (Record _ _) -> do
               recArgs'  <- sequenceA <$> mapM checkMetaVarArg recArgs
               return $ MVARecord tyCon <$> recArgs'
             _ -> do
@@ -464,7 +464,7 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
       return t'
     Con dataCon args -> do
       DataCon tyCon _ _ _ <- lift $ getDefinition dataCon
-      Constant (Record _ fields) _ <- lift $ getDefinition tyCon
+      Constant _ (Record _ fields) <- lift $ getDefinition tyCon
       guard $ length args == length fields
       (t : ts) <- sequence (zipWith isRightProjection fields args)
       guard =<< (and <$> lift (mapM (synEq t) ts))
@@ -622,7 +622,7 @@ checkPatternCondition mvArgs = do
     projectRecord (MVAVar v) t = do
       return [(v, t)]
     projectRecord (MVARecord tyCon mvArgs') t = do
-      Constant (Record _ fields) _ <- getDefinition tyCon
+      Constant _ (Record _ fields) <- getDefinition tyCon
       mvArgs'' <- forM (zip mvArgs' fields) $ \(mvArg, proj) ->
         (mvArg, ) <$> eliminate t [Proj proj]
       projectRecords mvArgs''
@@ -767,7 +767,7 @@ etaExpandMeta t = do
       mvType <- lift $ getMetaVarType mv
       (_, endType) <- lift $ unrollPi mvType
       App (Def tyCon) _ <- lift $ whnfView endType
-      Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
+      Constant _ (Record dataCon _) <- lift $ getDefinition tyCon
       mvT :: Term t <- lift $ instantiateDataCon mv dataCon
       lift $ eliminate mvT elims
     case mbT of
@@ -797,7 +797,7 @@ etaExpand type_ t0 = do
       App (Def tyCon) _ -> do
         tyConDef <- getDefinition tyCon
         case tyConDef of
-          Constant (Record dataCon projs) _ -> do
+          Constant _ (Record dataCon projs) -> do
             tView <- whnfView t
             case tView of
               -- Optimization: if it's already of the right shape, do nothing
@@ -920,5 +920,5 @@ isRecordType :: (IsTerm t) => Name -> TC t s Bool
 isRecordType tyCon = do
   def' <- getDefinition tyCon
   return $ case def' of
-    Constant (Record _ _) _ -> True
+    Constant _ (Record _ _) -> True
     _                       -> False

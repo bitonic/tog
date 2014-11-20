@@ -19,10 +19,19 @@ instance (MetaVars t a, MetaVars t b) => MetaVars t (a, b) where
   metaVars (x, y) = (<>) <$> metaVars x <*> metaVars y
 
 instance IsTerm t => MetaVars t (Definition t) where
-  metaVars (Constant _ t)              = metaVars t
+  metaVars (Constant t c)              = metaVars (t, c)
   metaVars (DataCon _ _ pars type_)    = metaVars (pars, type_)
   metaVars (Projection _ _ pars type_) = metaVars (pars, type_)
-  metaVars (Function type_ clauses)    = metaVars (type_, clauses)
+
+instance IsTerm t => MetaVars t (Constant t) where
+  metaVars Postulate          = return mempty
+  metaVars (Data _)           = return mempty
+  metaVars (Record _ _)       = return mempty
+  metaVars (Function clauses) = metaVars clauses
+
+instance MetaVars t a => MetaVars t (Maybe a) where
+  metaVars Nothing  = return mempty
+  metaVars (Just x) = metaVars x
 
 instance MetaVars t (Sig.Signature t) where
   metaVars sig =

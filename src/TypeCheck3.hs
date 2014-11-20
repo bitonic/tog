@@ -87,12 +87,12 @@ checkExpr ctx synT type_ = do
 checkTypeSig :: (IsTerm t) => SA.TypeSig -> CheckM t ()
 checkTypeSig (SA.Sig name absType) = do
     type_ <- checkExpr Ctx.Empty absType set
-    addConstant name TypeSig type_
+    addConstant name type_ (Function Nothing)
 
 checkPostulate :: (IsTerm t) => SA.TypeSig -> CheckM t ()
 checkPostulate (SA.Sig name absType) = do
     type_ <- checkExpr Ctx.Empty absType set
-    addConstant name Postulate type_
+    addConstant name type_ Postulate
 
 checkData
     :: (IsTerm t)
@@ -105,7 +105,7 @@ checkData
     -> CheckM t ()
 checkData tyCon tyConPars dataCons = do
     tyConType <- definitionType =<< getDefinition tyCon
-    addConstant tyCon (Data []) tyConType
+    addConstant tyCon tyConType (Data [])
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
     definitionallyEqual tyConPars' set endType set
     appliedTyConType <- Ctx.app (def tyCon []) tyConPars'
@@ -144,7 +144,7 @@ checkRec
     -> CheckM t ()
 checkRec tyCon tyConPars dataCon fields = do
     tyConType <- definitionType =<< getDefinition tyCon
-    addConstant tyCon (Record dataCon []) tyConType
+    addConstant tyCon tyConType (Record dataCon [])
     (tyConPars', endType) <- unrollPiWithNames tyConType tyConPars
     definitionallyEqual tyConPars' set endType set
     fieldsTel <- checkFields tyConPars' fields
@@ -202,11 +202,11 @@ checkFunDef :: (IsTerm t) => Name -> [SA.Clause] -> CheckM t ()
 checkFunDef fun synClauses = do
     funDef <- getDefinition fun
     case funDef of
-      Constant TypeSig funType -> do
+      Constant funType (Function Nothing) -> do
         clauses <- mapM (checkClause fun funType) synClauses
         inv <- checkInvertibility clauses
         addClauses fun inv
-      Constant Postulate _ -> do
+      Constant _ Postulate -> do
         typeError $ "Cannot give body to postulate" <+> PP.pretty fun
       _ -> do
         fatalError "impossible.checkFunDef"
@@ -272,8 +272,8 @@ checkPattern funName synPat type_ = case synPat of
       DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
       typeConDef <- getDefinition tyCon
       case typeConDef of
-        Constant (Data _)     _ -> return ()
-        Constant (Record _ _) _ -> checkError $ PatternMatchOnRecord synPat tyCon
+        Constant _ (Data _)     -> return ()
+        Constant _ (Record _ _) -> checkError $ PatternMatchOnRecord synPat tyCon
         _                       -> do doc <- prettyM typeConDef
                                       fatalError $ "impossible.checkPattern " ++ render doc
       typeView <- whnfView type_

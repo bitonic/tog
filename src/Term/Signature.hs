@@ -47,19 +47,19 @@ addDefinition sig defName def' = case (defName, def') of
     sig' = sig{sigDefinitions = HMS.insert defName def' (sigDefinitions sig)}
 
     addProjection name tyCon projIx = case getDefinition sig' tyCon of
-      Just (Constant (Record dataCon projs) tyConType) ->
+      Just (Constant tyConType (Record dataCon projs)) ->
         let projs' = projs ++ [Projection' name projIx]
-            defs   = HMS.insert tyCon (Constant (Record dataCon projs') tyConType) (sigDefinitions sig')
+            defs   = HMS.insert tyCon (Constant tyConType (Record dataCon projs')) (sigDefinitions sig')
         in sig'{sigDefinitions = defs}
       _ ->
         error $ "impossible.addDefinition: " ++ render tyCon ++ " is not a record"
 
     addDataCon name tyCon = case getDefinition sig' tyCon of
-      Just (Constant (Data dataCons) tyConType) ->
+      Just (Constant tyConType (Data dataCons)) ->
         let dataCons' = dataCons ++ [name]
-            defs      = HMS.insert tyCon (Constant (Data dataCons') tyConType) (sigDefinitions sig')
+            defs      = HMS.insert tyCon (Constant tyConType (Data dataCons')) (sigDefinitions sig')
         in sig'{sigDefinitions = defs}
-      Just (Constant (Record dataCon _) _) ->
+      Just (Constant _ (Record dataCon _)) ->
         if name == dataCon
         then sig'
         else error $ "impossible.addDefinition: mismatching constructors " ++

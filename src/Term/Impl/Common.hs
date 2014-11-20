@@ -76,7 +76,7 @@ genericWhnf t = do
       eliminateMeta mi es
     -- Note that here we don't want to crash if the definition is not
     -- set, since I want to be able to test non-typechecked terms.
-    App (Def defName) es | Just (Function _ cs) <- Sig.getDefinition sig defName -> do
+    App (Def defName) es | Just (Constant _ (Function (Just cs))) <- Sig.getDefinition sig defName -> do
       mbT <- whnfFun defName es $ ignoreInvertible cs
       case mbT of
         Just t' -> return t'

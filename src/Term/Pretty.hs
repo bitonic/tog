@@ -11,16 +11,20 @@ import qualified Term.Telescope                   as Tel
 import qualified Term.Subst.Types                 as Sub
 
 instance PrettyM t (Definition t) where
-  prettyM (Constant Postulate type_) = do
+  prettyM (Constant type_ Postulate) = do
     typeDoc <- prettyM type_
     return $ "postulate" //> typeDoc
-  prettyM (Constant TypeSig type_) = do
+  prettyM (Constant type_ (Function Nothing)) = do
     prettyM type_
-  prettyM (Constant (Data dataCons) type_) = do
+  prettyM (Constant type_ (Function (Just clauses))) = do
+    typeDoc <- prettyM type_
+    clausesDoc <- mapM prettyM $ ignoreInvertible clauses
+    return $ typeDoc $$ PP.vcat clausesDoc
+  prettyM (Constant type_ (Data dataCons)) = do
     typeDoc <- prettyM type_
     return $ "data" <+> typeDoc <+> "where" $$>
              PP.vcat (map PP.pretty dataCons)
-  prettyM (Constant (Record dataCon fields) type_) = do
+  prettyM (Constant type_ (Record dataCon fields)) = do
     typeDoc <- prettyM type_
     return $ "record" <+> typeDoc <+> "where" $$>
              "constructor" <+> PP.pretty dataCon $$
@@ -32,10 +36,6 @@ instance PrettyM t (Definition t) where
   prettyM (Projection _ tyCon pars type_) = do
     typeDoc <- prettyM =<< Tel.pi pars type_
     return $ "projection" <+> PP.pretty tyCon $$> typeDoc
-  prettyM (Function type_ clauses) = do
-    typeDoc <- prettyM type_
-    clausesDoc <- mapM prettyM $ ignoreInvertible clauses
-    return $ typeDoc $$ PP.vcat clausesDoc
 
 instance PrettyM t (Clause t) where
   prettyM (Clause pats body) = do

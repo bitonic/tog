@@ -124,10 +124,9 @@ extendContext ctx type_ = do
 --------------
 
 definitionType :: (IsTerm t) => Closed (Definition t) -> TC t s (Closed (Type t))
-definitionType (Constant _ type_)         = return type_
+definitionType (Constant type_ _)         = return type_
 definitionType (DataCon _ _ tel type_)    = Tel.pi tel type_
 definitionType (Projection _ _ tel type_) = Tel.pi tel type_
-definitionType (Function type_ _)         = return type_
 
 -- Unrolling Pis
 ----------------
@@ -208,12 +207,11 @@ termHead t = do
     App (Def f) _ -> do
       fDef <- getDefinition f
       return $ case fDef of
-        Constant Data{}      _ -> Just $ DefHead f
-        Constant Record{}    _ -> Just $ DefHead f
-        Constant Postulate{} _ -> Just $ DefHead f
-        Constant TypeSig{} _   -> Nothing
+        Constant _ Data{}      -> Just $ DefHead f
+        Constant _ Record{}    -> Just $ DefHead f
+        Constant _ Postulate{} -> Just $ DefHead f
+        Constant _ Function{}  -> Nothing
         DataCon{}              -> Nothing
-        Function{}             -> Nothing
         Projection{}           -> Nothing
     App{} -> do
       return Nothing
