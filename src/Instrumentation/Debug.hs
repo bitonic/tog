@@ -11,6 +11,7 @@ module Instrumentation.Debug
   , whenDebug
   , fatalError
   , stackTrace
+  , printStackTrace
   ) where
 
 import           Data.IORef                       (IORef, newIORef, readIORef, writeIORef)
@@ -48,12 +49,15 @@ debugInit = do
   conf <- readConf
   writeStackRef $ if confDebug conf then Just [] else Nothing
 
-rawDebug :: (MonadIO m) => DebugStack -> PP.Doc -> PP.Doc -> m ()
+rawDebug :: (MonadIO m) => DebugStack -> PP.Doc -> PP.Doc -> m String
 rawDebug stack label doc = do
   let s  = PP.renderPretty 100 $ label $$ doc
   let pad = replicate (length stack * _ERROR_INDENT) ' '
-  liftIO $ hPutStr stderr $ unlines $ map (pad ++) $ lines s
-  return ()
+  return $ unlines $ map (pad ++) $ lines s
+
+printRawDebug :: (MonadIO m) => DebugStack -> PP.Doc -> PP.Doc -> m ()
+printRawDebug stack label doc =
+  liftIO . hPutStr stderr =<< rawDebug stack label doc
 
 matchLabel :: (MonadIO m) => DebugLabel -> m () -> m ()
 matchLabel label m = do
@@ -74,13 +78,14 @@ debugBracket label docM m = do
   mbStack <- readStackRef
   forM_ mbStack $ \stack -> do
     doc <- docM
-    matchLabel label $ rawDebug stack ("***" <+> PP.text label) doc
+    matchLabel label $ printRawDebug stack ("***" <+> PP.text label) doc
     let frame = DebugFrame doc label
     writeStackRef $ Just $ frame : stack
   timing <- confTimeSections `liftM` readConf
-  if timing
-    then timingBracket label m
-    else m
+  x <- if timing then timingBracket label m else m
+  mbStack' <- readStackRef
+  forM_ mbStack' $ \(_:stack) -> writeStackRef $ Just stack
+  return x
 
 debugBracket_ :: (MonadIO m) => DebugLabel -> PP.Doc -> m a -> m a
 debugBracket_ label doc = debugBracket label (return doc)
@@ -92,7 +97,7 @@ debug label docM = do
     frame : _ -> do
       matchLabel (dfLabel frame) $ do
         doc <- docM
-        rawDebug stack ("**" <+> label) doc
+        printRawDebug stack ("**" <+> label) doc
     [] -> do
       return ()
 
@@ -109,13 +114,21 @@ renderStackTrace err stack =
   "error:" //> err $$
   "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (map PP.pretty stack))
 
-stackTrace :: (MonadIO m) => PP.Doc -> PP.Doc -> m ()
+stackTrace :: (MonadIO m) => PP.Doc -> PP.Doc -> m (Maybe String)
 stackTrace heading err = do
   mbStack <- readStackRef
-  forM_ mbStack $ \stack ->
+  forM mbStack $ \stack ->
     rawDebug [] ("***" <+> heading) (renderStackTrace err stack)
 
-fatalError :: (MonadIO m) => String -> m a
-fatalError s = do
-  stackTrace "fatalError" $ PP.string s
-  error s
+printStackTrace :: (MonadIO m) => PP.Doc -> PP.Doc -> m ()
+printStackTrace heading err = do
+  mbS <- stackTrace heading err
+  liftIO $ forM_ mbS $ hPutStrLn stderr
+
+{-# NOINLINE fatalError #-}
+fatalError :: String -> a
+fatalError s =
+  let mbS = unsafePerformIO $ stackTrace "fatalError" $ PP.string s
+  in case mbS of
+       Nothing -> error $ "\nfatalError\n" ++ s
+       Just s' -> error $ "\n" ++ s'

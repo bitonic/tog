@@ -6,20 +6,25 @@ import           Prelude.Extended
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
 import qualified PrettyPrint                      as PP
 import           Term.Types
-import qualified Term.Context                     as Ctx
-import qualified Term.Telescope                   as Tel
-import qualified Term.Subst.Types                 as Sub
+import qualified Term.Subst                       as Sub
 
 instance PrettyM t (Definition t) where
   prettyM (Constant type_ Postulate) = do
     typeDoc <- prettyM type_
     return $ "postulate" //> typeDoc
-  prettyM (Constant type_ (Function Nothing)) = do
-    prettyM type_
-  prettyM (Constant type_ (Function (Just clauses))) = do
-    typeDoc <- prettyM type_
-    clausesDoc <- mapM prettyM $ ignoreInvertible clauses
-    return $ typeDoc $$ PP.vcat clausesDoc
+  prettyM (Constant type_ (Instantiable inst)) = case inst of
+    OpenFun -> do
+      prettyM type_
+    InstFun clauses -> do
+      typeDoc <- prettyM type_
+      clausesDoc <- mapM prettyM $ ignoreInvertible clauses
+      return $ typeDoc $$ PP.vcat clausesDoc
+    OpenMeta -> do
+      prettyM type_
+    InstMeta mvb -> do
+      typeDoc <- prettyM type_
+      mvbDoc <- prettyM mvb
+      return $ typeDoc $$ mvbDoc
   prettyM (Constant type_ (Data dataCons)) = do
     typeDoc <- prettyM type_
     return $ "data" <+> typeDoc <+> "where" $$>
@@ -31,10 +36,10 @@ instance PrettyM t (Definition t) where
              "field" $$>
              PP.vcat (map (PP.pretty . pName) fields)
   prettyM (DataCon tyCon _ pars type_) = do
-    typeDoc <- prettyM =<< Tel.pi pars type_
+    typeDoc <- prettyM =<< telPi pars type_
     return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
   prettyM (Projection _ tyCon pars type_) = do
-    typeDoc <- prettyM =<< Tel.pi pars type_
+    typeDoc <- prettyM =<< telPi pars type_
     return $ "projection" <+> PP.pretty tyCon $$> typeDoc
 
 instance PrettyM t (Clause t) where
@@ -52,27 +57,27 @@ prettyApp :: PP.Pretty a => Int -> PP.Doc -> [a] -> PP.Doc
 prettyApp _ h []   = h
 prettyApp p h args = PP.condParens (p > 3) $ h </> PP.fillSep (map (PP.prettyPrec 4) args)
 
-instance PrettyM t (Tel.Tel t) where
+instance PrettyM t (Tel t) where
   prettyM tel00 = fmap PP.group $ case tel00 of
-    Tel.Empty -> do
+    T0 -> do
       return "[]"
-    Tel.Cons (n0, type0) tel0 -> do
+    (n0, type0) :> tel0 -> do
       type0Doc <- prettyM type0
       tel0Doc <- go tel0
       return $ "[" <+> PP.pretty n0 <+> ":" <+> type0Doc <> whichLine tel0 <> tel0Doc
     where
-      go Tel.Empty = do
+      go T0 = do
         return "]"
-      go (Tel.Cons (n, type_) tel) = do
+      go ((n, type_) :> tel) = do
         typeDoc <- prettyM type_
         telDoc <- go tel
         return $ ";" <+> PP.pretty n <+> ":" <+> typeDoc <> whichLine tel <> telDoc
 
-      whichLine Tel.Empty = PP.line
-      whichLine _         = PP.linebreak
+      whichLine T0 = PP.line
+      whichLine _  = PP.linebreak
 
-instance PrettyM t (Ctx.Ctx t) where
-  prettyM = prettyM . Tel.tel
+instance PrettyM t (Ctx t) where
+  prettyM = prettyM . ctxToTel
 
 instance PrettyM t (Sub.Subst t) where
   prettyM sub0 = case sub0 of
@@ -95,5 +100,5 @@ instance PrettyM t (Sub.Subst t) where
       subDoc <- prettyM sub
       return $ "Lift" <+> PP.pretty i //> subDoc
 
-instance PrettyM t (MetaVarBody t) where
-  prettyM mvb = prettyM =<< metaVarBodyToTerm mvb
+instance PrettyM t (MetaBody t) where
+  prettyM mvb = prettyM =<< metaBodyToTerm mvb

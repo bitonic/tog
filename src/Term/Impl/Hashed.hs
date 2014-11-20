@@ -4,7 +4,6 @@ import qualified Data.HashTable.IO                as HT
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term
-import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
 import           Prelude.Extended
 
@@ -18,8 +17,8 @@ instance Hashable Hashed where
 instance Eq Hashed where
   H i1 t1 == H i2 t2 = i1 == i2 && t1 == t2
 
-instance MetaVars Hashed Hashed where
-  metaVars = genericMetaVars
+instance Metas Hashed Hashed where
+  metas = genericMetas
 
 instance Nf Hashed Hashed where
   nf = genericNf
@@ -53,7 +52,7 @@ instance IsTerm Hashed where
   refl = H (hash (Refl :: Closed (TermView Hashed))) Refl
 
   {-# NOINLINE typeOfJ #-}
-  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
+  typeOfJ = unsafePerformIO $ runTermM sigEmpty genericTypeOfJ
 
 -- Table
 

@@ -2,15 +2,13 @@
 module TypeCheck3.Check
   ( check
   , definitionallyEqual
-  , instantiateMetaVar
+  , instantiateMeta
   ) where
 
 import           Prelude.Extended
 import           Instrumentation
 import           Syntax
 import           Term
-import qualified Term.Context                     as Ctx
-import qualified Term.Telescope                   as Tel
 import           PrettyPrint                      ((<+>), ($$), (//>), render)
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
@@ -32,9 +30,9 @@ check ctx t type_ = do
     tView <- whnfView t
     case tView of
       Con dataCon args -> do
-        DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
+        DataCon tyCon _ tyConParsTel dataConType <- getDefinition_ dataCon
         tyConArgs <- matchTyCon tyCon type_
-        appliedDataConType <- Tel.discharge tyConParsTel dataConType tyConArgs
+        appliedDataConType <- telDischarge tyConParsTel dataConType tyConArgs
         checkConArgs ctx args appliedDataConType
       Refl -> do
         typeView <- whnfView type_
@@ -88,10 +86,10 @@ applyProjection
   -- ^ Type of the head
   -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
-  Projection _ tyCon projTypeTel projType <- getDefinition $ pName proj
+  Projection _ tyCon projTypeTel projType <- getDefinition_ $ pName proj
   h' <- eliminate h [Proj proj]
   tyConArgs <- matchTyCon tyCon type_
-  appliedProjType <-  Tel.discharge projTypeTel projType tyConArgs
+  appliedProjType <-  telDischarge projTypeTel projType tyConArgs
   appliedProjTypeView <- whnfView appliedProjType
   case appliedProjTypeView of
     Pi _ endType -> do
@@ -132,17 +130,16 @@ inferHead
   :: (IsTerm t)
   => Ctx t -> Head -> TC t s (Type t)
 inferHead ctx h = case h of
-  Var v    -> Ctx.getVar v ctx
+  Var v    -> ctxGetVar v ctx
   Def name -> definitionType =<< getDefinition name
   J        -> return typeOfJ
-  Meta mv  -> getMetaVarType mv
 
 matchTyCon
   :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
 matchTyCon tyCon type_ = do
   typeView <- whnfView type_
   case typeView of
-    App (Def tyCon') elims | tyCon' == tyCon -> do
+    App (Def (DKName tyCon')) elims | tyCon' == tyCon -> do
       let Just tyConArgs = mapM isApply elims
       return tyConArgs
     _ -> do
@@ -260,8 +257,8 @@ compareTerms (ctx, type_, t1, t2) = do
     (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2)
       | dataCon == dataCon' -> do
         let Just tyConPars = mapM isApply tyConPars0
-        DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
-        appliedDataConType <-  Tel.discharge dataConTypeTel dataConType tyConPars
+        DataCon _ _ dataConTypeTel dataConType <- getDefinition_ dataCon
+        appliedDataConType <-  telDischarge dataConTypeTel dataConType tyConPars
         checkEqualSpine ctx appliedDataConType Nothing (map Apply dataConArgs1) (map Apply dataConArgs2)
     (Set, Set, Set) -> do
       return ()
@@ -297,20 +294,20 @@ checkEqualSpine _ type_ _ elims1 elims2 = do
 -- Safe metavar instantiation
 ------------------------------------------------------------------------
 
-instantiateMetaVar
+instantiateMeta
   :: (IsTerm t)
-  => MetaVar -> MetaVarBody t -> TC t s ()
-instantiateMetaVar mv mi = do
-  t <- metaVarBodyToTerm mi
+  => Meta -> MetaBody t -> TC t s ()
+instantiateMeta mv mi = do
+  t <- metaBodyToTerm mi
   let msg = do
         tDoc <- prettyM t
         return $
           "metavar:" //> PP.pretty mv $$
           "term:" //> tDoc
   debugBracket "instantiateMeta" msg $ do
-    checkConsistency <- confCheckMetaVarConsistency <$> readConf
+    checkConsistency <- confCheckMetaConsistency <$> readConf
     when checkConsistency $ do
-      mvType <- getMetaVarType mv
+      mvType <- getMetaType mv
       let msg' err = do
             tDoc <- prettyM t
             mvTypeDoc <- prettyM mvType
@@ -320,5 +317,5 @@ instantiateMetaVar mv mi = do
                "type:" //> mvTypeDoc $$
                "term:" //> tDoc $$
                "err:" //> err
-      assert msg' $ check Ctx.Empty t mvType
-    uncheckedInstantiateMetaVar mv mi
+      assert msg' $ check C0 t mvType
+    uncheckedInstantiateMeta mv mi

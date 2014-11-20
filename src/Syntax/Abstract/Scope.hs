@@ -211,9 +211,9 @@ checkDecls ds0 ret = case ds0 of
     checkTypeSig sig0 $ \sig -> checkDecls ds $ \ds' ->
       ret (TypeSig sig : ds')
   C.Data x pars (C.NoDataBody set) : ds | Just ps <- isParamDecl pars -> do
-    dataOrRecDecl x ps set ds
+    dataDecl x ps set ds
   C.Record x pars (C.NoRecordBody set) : ds | Just ps <- isParamDecl pars -> do
-    dataOrRecDecl x ps set ds
+    recDecl x ps set ds
   C.Data x pars (C.DataBody cs) : ds | Just xs <- isParamDef pars -> do
     (x, n) <- resolveDef x
     when (n > length xs) $ scopeError x $ "Too few parameters to " ++ show x ++
@@ -260,11 +260,14 @@ checkDecls ds0 ret = case ds0 of
   C.Import{} : ds -> do
     checkDecls ds ret
   where
-    dataOrRecDecl x ps set ds = do
+    dataDecl = dataOrRecDecl Data
+    recDecl = dataOrRecDecl Record
+
+    dataOrRecDecl f x ps set ds = do
       isSet set
       (n, a) <- checkScheme (C.Pi (C.Tel ps) (C.App [C.Arg $ C.Id set]))
       bindName (mkDefInfo x n) $ \x -> checkDecls ds $ \ds' ->
-        ret (TypeSig (Sig x a) : ds')
+        ret (f (Sig x a) : ds')
 
     takeFunDefs :: C.Name -> [C.Decl] -> ([([C.Pattern], C.Expr, C.Where)], [C.Decl])
     takeFunDefs f [] =

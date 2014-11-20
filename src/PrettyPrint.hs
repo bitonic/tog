@@ -134,9 +134,6 @@ instance Pretty a => Pretty (Maybe a) where
   pretty Nothing        = empty
   pretty (Just x)       = pretty x
 
-instance Pretty a => Pretty (Bwd a) where
-  pretty = pretty . toList
-
 instance Pretty Natural where
   pretty = text . show
 

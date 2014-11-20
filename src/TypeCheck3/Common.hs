@@ -11,9 +11,8 @@ module TypeCheck3.Common
   , termHead
   , checkInvertibility
     -- * Miscellanea
-  , addMetaVarInCtx
+  , addMetaInCtx
   , extendContext
-  , definitionType
   , unrollPiWithNames
   , unrollPi
   ) where
@@ -25,8 +24,6 @@ import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Abstract                  as SA
 import           Term
-import qualified Term.Context                     as Ctx
-import qualified Term.Telescope                   as Tel
 import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
@@ -38,9 +35,9 @@ data CheckError t
     = ExpectingEqual (Type t)
     | ExpectingPi (Type t)
     | ExpectingTyCon Name (Type t)
-    | FreeVariableInEquatedTerm MetaVar [Elim t] (Term t) Var
+    | FreeVariableInEquatedTerm Meta [Elim t] (Term t) Var
     | NameNotInScope Name
-    | OccursCheckFailed MetaVar (Closed (Term t))
+    | OccursCheckFailed Meta (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
     | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
@@ -74,7 +71,7 @@ renderError err =
         "ds:" //> es2Doc $$
         "B:" //> type2Doc
     FreeVariableInEquatedTerm mv els rhs v -> do
-      mvDoc <- prettyM =<< metaVar mv els
+      mvDoc <- prettyM =<< meta mv els
       rhsDoc <- prettyM rhs
       return $ "Free variable `" <> prettyVar v <> "' in term equated to metavariable application:" $$
                mvDoc $$ PP.nest 2 "=" $$ rhsDoc
@@ -98,15 +95,15 @@ renderError err =
     prettyVar = PP.pretty
 
 
--- MetaVar handling
+-- Meta handling
 ------------------------------------------------------------------------
 
-addMetaVarInCtx
+addMetaInCtx
   :: (IsTerm t)
   => Ctx t -> Type t -> TC t s (Term t)
-addMetaVarInCtx ctx type_ = do
-  mv <- addMetaVar =<< Ctx.pi ctx type_
-  Ctx.app (metaVar mv []) ctx
+addMetaInCtx ctx type_ = do
+  mv <- addMeta =<< ctxPi ctx type_
+  ctxApp (meta mv []) ctx
 
 -- Telescope & context utils
 ----------------------------
@@ -116,17 +113,9 @@ extendContext
   :: (IsTerm t)
   => Ctx (Type t) -> (Name, Type t) -> TC t s (Ctx (Type t))
 extendContext ctx type_ = do
-  let ctx' = Ctx.Snoc ctx type_
+  let ctx' = ctx :< type_
   debug "extendContext" $ prettyM ctx'
   return ctx'
-
--- Miscellanea
---------------
-
-definitionType :: (IsTerm t) => Closed (Definition t) -> TC t s (Closed (Type t))
-definitionType (Constant type_ _)         = return type_
-definitionType (DataCon _ _ tel type_)    = Tel.pi tel type_
-definitionType (Projection _ _ tel type_) = Tel.pi tel type_
 
 -- Unrolling Pis
 ----------------
@@ -139,17 +128,17 @@ unrollPiWithNames
   -- ^ Type to unroll
   -> [Name]
   -- ^ Names to give to each parameter
-  -> TC t s (Ctx (Type t), Type t)
+  -> TC t s (Tel (Type t), Type t)
   -- ^ A telescope with accumulated domains of the pis and the final
   -- codomain.
 unrollPiWithNames type_ [] =
-  return (Ctx.Empty, type_)
+  return (T0, type_)
 unrollPiWithNames type_ (name : names) = do
   typeView <- whnfView type_
   case typeView of
     Pi domain codomain -> do
       (ctx, endType) <- unrollPiWithNames codomain names
-      return (Ctx.singleton name domain Ctx.++ ctx, endType)
+      return ((name, domain) :> ctx, endType)
     _ -> do
       checkError $ ExpectingPi type_
 
@@ -157,16 +146,16 @@ unrollPi
   :: (IsTerm t)
   => Type t
   -- ^ Type to unroll
-  -> TC t s (Ctx (Type t), Type t)
+  -> TC t s (Tel (Type t), Type t)
 unrollPi type_ = do
   typeView <- whnfView type_
   case typeView of
     Pi domain codomain -> do
       name <- getAbsName_ codomain
       (ctx, endType) <- unrollPi codomain
-      return (Ctx.singleton name domain Ctx.++ ctx, endType)
+      return ((name, domain) :> ctx, endType)
     _ ->
-      return (Ctx.Empty, type_)
+      return (T0, type_)
 
 -- Constraints
 --------------
@@ -204,15 +193,15 @@ termHead :: (IsTerm t) => t -> TC t s (Maybe TermHead)
 termHead t = do
   tView <- whnfView t
   case tView of
-    App (Def f) _ -> do
-      fDef <- getDefinition f
+    App (Def (DKName f)) _ -> do
+      fDef <- getDefinition_ f
       return $ case fDef of
-        Constant _ Data{}      -> Just $ DefHead f
-        Constant _ Record{}    -> Just $ DefHead f
-        Constant _ Postulate{} -> Just $ DefHead f
-        Constant _ Function{}  -> Nothing
-        DataCon{}              -> Nothing
-        Projection{}           -> Nothing
+        Constant _ Data{}         -> Just $ DefHead f
+        Constant _ Record{}       -> Just $ DefHead f
+        Constant _ Postulate{}    -> Just $ DefHead f
+        Constant _ Instantiable{} -> Nothing
+        DataCon{}                 -> Nothing
+        Projection{}              -> Nothing
     App{} -> do
       return Nothing
     Con f _ ->

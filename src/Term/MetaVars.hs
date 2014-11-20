@@ -1,42 +1,48 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.MetaVars where
 
-import           Data.Maybe                       (fromJust)
-
 import           Prelude.Extended
 import           Term.Types
-import qualified Term.Signature                   as Sig
-import qualified Term.Telescope                   as Tel
 
-instance IsTerm t => MetaVars t (Clause t) where
-  metaVars (Clause _ t) = metaVars t
+instance IsTerm t => Metas t (Clause t) where
+  metas (Clause _ t) = metas t
 
-instance IsTerm t => MetaVars t (Invertible t) where
-  metaVars (NotInvertible clauses) = metaVars clauses
-  metaVars (Invertible injClauses) = metaVars $ map snd injClauses
+instance IsTerm t => Metas t (Invertible t) where
+  metas (NotInvertible clauses) = metas clauses
+  metas (Invertible injClauses) = metas $ map snd injClauses
 
-instance (MetaVars t a, MetaVars t b) => MetaVars t (a, b) where
-  metaVars (x, y) = (<>) <$> metaVars x <*> metaVars y
+instance (Metas t a, Metas t b) => Metas t (a, b) where
+  metas (x, y) = (<>) <$> metas x <*> metas y
 
-instance IsTerm t => MetaVars t (Definition t) where
-  metaVars (Constant t c)              = metaVars (t, c)
-  metaVars (DataCon _ _ pars type_)    = metaVars (pars, type_)
-  metaVars (Projection _ _ pars type_) = metaVars (pars, type_)
+instance IsTerm t => Metas t (Definition t) where
+  metas (Constant t c)              = metas (t, c)
+  metas (DataCon _ _ pars type_)    = metas (pars, type_)
+  metas (Projection _ _ pars type_) = metas (pars, type_)
 
-instance IsTerm t => MetaVars t (Constant t) where
-  metaVars Postulate          = return mempty
-  metaVars (Data _)           = return mempty
-  metaVars (Record _ _)       = return mempty
-  metaVars (Function clauses) = metaVars clauses
+instance IsTerm t => Metas t (Constant t) where
+  metas Postulate           = return mempty
+  metas (Data _)            = return mempty
+  metas (Record _ _)        = return mempty
+  metas (Instantiable inst) = metas inst
 
-instance MetaVars t a => MetaVars t (Maybe a) where
-  metaVars Nothing  = return mempty
-  metaVars (Just x) = metaVars x
+instance IsTerm t => Metas t (Instantiable t) where
+  metas OpenMeta          = return mempty
+  metas (InstMeta mvb)    = metas mvb
+  metas OpenFun           = return mempty
+  metas (InstFun clauses) = metas clauses
 
-instance MetaVars t (Sig.Signature t) where
-  metaVars sig =
-    metaVars $ map (fromJust . Sig.getDefinition sig) (Sig.definedNames sig)
+instance Metas t a => Metas t (Maybe a) where
+  metas Nothing  = return mempty
+  metas (Just x) = metas x
 
-instance MetaVars t (Tel.Tel t) where
-  metaVars Tel.Empty                 = return mempty
-  metaVars (Tel.Cons (_, type_) tel) = metaVars (type_, tel)
+instance IsTerm t => Metas t (MetaBody t) where
+  metas = metas . mbBody
+
+instance Metas t (Signature t) where
+  metas sig =
+    metas $ map (sigGetDefinition sig) (sigDefinedNames sig)
+
+instance Metas t (Tel t) where
+  metas T0                  = return mempty
+  metas ((_, type_) :> tel) = metas (type_, tel)
+

@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 import           Prelude                          hiding (interact)
 
-import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Options.Applicative
 import           Options.Applicative.Types
 import           System.Exit                      (exitFailure)
@@ -38,15 +37,15 @@ parseTypeCheckConf = Conf
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch
-      ( long "noMetaVarsSummary" <>
+      ( long "noMetasSummary" <>
         help "Do not print a summary of the metavariables state."
       )
   <*> switch
-      ( long "metaVarsReport" <>
+      ( long "metasReport" <>
         help "Print a detailed report of the metavariables state."
       )
   <*> switch
-      ( long "metaVarsOnlyUnsolved" <>
+      ( long "metasOnlyUnsolved" <>
         help "In the metavariable report, only print information about the unsolved metavariables."
       )
   <*> switch
@@ -58,7 +57,7 @@ parseTypeCheckConf = Conf
         help "Print a detailed report of the unsolved problems."
       )
   <*> switch
-      ( long "checkMetaVarConsistency" <>
+      ( long "checkMetaConsistency" <>
         help "Check consistency of instantiated term of a metavar and its type."
       )
   <*> switch

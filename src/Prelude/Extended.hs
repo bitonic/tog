@@ -47,7 +47,6 @@ module Prelude.Extended
   , any
   , MonadIO(..)
   , foldlM
-  , Bwd(..)
   , fold
   , intersperse
   , isPrefixOf
@@ -62,8 +61,21 @@ module Prelude.Extended
   , hPutStrLn
   , hPutStr
   , stderr
-  , fromList
+
   , toList
+  , Validation(..)
+  , validationToEither
+  , eitherToValidation
+  , MaybeT(..)
+  , ExceptT(..)
+  , runExceptT
+  , throwE
+  , L.over
+  , L._1
+  , L._2
+  , L._3
+  , Collect(..)
+  , catMaybes
   ) where
 
 import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)
@@ -86,16 +98,13 @@ import GHC.Generics
 import Control.Monad.Trans
 import Debug.Trace
 import Data.String
-import Data.Bwd
 import Numeric.Natural
 import System.IO
-
-#if __GLASGOW_HASKELL__ >= 708
-import           GHC.Exts                         (fromList)
-#else
-import           Data.IsList                      (fromList)
-#endif
-
+import Data.Either.Validation
+import Control.Monad.Trans.Maybe
+import Control.Monad.Trans.Except
+import qualified Control.Lens as L
+import Data.Collect
 
 #if __GLASGOW_HASKELL__ < 708
 traceM :: (Monad m) => String -> m ()

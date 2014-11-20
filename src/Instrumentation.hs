@@ -8,7 +8,7 @@ module Instrumentation
   , debug_
   , whenDebug
   , fatalError
-  , stackTrace
+  , printStackTrace
     -- * Init
   , instrument
   ) where

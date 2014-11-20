@@ -25,12 +25,12 @@ data Conf = Conf
   , confDebugLabels             :: DebugLabels
   , confStackTrace              :: Bool
   , confQuiet                   :: Bool
-  , confNoMetaVarsSummary       :: Bool
-  , confMetaVarsReport          :: Bool
-  , confMetaVarsOnlyUnsolved    :: Bool
+  , confNoMetasSummary       :: Bool
+  , confMetasReport          :: Bool
+  , confMetasOnlyUnsolved    :: Bool
   , confNoProblemsSummary       :: Bool
   , confProblemsReport          :: Bool
-  , confCheckMetaVarConsistency :: Bool
+  , confCheckMetaConsistency :: Bool
   , confFastGetAbsName          :: Bool
   , confDisableSynEquality      :: Bool
   , confDontNormalizePP         :: Bool
