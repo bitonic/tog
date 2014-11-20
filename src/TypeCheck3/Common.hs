@@ -27,7 +27,7 @@ import qualified Syntax.Abstract                  as SA
 import           Term
 import qualified Term.Context                     as Ctx
 import qualified Term.Telescope                   as Tel
-import           PrettyPrint                      (($$), (<+>), (//>), group, (//), hang)
+import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 
@@ -57,18 +57,22 @@ renderError err =
       t2Doc <- prettyM t2
       type2Doc <- prettyM type2
       return $
-        t1Doc <+> ":" <+> type1Doc $$
-        PP.nest 2 "!=" $$
-        t2Doc <+> ":" <+> type2Doc
+        "Terms not equal:" $$
+        "t:" //> t1Doc $$
+        "A:" //> type1Doc $$
+        "u:" //> t2Doc $$
+        "B:" //> type2Doc
     SpineNotEqual type1 es1 type2 es2 -> do
       type1Doc <- prettyM type1
       es1Doc <- PP.list <$> mapM prettyM es1
       type2Doc <- prettyM type2
       es2Doc <- PP.list <$> mapM prettyM es2
       return $
-        es1Doc <+> ":" <+> type1Doc $$
-        PP.nest 2 "!=" $$
-        es2Doc <+> ":" <+> type2Doc
+        "Spines not equal:" $$
+        "es:" //> es1Doc $$
+        "A:" //> type1Doc $$
+        "ds:" //> es2Doc $$
+        "B:" //> type2Doc
     FreeVariableInEquatedTerm mv els rhs v -> do
       mvDoc <- prettyM =<< metaVar mv els
       rhsDoc <- prettyM rhs
@@ -187,11 +191,12 @@ instance PrettyM t (Constraint t) where
       type2Doc <- prettyM type2
       t2Doc <- prettyM t2
       return $
-        group (ctxDoc <+> "|-") //>
-        (group $
-           group (group (t1Doc <+> ":" <+> type1Doc)) //
-           hang 2 "=" //
-           group (group (t2Doc <+> ":" <+> type2Doc)))
+        "JmEq" $$
+        "ctx:" //> ctxDoc $$
+        "t:" //> t1Doc $$
+        "A:" //> type1Doc $$
+        "u:" //> t2Doc $$
+        "B:" //> type2Doc
 
 -- Clauses invertibility
 ------------------------
