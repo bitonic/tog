@@ -53,7 +53,7 @@ data Decl
   | Postulate TypeSig
   | Data TypeSig
   | Record TypeSig
-  | FunDef  Name [Clause]
+  | FunDef Name [Clause]
   | DataDef Name [Name] [TypeSig]
   | RecDef  Name [Name] Name [TypeSig]
 

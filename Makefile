@@ -30,7 +30,7 @@ test: dist/build/tog/tog
 	time ./test.sh
 
 modules.pdf: $(bnfc_output) $(hs_sources)
-	graphmod -i src -i bnfc src/Main.hs | dot -T pdf -o modules.pdf
+	graphmod -i src -i bnfc -i dist/build/tog/tog-tmp src/Main.hs | dot -T pdf -o modules.pdf
 
 .PHONY: install-prof
 install-prof: $(bnfc_output) $(hs_sources)
@@ -41,6 +41,6 @@ install: $(bnfc_output) $(hs_source)
 	cabal install --disable-documentation
 
 .PHONY: ghci
-ghci: $(bnfc_output) $(alex_file).hs $(happy_file).hs
-	ghci src/Main.hs
+ghci:
+	cabal repl
 

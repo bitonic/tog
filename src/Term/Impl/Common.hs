@@ -26,6 +26,8 @@ import           Term.Types                       (unview, view)
 import qualified Term.Subst                       as Sub
 import           Data.Collect
 
+#include "impossible.h"
+
 genericSafeApplySubst
   :: (IsTerm t, MonadTerm t m) => t -> Subst t -> ApplySubstM m t
 genericSafeApplySubst t Sub.Id = do
@@ -72,12 +74,11 @@ genericWhnf t = do
   -- set, since I want to be able to test non-typechecked terms.
   let fallback = return $ NotBlocked t
   case tView of
-    App (Def (DKMeta mv)) es -> case sigLookupMetaBody sig mv of
-      Just mi -> eliminateMeta mi es
-      Nothing -> return $ BlockingHead mv es
+    App (Def (DKMeta mv)) es -> do
+      eliminateMeta mv (sigGetMetaInst sig mv) es
     App (Def (DKName f)) es -> case sigLookupDefinition sig f of
-      Just (Constant _ (Instantiable (InstFun cs))) -> do
-        mbT <- whnfFun f es $ ignoreInvertible cs
+      Just (Constant _ (Instantiable (InstFun clauses))) -> do
+        mbT <- whnfFun f es $ fmap ignoreInvertible clauses
         case mbT of
           Just t' -> return t'
           Nothing -> fallback
@@ -140,8 +141,10 @@ genericWhnf t = do
 -}
 
 eliminateMeta
-  :: (IsTerm t, MonadTerm t m) => MetaBody t -> [Elim t] -> m (Blocked Meta t)
-eliminateMeta mvb@(MetaBody n body) es = whnf =<< do
+  :: (IsTerm t, MonadTerm t m) => Meta -> MetaInst t -> [Elim t] -> m (Blocked Meta t)
+eliminateMeta mv Open es = do
+  return $ BlockingHead mv es
+eliminateMeta _ (Inst n body) es = whnf =<< do
   if length es >= n
     then do
       let (esl, es') = splitAt n es
@@ -153,7 +156,7 @@ eliminateMeta mvb@(MetaBody n body) es = whnf =<< do
         then eliminate body es'
         else (`eliminate` es') =<< instantiate body args
     else do
-      mvT <- metaBodyToTerm mvb
+      mvT <- mkMetaBody n body
       eliminate mvT es
   where
     isSimple _ [] = do
@@ -164,19 +167,34 @@ eliminateMeta mvb@(MetaBody n body) es = whnf =<< do
         App (Var v) [] | varIndex v == n' -> isSimple (n'-1) args'
         _                                 -> return False
 
+    mkMetaBody 0 body' = return body'
+    mkMetaBody m body' = lam =<< mkMetaBody (m-1) body'
+
 whnfFun
+  :: (IsTerm t, MonadTerm t m)
+  => Name -> [Elim t] -> Inst [Clause t]
+  -> m (Maybe (Blocked Meta t))
+whnfFun _ _ Open = do
+  return Nothing
+whnfFun funName es (Inst 0 clauses) = do
+  whnfFun' funName es clauses
+whnfFun _ _ (Inst _ _) = do
+  -- Currently we only support top-level functions.
+  __IMPOSSIBLE__
+
+whnfFun'
   :: (IsTerm t, MonadTerm t m)
   => Name -> [Elim t] -> [Closed (Clause t)]
   -> m (Maybe (Blocked Meta t))
-whnfFun _ _ [] = do
+whnfFun' _ _ [] = do
   return Nothing
-whnfFun funName es (Clause patterns body : clauses) = runMaybeT $ do
+whnfFun' funName es (Clause patterns body : clauses) = runMaybeT $ do
   matched <- lift $ matchClause es patterns
   case matched of
     Failure (CCollect mvs) ->
       return $ BlockedOn mvs (BlockedOnFunction funName) es
     Failure (CFail ()) ->
-      MaybeT $ whnfFun funName es clauses
+      MaybeT $ whnfFun' funName es clauses
     Success (args, leftoverEs) -> lift $ do
       body' <- instantiateClauseBody body args
       whnf =<< eliminate body' leftoverEs
