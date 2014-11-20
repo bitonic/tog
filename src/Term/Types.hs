@@ -157,6 +157,7 @@ module Term.Types
 import           Control.Monad.Trans.Reader       (ReaderT, runReaderT, ask)
 import qualified Data.HashSet                     as HS
 import qualified Data.HashMap.Strict              as HMS
+import qualified Data.Map.Strict                  as Map
 
 import           Instrumentation
 import           Prelude.Extended
@@ -804,19 +805,10 @@ sigDefinedNames sig = [n | DKName n <- HMS.keys $ sigDefinitions sig]
 sigDefinedMetas :: Signature t -> [Meta]
 sigDefinedMetas sig = [mv | DKMeta mv <- HMS.keys $ sigDefinitions sig]
 
--- -- | Gets the types of all 'Meta's.
--- sigMetasTypes :: Signature t -> HMS.HashMap Meta (Closed (Type t))
--- sigMetasTypes = error "TODO" -- sigMetasTypes
-
--- -- | Gets the bodies for the instantiated 'Meta's.
--- sigMetasBodies :: Signature t -> HMS.HashMap Meta (MetaBody t)
--- sigMetasBodies = sigMetasBodies
-
 sigToScope :: Signature t -> Scope
-sigToScope = error "TODO"
--- sigToScope = Scope . Map.fromList . map f . HMS.toList . sigDefinitions
---   where
---     f (n, def') = (nameString n, definitionToNameInfo n def')
+sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
+  where
+    f n = (nameString n, definitionToNameInfo n (sigGetDefinition sig n))
 
 -- Context
 ------------------------------------------------------------------------
