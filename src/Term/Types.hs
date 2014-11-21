@@ -420,7 +420,16 @@ class (Typeable t, Show t, Metas t t, Nf t t, PrettyM t t, ApplySubst t t, SynEq
 
     -- View / Unview
     --------------------------------------------------------------------
+
+    -- | Note that nobody outside @Term/@ should use 'view' -- and in fact
+    -- it's not exported from 'Term'.  Why?  Because you always want
+    -- 'whnfView', that is a view with respect to the current signature.
     view   :: MonadTerm t m => Term t -> m (TermView t)
+
+    -- | Similarly, nobody outside @Term/@ should use 'unview', but only
+    -- the "smart constructors" below.  Why?  Resilience to future
+    -- changes and more importantly we make lists of eliminators strict
+    -- in the smart constructors.
     unview :: MonadTerm t m => TermView t -> m (Term t)
 
     -- We require these to be un-monadic mostly because having them
@@ -1158,7 +1167,8 @@ getAbsName_ t = fromMaybe "_" <$> getAbsName t
 -- when the term and the eliminators don't match.
 eliminate :: (IsTerm t, MonadTerm t m) => t -> [Elim t] -> m t
 eliminate t elims = do
-  tView <- whnfView t
+  reduce <- confWhnfEliminate <$> readConf
+  tView <- if reduce then whnfView t else view t
   let badElimination = do
         tDoc <- prettyM t
         elimsDoc <- prettyM elims

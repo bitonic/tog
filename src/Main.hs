@@ -80,6 +80,10 @@ parseTypeCheckConf = Conf
       ( long "timeSections" <>
         help "Measure how much time is taken by each debug section"
       )
+  <*> switch
+      ( long "whnfEliminate" <>
+        help "Reduce term when eliminating a term"
+      )
 
 debugLabelsOption
   :: Mod OptionFields DebugLabels

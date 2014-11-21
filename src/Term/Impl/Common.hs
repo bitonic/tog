@@ -105,25 +105,26 @@ eliminateInst (DKName f) Open es = do
 -- stored in this form, and we want to optimize for that.  If some
 -- functions fall under this pattern too, it doesn't matter.
 eliminateInst _ (Inst n inv) es | [Clause [] t] <- ignoreInvertible inv =
-  -- Optimization: if the arguments are all lined up, don't touch
-  -- the body.
-  if length es >= n
-    then do
-      let (esl, es') = splitAt n es
-      Just args <- return $ mapM isApply esl
-      simple <- isSimple (n-1) args
-      if simple
-        then whnf =<< eliminate t es'
-        else whnf =<< (`eliminate` es') =<< instantiate t args
-    else do
-      -- TODO should we do this?  It seems like we need it for
-      -- meta-variables, but I'm not sure if it's good for defs.
-      --
-      -- If we
-      -- can't, we can turn the thing into a lambda and partially apply
-      -- it.
-      mvT <- mkBody n t
-      whnf =<< eliminate mvT es
+  whnf =<< do
+    -- Optimization: if the arguments are all lined up, don't touch
+    -- the body.
+    if length es >= n
+      then do
+        let (esl, es') = splitAt n es
+        Just args <- return $ mapM isApply esl
+        simple <- isSimple (n-1) args
+        if simple
+          then eliminate t es'
+          else (`eliminate` es') =<< instantiate t args
+      else do
+        -- TODO should we do this?  It seems like we need it for
+        -- meta-variables, but I'm not sure if it's good for defs.
+        --
+        -- If we
+        -- can't, we can turn the thing into a lambda and partially apply
+        -- it.
+        mvT <- mkBody n t
+        eliminate mvT es
   where
     isSimple _ [] = do
       return True
