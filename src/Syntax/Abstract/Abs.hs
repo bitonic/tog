@@ -167,6 +167,8 @@ instance Eq Expr where
   App h es    == App h' es'     = h == h' && es == es'
   Set _       == Set _          = True
   Meta _      == Meta _         = True
+  Top _       == Top _          = True
+  Tt _        == Tt  _          = True
   _           == _              = False
 
 instance Eq Head where

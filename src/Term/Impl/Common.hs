@@ -26,7 +26,7 @@ import           Term
 import           Term.Types                       (unview, view)
 import qualified Term.Subst                as Sub
 import           Term.Subst.Types          as Sub
-import           Term.Subst.Utils          as Sub
+import           Term.Subst.Utils          as Sub hiding (strengthen)
 import qualified Term.Signature                   as Sig
 
 genericSafeApplySubst
@@ -43,7 +43,7 @@ genericSafeApplySubst t rho = do
     Lam body ->
       lift . lam =<< safeApplySubst body (Sub.lift 1 rho)
     Pi impl dom cod -> do
-      imp' <- safeApplySubst imp rho
+      imp' <- safeApplySubst impl rho
       dom' <- safeApplySubst dom rho
       cod' <- safeApplySubst cod $ Sub.lift 1 rho
       lift $ pi imp' dom' cod'
@@ -149,10 +149,10 @@ matchClause
   -> m (TermTraverse () ([t], [Elim t]))
 matchClause es [] =
   return $ pure ([], es)
-matchClause (Apply arg : es) (VarP : patterns) = do
-  matched <- matchClause es patterns
+matchClause (Apply impl arg : es) (VarP : patterns) = do
+  matched <- matchClause es patterns -- must also check some additional constraints
   return $ (\(args, leftoverEs) -> (arg : args, leftoverEs)) <$> matched
-matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
+matchClause (Apply impl arg : es) (ConP dataCon dataConPatterns : patterns) = do -- same thing here, what do we need to know about this implicit argument - we want it to be Top
   blockedArg <- whnf arg
   case blockedArg of
     MetaVarHead mv _ -> do
@@ -165,7 +165,7 @@ matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
       tView <- view t
       case tView of
         Con dataCon' dataConArgs | dataCon == dataCon' ->
-          matchClause (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
+          matchClause (map (Apply impl) dataConArgs ++ es) (dataConPatterns ++ patterns)
         _ ->
           return $ TTFail ()
 matchClause _ _ =
@@ -266,8 +266,8 @@ internalToTerm t0 = do
     Lam body -> do
       n <- getAbsName_ body
       SA.Lam n <$> internalToTerm body
-    Pi dom cod -> do
-      mbN <- runApplySubst $ safeApplySubst cod $ Sub.strengthen 1 Sub.id -- extend for implicits
+    Pi impl dom cod -> do
+      mbN <- runApplySubst $ safeApplySubst cod $ Sub.strengthen 1 Sub.id
       case mbN of
         Left n -> do
           SA.Pi n <$> internalToTerm dom <*> internalToTerm cod

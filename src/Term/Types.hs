@@ -194,7 +194,7 @@ data Elim t
 instance (Hashable t) => Hashable (Elim t)
 
 isApply :: Elim (Term t) -> Maybe (Term t)
-isApply (Apply v) = Just v
+isApply (Apply _ v) = Just v
 isApply Proj{}    = Nothing
 
 isProj :: Elim (Term t) -> Maybe Projection
@@ -289,7 +289,6 @@ type ApplySubstM = ExceptT Name
 
 runApplySubst :: ApplySubstM m a -> m (Either Name a)
 runApplySubst = runExceptT
-
 class ApplySubst t a where
   safeApplySubst :: (IsTerm t, MonadTerm t m) => a -> Subst t -> ApplySubstM m a
 

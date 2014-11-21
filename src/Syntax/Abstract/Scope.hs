@@ -428,7 +428,6 @@ checkExpr e = case e of
             IsCon c args -> do
               Con c <$> checkArgs z n es
                         (\es -> checkNumberOfConstructorArguments e c es args)
--- does Other refer to anything other than function application?
             Other h    -> App h . map (Apply (error "Unsure if Top or not")) <$> checkArgs z n es (\ _ -> return ())
             HeadSet p  -> return $ Set p
             HeadMeta p -> return $ Meta p
@@ -454,6 +453,8 @@ checkNumberOfConstructorArguments loc c as args = do
                      " is applied to too many arguments."
   where nas = length as
 
+
+-- | The possible shapes of heads of an application
 data AppHead = IsProj Name
              | IsCon Name NumberOfArguments
              | IsRefl SrcLoc

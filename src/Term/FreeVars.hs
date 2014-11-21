@@ -66,6 +66,10 @@ freeVars = go Just
           return mempty
         Con _ args ->
           mconcat <$> mapM (go strengthen') args
+        Top -> 
+          return mempty
+        Tt ->
+          return mempty
       where
         goElim (Proj _)    = return mempty
-        goElim (Apply i t) = (<>) <$> (go strengthen' i) <*> (go strengthen' t)  
+        goElim (Apply i t) = (<>) <$> go strengthen' i <*> go strengthen' t  
