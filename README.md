@@ -43,7 +43,5 @@ Top-level module interface:
     import qualified Syntax.Raw                       as SR
     import qualified Syntax.Abstract                  as SA
     import           Term
-    import qualified Term.Context                     as Ctx
-    import qualified Term.Substitution                as Sub
-    import qualified Term.Telescope                   as Tel
+    import qualified Term.Subst                       as Sub
     import           TypeCheck3
