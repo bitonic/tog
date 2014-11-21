@@ -1,14 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 import           Prelude                          hiding (interact)
 
-import           Control.Monad.Trans.Except       (ExceptT(ExceptT), runExceptT)
 import           Options.Applicative
 import           Options.Applicative.Types
 import           System.Exit                      (exitFailure)
 import qualified System.Console.Haskeline         as Haskeline
 import           Data.List.Split                  (splitOn)
 
-import           Conf
+import           Instrumentation
 import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
 import           Prelude.Extended
@@ -30,7 +29,7 @@ parseTypeCheckConf = Conf
         help "Available solvers: S (Simple), H (Hetero), TC (TwoContexts)."
       )
   <*> debugLabelsOption
-      ( long "debug" <> short 'd' <> value [] <>
+      ( long "debug" <> short 'd' <> value mempty <>
         help "Select debug labels to print."
       )
   <*> switch
@@ -38,15 +37,15 @@ parseTypeCheckConf = Conf
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch
-      ( long "noMetaVarsSummary" <>
+      ( long "noMetasSummary" <>
         help "Do not print a summary of the metavariables state."
       )
   <*> switch
-      ( long "metaVarsReport" <>
+      ( long "metasReport" <>
         help "Print a detailed report of the metavariables state."
       )
   <*> switch
-      ( long "metaVarsOnlyUnsolved" <>
+      ( long "metasOnlyUnsolved" <>
         help "In the metavariable report, only print information about the unsolved metavariables."
       )
   <*> switch
@@ -58,7 +57,7 @@ parseTypeCheckConf = Conf
         help "Print a detailed report of the unsolved problems."
       )
   <*> switch
-      ( long "checkMetaVarConsistency" <>
+      ( long "checkMetaConsistency" <>
         help "Check consistency of instantiated term of a metavar and its type."
       )
   <*> switch
@@ -77,18 +76,19 @@ parseTypeCheckConf = Conf
       ( long "whnfApplySubst" <>
         help "Reduce term when applying a substitution"
       )
+  <*> switch
+      ( long "timeSections" <>
+        help "Measure how much time is taken by each debug section"
+      )
 
 debugLabelsOption
-  :: Mod OptionFields [(Bool, [String])]
-  -> Parser [(Bool, [String])]
+  :: Mod OptionFields DebugLabels
+  -> Parser DebugLabels
 debugLabelsOption = option $ do
   s <- readerAsk
-  return [ case x of
-             []       -> (True,  [])
-             '~' : x' -> (False, splitOn "." x')
-             x'       -> (True,  splitOn "." x')
-         | x <- splitOn "|" s
-         ]
+  case s of
+    [] -> return DLAll
+    _  -> return $ DLSome $ splitOn "|" s
 
 parseMain :: Parser (IO ())
 parseMain =
@@ -103,14 +103,19 @@ parseMain =
         help "Start interpreter once the file is loaded."
       )
 
-    typeCheck file interactive conf = do
-      writeConf conf
-      checkFile file $ \(ts, mbErr) -> do
-        forM_ mbErr $ \err -> do
-          putStrLn (PP.render err)
-          unless interactive exitFailure
-        when interactive $
-          Haskeline.runInputT interactSettings (interact' ts)
+    typeCheck file interactive conf0 = do
+      conf <- if interactive && confDebug conf0
+        then do
+          putStrLn "-i incompatible with -d, disabling -d"
+          return $ confDisableDebug conf0
+        else return conf0
+      instrument conf $ do
+        checkFile file $ \(ts, mbErr) -> do
+          forM_ mbErr $ \err -> do
+            putStrLn (PP.render err)
+            unless interactive exitFailure
+          when interactive $
+            Haskeline.runInputT interactSettings (interact' ts)
 
     interactSettings = Haskeline.defaultSettings
       { Haskeline.historyFile    = Just "~/.tog_history"

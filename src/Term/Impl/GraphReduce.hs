@@ -4,7 +4,6 @@ import           Data.IORef                       (IORef, readIORef, writeIORef,
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term
-import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
 import           Prelude.Extended
 
@@ -17,8 +16,8 @@ newtype GraphReduce = GR {unGR :: IORef (TermView GraphReduce)}
 instance Show GraphReduce where
   show _ = "<<ref>>"
 
-instance MetaVars GraphReduce GraphReduce where
-  metaVars = genericMetaVars
+instance Metas GraphReduce GraphReduce where
+  metas = genericMetas
 
 instance Nf GraphReduce GraphReduce where
   nf t = do
@@ -54,4 +53,4 @@ instance IsTerm GraphReduce where
   refl = unsafePerformIO $ GR <$> newIORef Refl
 
   {-# NOINLINE typeOfJ #-}
-  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
+  typeOfJ = unsafePerformIO $ runTermM sigEmpty genericTypeOfJ

@@ -5,7 +5,6 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Syntax
 import qualified Term                             as T
-import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
 import           Prelude.Extended
 
@@ -31,11 +30,11 @@ data Tm
     | Refl
     | Set
     | Con !Name ![Ref]
-    | App T.Head ![T.Elim Ref]
+    | App !T.Head ![T.Elim Ref]
     deriving (Show, Eq, Typeable)
 
-instance T.MetaVars GraphReduceUnpack GraphReduceUnpack where
-  metaVars = genericMetaVars
+instance T.Metas GraphReduceUnpack GraphReduceUnpack where
+  metas = genericMetas
 
 instance T.Nf GraphReduceUnpack GraphReduceUnpack where
   nf t = do
@@ -90,5 +89,5 @@ instance T.IsTerm GraphReduceUnpack where
   refl = unsafePerformIO $ GRU <$> newIORef Refl
 
   {-# NOINLINE typeOfJ #-}
-  typeOfJ = unsafePerformIO $ T.runTermM Sig.empty genericTypeOfJ
+  typeOfJ = unsafePerformIO $ T.runTermM T.sigEmpty genericTypeOfJ
 

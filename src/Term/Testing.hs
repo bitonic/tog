@@ -7,26 +7,25 @@ import           Prelude.Extended
 import           Term                             hiding (lam, pi, equal, set, refl, con, app)
 import           Term.Impl
 import qualified Term                             as Term
-import qualified Term.Signature                   as Sig
 import           Syntax
 import qualified Syntax.Abstract                  as SA
 
 type Tm = GraphReduce
 
 run :: TermM Tm a -> IO a
-run = runTermM Sig.empty
+run = runTermM sigEmpty
 
 tm_ :: (MonadTerm Tm m) => SA.Expr -> m Tm
-tm_ = tm B0
+tm_ = tm []
 
-tm :: forall m. (MonadTerm Tm m) => Bwd Name -> SA.Expr -> m Tm
+tm :: forall m. (MonadTerm Tm m) => [Name] -> SA.Expr -> m Tm
 tm nms e0 = case e0 of
   SA.Lam n e -> do
-    Term.lam =<< tm (nms :< n) e
+    Term.lam =<< tm (n : nms) e
   SA.Pi n dom cod -> do
     dom' <- tm nms dom
-    cod' <- tm (nms :< n) cod
-    Term.pi_ dom' cod'
+    cod' <- tm (n : nms) cod
+    Term.pi dom' cod'
   SA.Fun dom cod -> do
     join $ Term.pi_ <$> tm nms dom
                     <*> (weaken_ 1 =<< tm nms cod)
@@ -42,19 +41,15 @@ tm nms e0 = case e0 of
     join $ Term.con dataCon <$> mapM (tm nms) es
   SA.App h es -> do
     let h' = case h of
-          SA.Var n -> case n `bwdIndex` nms of
-                        Nothing -> Def n
-                        Just i   -> Var $ mkVar n i
-          SA.Def n -> Def n
+          SA.Var n -> case n `elemIndex` nms of
+                        Nothing -> Def $ DKName n
+                        Just i  -> Var $ mkVar n $ fromIntegral i
+          SA.Def n -> Def $ DKName n
           SA.J _   -> J
     Term.app h' =<< mapM tmElim es
   where
     tmElim (SA.Proj _)   = error "tm.Proj"
     tmElim (SA.Apply impl e') = Apply <$> tm nms impl <*> tm nms e'
-
-    bwdIndex y (_  :< x) | y == x = Just 0
-    bwdIndex y (xs :< _) = succ <$> bwdIndex y xs
-    bwdIndex _ _ = Nothing
 
 -- Abbreviations
 ------------------------------------------------------------------------

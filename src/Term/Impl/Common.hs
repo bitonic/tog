@@ -6,28 +6,25 @@ module Term.Impl.Common
   , genericTypeOfJ
   , genericNf
   , genericSynEq
-  , genericMetaVars
+  , genericMetas
   , genericPrettyPrecM
 
   , view
   , unview
   ) where
 
-import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import           Data.Traversable                 (mapM, sequence)
 
-import           Conf
+import           Instrumentation
 import           Prelude.Extended                 hiding (foldr, mapM, sequence)
 import           Syntax
 import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           Term
 import           Term.Types                       (unview, view)
-import qualified Term.Subst                as Sub
-import           Term.Subst.Types          as Sub
-import           Term.Subst.Utils          as Sub hiding (strengthen)
-import qualified Term.Signature                   as Sig
+import qualified Term.Subst                       as Sub
+import           Data.Collect
 
 genericSafeApplySubst
   :: (IsTerm t, MonadTerm t m) => t -> Subst t -> ApplySubstM m t
@@ -41,11 +38,11 @@ genericSafeApplySubst t rho = do
   tView <- lift $ if reduce then whnfView t else view t
   case tView of
     Lam body ->
-      lift . lam =<< safeApplySubst body (Sub.lift 1 rho)
+      lift . lam =<< safeApplySubst body (sublift 1 rho)
     Pi impl dom cod -> do
       imp' <- safeApplySubst impl rho
       dom' <- safeApplySubst dom rho
-      cod' <- safeApplySubst cod $ Sub.lift 1 rho
+      cod' <- safeApplySubst cod $ sublift 1 rho
       lift $ pi imp' dom' cod'
     Equal type_ x y  -> do
       type' <- safeApplySubst type_ rho
@@ -62,48 +59,90 @@ genericSafeApplySubst t rho = do
     App h els  -> do
       els' <- safeApplySubst els rho
       case h of
-        Var v   -> do u <- Sub.lookup v rho
+        Var v   -> do u <- subLookup v rho
                       lift $ eliminate u els'
         Def n   -> lift $ app (Def n) els'
-        Meta mv -> lift $ app (Meta mv) els'
         J       -> lift $ app J els'
 
 genericWhnf
-  :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
+  :: (IsTerm t, MonadTerm t m) => t -> m (Blocked Meta t)
 genericWhnf t = do
   tView <- view t
   sig <- askSignature
+  -- Note that here we don't want to crash if the definition is not
+  -- set, since I want to be able to test non-typechecked terms.
+  let fallback = return $ NotBlocked t
   case tView of
-    App (Meta mv) es | Just mi <- Sig.getMetaVarBody sig mv -> do
-      eliminateMeta mi es
-    -- Note that here we don't want to crash if the definition is not
-    -- set, since I want to be able to test non-typechecked terms.
-    App (Def defName) es | Just (Function _ cs) <- Sig.getDefinition sig defName -> do
-      mbT <- whnfFun defName es $ ignoreInvertible cs
-      case mbT of
-        Just t' -> return t'
-        Nothing -> return $ NotBlocked t
-    App J es0@(_ : x : _ : _ : Apply _ p : Apply _' refl' : es) -> do
-    -- TODO: Verify that there will be no implicit arguments for eliminators applied to J
+    App (Def (DKMeta mv)) es -> case sigLookupMetaBody sig mv of
+      Just mi -> eliminateMeta mi es
+      Nothing -> return $ BlockingHead mv es
+    App (Def (DKName f)) es -> case sigLookupDefinition sig f of
+      Just (Constant _ (Instantiable (InstFun cs))) -> do
+        mbT <- whnfFun f es $ ignoreInvertible cs
+        case mbT of
+          Just t' -> return t'
+          Nothing -> fallback
+      _ -> do
+        fallback
+    App J es0@(_ : x : _ : _ : Apply _ p : Apply _ refl' : es) -> do
       refl'' <- whnf refl'
       case refl'' of
-        MetaVarHead mv _ ->
-          return $ BlockedOn (HS.singleton mv) BlockedOnJ es0
+        BlockingHead bl _ ->
+          return $ BlockedOn (HS.singleton bl) BlockedOnJ es0
         BlockedOn mvs _ _ ->
           return $ BlockedOn mvs BlockedOnJ es0
         NotBlocked refl''' -> do
           reflView <- view refl'''
           case reflView of
             Refl -> whnf =<< eliminate p (x : es)
-            _    -> return $ NotBlocked t
-    App (Meta mv) elims ->
-      return $ MetaVarHead mv elims
+            _    -> fallback
     _ ->
-      return $ NotBlocked t
+      fallback
+
+{-
+genericWhnf
+  :: (IsTerm t, MonadTerm t m) => t -> m (Blocked Meta t)
+genericWhnf t = do
+  tView <- view t
+  sig <- askSignature
+  -- Note that here we don't want to crash if the definition is not
+  -- set, since I want to be able to test non-typechecked terms.
+  let fallback = return $ NotBlocked t
+  case tView of
+    App (Def (DKMeta mv)) es -> case sigLookupMetaBody sig mv of
+      Just mi -> eliminateMeta mi es
+      Nothing -> return $ BlockingHead (DKMeta mv) es
+    App (Def (DKName defName)) es -> case sigLookupDefinition sig defName of
+      Just (Constant _ (Instantiable (InstFun cs))) -> do
+        mbT <- whnfFun defName es $ ignoreInvertible cs
+        case mbT of
+          Just t' -> return t'
+          Nothing -> fallback
+      Just (Constant _ (Instantiable OpenFun)) -> do
+        return $ BlockingHead (DKName defName) es
+      _ -> do
+        fallback
+    App (Def dk) elims ->
+      return $ BlockingHead dk elims
+    App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
+      refl'' <- whnf refl'
+      case refl'' of
+        BlockingHead bl _ ->
+          return $ BlockedOn (HS.singleton bl) BlockedOnJ es0
+        BlockedOn mvs _ _ ->
+          return $ BlockedOn mvs BlockedOnJ es0
+        NotBlocked refl''' -> do
+          reflView <- view refl'''
+          case reflView of
+            Refl -> whnf =<< eliminate p (x : es)
+            _    -> fallback
+    _ ->
+      fallback
+-}
 
 eliminateMeta
-  :: (IsTerm t, MonadTerm t m) => MetaVarBody t -> [Elim t] -> m (Blocked t)
-eliminateMeta mvb@(MetaVarBody n body) es = whnf =<< do
+  :: (IsTerm t, MonadTerm t m) => MetaBody t -> [Elim t] -> m (Blocked Meta t)
+eliminateMeta mvb@(MetaBody n body) es = whnf =<< do
   if length es >= n
     then do
       let (esl, es') = splitAt n es
@@ -115,7 +154,7 @@ eliminateMeta mvb@(MetaVarBody n body) es = whnf =<< do
         then eliminate body es'
         else (`eliminate` es') =<< instantiate body args
     else do
-      mvT <- metaVarBodyToTerm mvb
+      mvT <- metaBodyToTerm mvb
       eliminate mvT es
   where
     isSimple _ [] = do
@@ -129,24 +168,24 @@ eliminateMeta mvb@(MetaVarBody n body) es = whnf =<< do
 whnfFun
   :: (IsTerm t, MonadTerm t m)
   => Name -> [Elim t] -> [Closed (Clause t)]
-  -> m (Maybe (Blocked t))
+  -> m (Maybe (Blocked Meta t))
 whnfFun _ _ [] = do
   return Nothing
 whnfFun funName es (Clause patterns body : clauses) = runMaybeT $ do
   matched <- lift $ matchClause es patterns
   case matched of
-    TTMetaVars mvs ->
+    Failure (CCollect mvs) ->
       return $ BlockedOn mvs (BlockedOnFunction funName) es
-    TTFail () ->
+    Failure (CFail ()) ->
       MaybeT $ whnfFun funName es clauses
-    TTOK (args, leftoverEs) -> lift $ do
+    Success (args, leftoverEs) -> lift $ do
       body' <- instantiateClauseBody body args
       whnf =<< eliminate body' leftoverEs
 
 matchClause
   :: (IsTerm t, MonadTerm t m)
   => [Elim t] -> [Pattern]
-  -> m (TermTraverse () ([t], [Elim t]))
+  -> m (Validation (Collect_ MetaSet) ([t], [Elim t]))
 matchClause es [] =
   return $ pure ([], es)
 matchClause (Apply impl arg : es) (VarP : patterns) = do
@@ -155,21 +194,21 @@ matchClause (Apply impl arg : es) (VarP : patterns) = do
 matchClause (Apply impl arg : es) (ConP dataCon dataConPatterns : patterns) = do -- same thing here, what do we need to know about this implicit argument - we want it to be Top
   blockedArg <- whnf arg
   case blockedArg of
-    MetaVarHead mv _ -> do
+    BlockingHead bl _ -> do
       matched <- matchClause es patterns
-      return $ TTMetaVars (HS.singleton mv) <*> matched
+      return $ Failure (CCollect (HS.singleton bl)) <*> matched
     BlockedOn mvs _ _ -> do
       matched <- matchClause es patterns
-      return $ TTMetaVars mvs <*> matched
+      return $ Failure (CCollect mvs) <*> matched
     NotBlocked t -> do
       tView <- view t
       case tView of
         Con dataCon' dataConArgs | dataCon == dataCon' ->
           matchClause (map (Apply impl) dataConArgs ++ es) (dataConPatterns ++ patterns)
         _ ->
-          return $ TTFail ()
+          return $ Failure $ CFail ()
 matchClause _ _ =
-  return $ TTFail ()
+  return $ Failure $ CFail ()
 
 genericNf :: forall t m. (IsTerm t, MonadTerm t m) => t -> m t
 genericNf t = do
@@ -221,7 +260,7 @@ genericSynEq
   :: (IsTerm t, MonadTerm t m)
   => t -> t -> m Bool
 genericSynEq t1 t2 = do
-  join $ genericTermViewEq <$> view t1 <*> view t2
+  join $ genericTermViewEq <$> whnfView t1 <*> whnfView t2
 
 genericTermViewEq
   :: (IsTerm t, MonadTerm t m)
@@ -267,7 +306,7 @@ internalToTerm t0 = do
       n <- getAbsName_ body
       SA.Lam n <$> internalToTerm body
     Pi impl dom cod -> do
-      mbN <- runApplySubst $ safeApplySubst cod $ Sub.strengthen 1 Sub.id
+      mbN <- runApplySubst $ safeApplySubst cod $ subStrengthen 1 subId
       case mbN of
         Left n -> do
           SA.Pi n <$> internalToTerm dom <*> internalToTerm cod
@@ -284,29 +323,29 @@ internalToTerm t0 = do
     App h args -> do
       let h' = case h of
             Var v -> SA.Var (SA.name (PP.render v))
-            Def f -> SA.Def f
+            Def (DKName f) -> SA.Def f
+            Def (DKMeta mv) -> SA.Var (SA.Name (SA.srcLoc mv) (PP.render mv))
             J -> SA.J SA.noSrcLoc
-            Meta mv -> SA.Var (SA.Name (SA.srcLoc mv) (PP.render mv))
       args' <- forM args $ \arg -> case arg of
         Apply impl t -> SA.Apply <$> internalToTerm impl <*> internalToTerm t
         Proj p  -> return $ SA.Proj $ pName p
       return $ SA.App h' args'
 
-genericMetaVars :: (IsTerm t, MonadTerm t m) => Term t -> m MetaVarSet
-genericMetaVars t = do
+genericMetas :: (IsTerm t, MonadTerm t m) => Term t -> m MetaSet
+genericMetas t = do
   tView <- whnfView t
   case tView of
-    Lam body           -> metaVars body
+    Lam body           -> metas body
     Pi impl domain codomain -> do
-      impMetas <- metaVars impl
-      domMetas <- metaVars domain
-      codMetas <- metaVars codomain
+      impMetas <- metas impl
+      domMetas <- metas domain
+      codMetas <- metas codomain
       return . mconcat $ [impMetas, domMetas, codMetas]
-    Equal type_ x y    -> mconcat <$> mapM metaVars [type_, x, y]
-    App h elims        -> (<>) <$> metaVarsHead h <*> metaVars elims
+    Equal type_ x y    -> mconcat <$> mapM metas [type_, x, y]
+    App h elims        -> (<>) <$> metasHead h <*> metas elims
     Set                -> return mempty
     Refl               -> return mempty
-    Con _ elims        -> metaVars elims
+    Con _ elims        -> metas elims
   where
-    metaVarsHead (Meta mv) = return $ HS.singleton mv
-    metaVarsHead _         = return mempty
+    metasHead (Def (DKMeta mv)) = return $ HS.singleton mv
+    metasHead _                 = return mempty

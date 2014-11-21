@@ -13,9 +13,11 @@ executable tog
   other-modules:       Syntax.Raw.Lex
                      , Syntax.Raw.Par
 
-  build-depends:       base >= 4.6
-                     , array >= 0.4
+  build-depends:       array >= 0.4
+                     , base >= 4.6
+                     , boxes >= 0.1
                      , containers >= 0.5
+                     , either >= 4
                      , hashable >= 1.2
                      , hashtables >= 1.1
                      , haskeline >= 0.7
@@ -24,6 +26,7 @@ executable tog
                      , nats >= 0.2
                      , optparse-applicative >= 0.11
                      , safe >= 0.3.8
+                     , semigroups >= 0.15
                      , split >= 0.2
                      , tagged >= 0.7.2
                      , transformers >= 0.2
@@ -32,13 +35,26 @@ executable tog
                      , wl-pprint >= 1.1
 
   hs-source-dirs:      src, bnfc
+  include-dirs:        src
   default-language:    Haskell2010
   ghc-options:         -Wall
   ghc-prof-options:    -auto-all
 
+  if os(darwin)
+    c-sources: cbits/time-osx.c
+  else {
+    if os(windows)
+      c-sources: cbits/time-windows.c
+    else
+      c-sources: cbits/time-posix.c
+  }
+
+  CC-Options:          -fPIC
+
   build-tools:         alex, happy
 
   default-extensions:  BangPatterns
+                     , CPP
                      , DataKinds
                      , DefaultSignatures
                      , DeriveDataTypeable

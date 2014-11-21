@@ -51,6 +51,8 @@ type Program = [Decl]
 data Decl
   = TypeSig TypeSig
   | Postulate TypeSig
+  | Data TypeSig
+  | Record TypeSig
   | FunDef  Name [Clause]
   | DataDef Name [Name] [TypeSig]
   | RecDef  Name [Name] Name [TypeSig]
@@ -117,6 +119,8 @@ instance HasSrcLoc Decl where
   srcLoc d = case d of
     TypeSig sig    -> srcLoc sig
     Postulate sig  -> srcLoc sig
+    Data sig       -> srcLoc sig
+    Record sig     -> srcLoc sig
     FunDef x _     -> srcLoc x
     DataDef x _ _  -> srcLoc x
     RecDef x _ _ _ -> srcLoc x
@@ -200,6 +204,10 @@ instance Pretty Decl where
       pretty sig
     Postulate sig ->
       text "postulate" $$> pretty sig
+    Data sig ->
+      text "data" $$> pretty sig
+    Record sig ->
+      text "record" $$> pretty sig
     FunDef f clauses ->
       vcat $ map (prettyClause f) clauses
     DataDef d xs cs ->

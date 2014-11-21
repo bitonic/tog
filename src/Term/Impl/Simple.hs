@@ -2,7 +2,6 @@ module Term.Impl.Simple (Simple) where
 
 import           Prelude.Extended
 import           Term
-import qualified Term.Signature                   as Sig
 import           Term.Impl.Common
 import           System.IO.Unsafe                 (unsafePerformIO)
 
@@ -12,8 +11,8 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 newtype Simple = S {unS :: TermView Simple}
     deriving (Eq, Show, Typeable)
 
-instance MetaVars Simple Simple where
-  metaVars = genericMetaVars
+instance Metas Simple Simple where
+  metas = genericMetas
 
 instance Nf Simple Simple where
   nf = genericNf
@@ -37,5 +36,5 @@ instance IsTerm Simple where
   refl = S Refl
 
   {-# NOINLINE typeOfJ #-}
-  typeOfJ = unsafePerformIO $ runTermM Sig.empty genericTypeOfJ
+  typeOfJ = unsafePerformIO $ runTermM sigEmpty genericTypeOfJ
 
