@@ -7,55 +7,39 @@ module TypeCheck3.Monad
   , tcState
   , TCErr(..)
   , initTCState
-  , TCConf(..)
   , runTC
-  , runTC_
   , catchTC
     -- * Operations
     -- ** Errors
   , typeError
-  , fatalError
   , assert
   , assert_
     -- ** Source location
   , atSrcLoc
-    -- ** Definition handling
-  , addDefinition
-  , getDefinition
-  , addConstant
-  , addDataCon
-  , addProjection
+    -- ** Signature update
+  , addPostulate
+  , addData
+  , addRecordCon
+  , addTypeSig
   , addClauses
-    -- ** MetaVar handling
-  , addMetaVar
-  , uncheckedInstantiateMetaVar
-  , getMetaVarType
-  , getMetaVarBody
-  , unsafeRemoveMetaVar
+  , addProjection
+  , addDataCon
+  , addMeta
+  , uncheckedInstantiateMeta
     -- ** State handling
   , mapTC
   , nestTC
-    -- * Debugging
-  , debugSection
-  , debugSection_
-  , debugBracket
-  , debugBracket_
-  , debug
-  , debug_
-  , whenDebug
   ) where
 
 import qualified Control.Lens                     as L
 import qualified Control.Monad.State.Class        as State
 
 import           Prelude.Extended                 hiding (any)
-import           Conf
+import           Instrumentation
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
 import           Syntax
 import           Term
-import qualified Term.Signature                   as Sig
-import qualified Term.Telescope                   as Tel
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -66,7 +50,7 @@ import qualified Term.Telescope                   as Tel
 -- ('modifySignature'), It also lets you track of the current location
 -- in the source code.
 --
--- Moreover, it lets us suspend computations waiting on a 'MetaVar' to
+-- Moreover, it lets us suspend computations waiting on a 'Meta' to
 -- be instantiated, or on another suspended computation to be completed.
 -- See 'ProblemId' and related functions.
 newtype TC t s a = TC
@@ -101,80 +85,35 @@ catchTC m = TC $ \(te, ts) -> do
     Left e  -> (ts', Right (Left (PP.pretty e)))
     Right x -> (ts', Right (Right x))
 
-data TCConf = TCConf
-  { tccQuiet       :: Bool
-  , tccStackTrace  :: Bool
-  , tccDebugLabels :: [(Bool, [DebugLabel])]
-  }
-
 -- | Takes a 'TCState' and a computation on a closed context and
 -- produces an error or a result with a new state.
 runTC :: (IsTerm t)
-      => TCConf
-      -> TCState t s
-      -> TC t s a -> IO (Either PP.Doc a, TCState t s)
-runTC conf ts (TC m) = do
-  let mbDebug = case () of
-        _ | tccQuiet conf              -> Nothing
-        _ | tccStackTrace conf         -> Just initDebug
-        _ | _:_ <- tccDebugLabels conf -> Just initDebug
-        _                              -> Nothing
-  mbErr <- m ((initEnv conf){teDebug = mbDebug}, ts)
+      => TCState t s -> TC t s a -> IO (Either PP.Doc a, TCState t s)
+runTC ts (TC m) = do
+  mbErr <- m (initEnv, ts)
   return $ case mbErr of
     (ts', Left e)  -> (Left (PP.pretty e), ts')
     (ts', Right x) -> (Right x, ts')
 
--- | Like 'runTC', but generates the 'TCConf' from the 'Conf'.
-runTC_ :: (IsTerm t)
-       => TCState t s
-       -> TC t s a
-       -> IO (Either PP.Doc a, TCState t s)
-runTC_ ts m = do
-  conf <- TCConf <$> (confQuiet <$> readConf)
-                 <*> (confStackTrace <$> readConf)
-                 <*> (confDebugLabels <$> readConf)
-  runTC conf ts m
-
 data TCEnv = TCEnv
-    { teCurrentSrcLoc    :: !SrcLoc
-    , teConf             :: !TCConf
-    , teDebug            :: !(Maybe Debug)
+    { teCurrentSrcLoc  :: !SrcLoc
     }
 
-data DebugFrame = DebugFrame
-  { dfDoc    :: !PP.Doc
-  , dfLabels :: ![DebugLabel]
-  }
-
-instance PP.Pretty DebugFrame where
-  pretty (DebugFrame doc labels) = "***" <+> PP.text (head labels) $$ doc
-
-data Debug = Debug
-  { dStack  :: ![DebugFrame]
-  , dLabels :: ![DebugLabel]
-  }
-
-initDebug :: Debug
-initDebug = Debug [] []
-
-initEnv :: TCConf -> TCEnv
-initEnv tcc =
+initEnv :: TCEnv
+initEnv =
   TCEnv{ teCurrentSrcLoc = noSrcLoc
-       , teConf          = tcc
-       , teDebug         = Nothing
        }
 
 data TCState t s = TCState
-    { tsSignature        :: !(Sig.Signature t)
+    { tsSignature        :: !(Signature t)
     , tsState            :: !s
-    }
-    deriving (Functor)
+    } deriving (Functor)
 
 -- | An empty state.
 initTCState
   :: s -> TCState t s
 initTCState s = TCState
-  { tsSignature        = Sig.empty
+  { tsSignature        = sigEmpty
   , tsState            = s
   }
 
@@ -196,25 +135,11 @@ instance Show TCErr where
 -- Errors
 ------------------------------------------------------------------------
 
-renderStackTrace :: PP.Doc -> Debug -> PP.Doc
-renderStackTrace err dbg =
-  "error:" //> err $$
-  "stack trace:" //> PP.indent _ERROR_INDENT (PP.vcat (map PP.pretty (dStack dbg)))
-
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t s b
 typeError err = do
-  mbDebug <- teDebug <$> ask
-  forM_ mbDebug $ \d -> do
-    rawDebug d{dStack = []} ("*** typeError") (renderStackTrace err d)
+  printStackTrace "typeError" err
   TC $ \(te, ts) -> return (ts, Left (DocErr (teCurrentSrcLoc te) err))
-
-fatalError :: String -> TC t s b
-fatalError s = do
-  mbDebug <- teDebug <$> ask
-  forM_ mbDebug $ \d ->
-    rawDebug d{dStack = []} ("*** fatalError") (renderStackTrace (PP.text s) d)
-  error s
 
 assert :: (PP.Doc -> TC t s PP.Doc) -> TC t s a -> TC t s a
 assert msg m = do
@@ -236,153 +161,51 @@ atSrcLoc x (TC m) = TC $ \(te, ts) -> m (te{teCurrentSrcLoc = srcLoc x}, ts)
 -- Signature
 ------------------------------------------------------------------------
 
-getDefinition
-  :: (IsTerm t) => Name -> TC t s (Closed (Definition t))
-getDefinition n = do
-  sig <- tsSignature <$> get
-  Just def' <- return $ Sig.getDefinition sig n
-  return def'
+addPostulate :: Name -> Type t -> TC t s ()
+addPostulate f type_ = do
+  modifySignature $ \sig -> sigAddPostulate sig f type_
 
-addDefinition
-  :: (IsTerm t) => Name -> Closed (Definition t) -> TC t s ()
-addDefinition n def' =
-  modify_ $ \ts -> ts{tsSignature = Sig.addDefinition (tsSignature ts) n def'}
+addData :: Name -> Type t -> TC t s ()
+addData f type_ = do
+  modifySignature $ \sig -> sigAddData sig f type_
 
-addConstant
-    :: (IsTerm t)
-    => Name -> ConstantKind -> Closed (Type t) -> TC t s ()
-addConstant x k a = addDefinition x (Constant k a)
+addRecordCon :: Name -> Name -> TC t s ()
+addRecordCon tyCon dataCon = do
+  modifySignature $ \sig -> sigAddRecordCon sig tyCon dataCon
 
-addDataCon
-    :: (IsTerm t)
-    => Name -> Name -> Natural -> Tel.Tel (Type t) -> Type t -> TC t s ()
-addDataCon c d args tel t = addDefinition c (DataCon d args tel t)
+addTypeSig :: Name -> Type t -> TC t s ()
+addTypeSig f type_ = do
+  modifySignature $ \sig -> sigAddTypeSig sig f type_
+
+addClauses :: Name -> Invertible t -> TC t s ()
+addClauses f cs = modifySignature $ \sig -> sigAddClauses sig f cs
 
 addProjection
-    :: (IsTerm t)
-    => Projection -> Name -> Tel.Tel (Type t) -> Type t -> TC t s ()
-addProjection p r tel t = addDefinition (pName p) (Projection (pField p) r tel t)
+  :: Projection -> Name -> Tel (Type t) -> Type t -> TC t s ()
+addProjection proj tyCon tel type_ =
+  modifySignature $ \sig -> sigAddProjection sig (pName proj) (pField proj) tyCon tel type_
 
-addClauses
-    :: (IsTerm t) => Name -> Closed (Invertible t) -> TC t s ()
-addClauses f clauses = do
-  def' <- getDefinition f
-  let ext (Constant TypeSig a) = return $ Function a clauses
-      ext (Function _ _)       = fatalError $ "TC.addClause: clause `" ++ show f ++ "' already added."
-      ext (Constant k _)       = fatalError $ "TC.addClause: constant `" ++ show k ++ "'"
-      ext DataCon{}            = fatalError $ "TC.addClause: constructor"
-      ext Projection{}         = fatalError $ "TC.addClause: projection"
-  addDefinition f =<< ext def'
+addDataCon
+  :: Name -> Name -> Natural -> Tel (Type t) -> Type t -> TC t s ()
+addDataCon dataCon tyCon numArgs tel type_ =
+  modifySignature $ \sig -> sigAddDataCon sig dataCon tyCon numArgs tel type_
 
-addMetaVar :: (IsTerm t) => Closed (Type t) -> TC t s MetaVar
-addMetaVar type_ = do
+addMeta :: (IsTerm t) => Type t -> TC t s Meta
+addMeta type_ = do
   loc <- teCurrentSrcLoc <$> ask
-  sig <- tsSignature <$> get
-  let (mv, sig') = Sig.addMetaVar sig loc type_
-  debug "addMetaVar" $ do
-    typeDoc <- prettyM type_
-    return $
-      "metavar" <+> PP.pretty mv $$
-      "type" //> typeDoc
-  modify_ $ \ts -> ts{tsSignature = sig'}
-  return mv
+  mv <- modify $ \ts ->
+    let (mv, sig') = sigAddMeta (tsSignature ts) loc type_
+    in (ts{tsSignature = sig'}, mv)
+  let msg = do
+        typeDoc <- prettyM type_
+        return $
+          "mv:" //> PP.pretty mv $$
+          "type:" //> typeDoc
+  debugBracket "addMeta" msg $ return mv
 
-uncheckedInstantiateMetaVar
-  :: (IsTerm t)
-  => MetaVar -> MetaVarBody t -> TC t s ()
-uncheckedInstantiateMetaVar mv t = do
-  modify_ $ \ts -> ts{tsSignature = Sig.instantiateMetaVar (tsSignature ts) mv t}
-
-getMetaVarType
-  :: (IsTerm t) => MetaVar -> TC t s (Closed (Type t))
-getMetaVarType mv = do
-  sig <- tsSignature <$> get
-  return $ Sig.getMetaVarType sig mv
-
-getMetaVarBody
-  :: (IsTerm t) => MetaVar -> TC t s (Maybe (MetaVarBody t))
-getMetaVarBody mv = do
-  sig <- tsSignature <$> get
-  return $ Sig.getMetaVarBody sig mv
-
-unsafeRemoveMetaVar
-  :: (IsTerm t) => MetaVar -> TC t s ()
-unsafeRemoveMetaVar mv = do
-  debug_ "unsafeRemoveMeta" (PP.pretty mv)
-  modify_ $ \ts -> ts{tsSignature = Sig.unsafeRemoveMetaVar (tsSignature ts) mv}
-
--- Debugging
-------------------------------------------------------------------------
-
-_ERROR_INDENT :: Natural
-_ERROR_INDENT = 2
-
-type DebugLabel = String
-
-rawDebug :: Debug -> PP.Doc -> PP.Doc -> TC t s ()
-rawDebug d label doc =
-  TC $ \(_, ts) -> do
-    let s  = PP.renderPretty 100 $ label $$ doc
-    let pad = replicate (length (dStack d) * _ERROR_INDENT) ' '
-    hPutStr stderr $ unlines $ map (pad ++) $ lines s
-    return (ts, Right ())
-
-matchLabels :: [DebugLabel] -> TC t s () -> TC t s ()
-matchLabels labels0 m = do
-  goodLabels <- tccDebugLabels . teConf <$> ask
-  let labels = reverse labels0
-  let f _      (Just b) = Just b
-      f (b, l) Nothing  = let p = l `isPrefixOf` labels
-                          in if p then Just b else Nothing
-  when (fromMaybe False (foldr f Nothing goodLabels)) m
-
-debugSection :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
-debugSection label docM m = do
-  te <- ask
-  mbD <- forM (teDebug te) $ \d -> do
-    let labels = [label]
-    doc <- assertDoc docM
-    matchLabels labels $ rawDebug d ("***" <+> PP.text label) doc
-    let frame = DebugFrame doc labels
-    return d{dStack = frame : dStack d, dLabels = labels}
-  local te{teDebug = mbD} m
-
-debugSection_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
-debugSection_ label doc = debugSection label (return doc)
-
-debugBracket :: DebugLabel -> TC t s PP.Doc -> TC t s a -> TC t s a
-debugBracket label docM m = do
-  te <- ask
-  mbD <- forM (teDebug te) $ \d -> do
-    let labels = label : dLabels d
-    doc <- assertDoc docM
-    matchLabels labels $ rawDebug d ("***" <+> PP.text label) doc
-    let frame = DebugFrame doc labels
-    return d{dStack = frame : dStack d, dLabels = labels}
-  local te{teDebug = mbD} m
-
-debugBracket_ :: DebugLabel -> PP.Doc -> TC t s a -> TC t s a
-debugBracket_ label doc = debugBracket label (return doc)
-
-assertDoc :: TC t s PP.Doc -> TC t s PP.Doc
-assertDoc = assert_ ("assertDoc: the doc action got an error:" <+>)
-
-debug :: PP.Doc -> TC t s PP.Doc -> TC t s ()
-debug label docM = do
-  mbD <- teDebug <$> ask
-  forM_ mbD $ \d -> do
-    let labels = dLabels d
-    matchLabels labels $ do
-      doc <- assertDoc docM
-      rawDebug d ("**" <+> label) doc
-
-debug_ :: PP.Doc -> PP.Doc -> TC t s ()
-debug_ label doc = debug label (return doc)
-
-whenDebug :: TC t s () -> TC t s ()
-whenDebug m = do
-  mbD <- teDebug <$> ask
-  forM_ mbD $ \_ -> m
+uncheckedInstantiateMeta :: Meta -> MetaBody t -> TC t s ()
+uncheckedInstantiateMeta mv mvb =
+  modifySignature $ \sig -> sigInstantiateMeta sig mv mvb
 
 -- State
 ------------------------------------------------------------------------
@@ -398,7 +221,7 @@ mapTC l (TC m) = TC $ \(te, ts) -> do
   return ((\s -> L.set l s (tsState ts)) <$> ts'', x)
 
 -- | Runs an action with a different state, but with the same
--- environment and signature and debug state.
+-- environment and signature.
 nestTC :: s' -> TC t s' a -> TC t s (a, s')
 nestTC s (TC m) = TC $ \(te, ts) -> do
   (ts', mbX) <- m (te, s <$ ts)
@@ -417,18 +240,11 @@ modify f = TC $ \(_, ts) ->
 modify_ :: (TCState t s -> TCState t s) -> TC t s ()
 modify_ f = modify $ \ts -> (f ts, ())
 
+modifySignature :: (Signature t -> Signature t) -> TC t s ()
+modifySignature f = modify_ $ \ts -> ts{tsSignature = f (tsSignature ts)}
+
 get :: TC t s (TCState t s)
 get = TC $ \(_, ts) -> return (ts, Right ts)
 
-ask :: TC t s (TCEnv)
+ask :: TC t s TCEnv
 ask = TC $ \(te, ts) -> return (ts, Right te)
-
-local :: TCEnv -> TC t s a -> TC t s a
-local te (TC m) = TC $ \(_, ts) -> m (te, ts)
-
--- Garbage
-------------------------------------------------------------------------
-
--- To suppress "unused" warnings
-_dummy :: a
-_dummy = undefined dfDoc dfLabels dfDoc dfLabels

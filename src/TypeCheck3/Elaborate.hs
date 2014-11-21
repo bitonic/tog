@@ -7,12 +7,10 @@ module TypeCheck3.Elaborate
 
 import           Control.Monad.State              (modify)
 
-import qualified Data.Bwd                         as Bwd
+import           Instrumentation
 import           Prelude.Extended
 import qualified Syntax.Abstract                  as SA
 import           Term
-import qualified Term.Context                     as Ctx
-import qualified Term.Telescope                   as Tel
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
 import           PrettyPrint                      (($$), (//>))
@@ -35,7 +33,7 @@ writeConstraint con' = modify (con' :)
 
 expect :: IsTerm t => Ctx t -> Type t -> Type t -> Term t -> ElabM t (Term t)
 expect ctx type_ type' u = do
-  t <- addMetaVarInCtx ctx type_
+  t <- addMetaInCtx ctx type_
   writeConstraint $ JmEq ctx type_ t type' u
   return t
 
@@ -48,20 +46,20 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         return $
           "type:" //> typeDoc $$
           "t:" //> absTDoc
-  debugSection "elaborate" msg $ do
+  debugBracket "elaborate" msg $ do
     let expect_ = expect ctx type_
     case absT of
       SA.Set _ -> do
         expect_ set set
       SA.Pi name synDom synCod -> do
         dom <- elaborate' ctx set synDom
-        cod <- elaborate' (Ctx.Snoc ctx (name, dom)) set synCod
+        cod <- elaborate' (ctx :< (name, dom)) set synCod
         t <- pi dom cod
         expect_ set t
       SA.Fun synDom synCod -> do
         elaborate' ctx type_ (SA.Pi "_" synDom synCod)
       SA.Meta _ -> do
-        mvT <- addMetaVarInCtx ctx type_
+        mvT <- addMetaInCtx ctx type_
         return mvT
       SA.Equal synType synT1 synT2 -> do
         type' <- elaborate' ctx set synType
@@ -70,29 +68,29 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         t <- equal type' t1 t2
         expect_ set t
       SA.Lam name synBody -> do
-        dom <- addMetaVarInCtx ctx set
-        let ctx' = Ctx.Snoc ctx (name, dom)
-        cod <- addMetaVarInCtx ctx' set
+        dom <- addMetaInCtx ctx set
+        let ctx' = ctx :< (name, dom)
+        cod <- addMetaInCtx ctx' set
         body <- elaborate' ctx' cod synBody
         type' <- pi dom cod
         t <- lam body
         expect_ type' t
       SA.Refl _ -> do
-        eqType <- addMetaVarInCtx ctx set
-        t1 <- addMetaVarInCtx ctx eqType
+        eqType <- addMetaInCtx ctx set
+        t1 <- addMetaInCtx ctx eqType
         type' <- equal eqType t1 t1
         expect_ type' refl
       SA.Con dataCon synArgs -> do
-        DataCon tyCon _ tyConParsTel dataConType <- getDefinition dataCon
-        tyConType <- definitionType =<< getDefinition tyCon
+        DataCon tyCon _ tyConParsTel dataConType <- getDefinition_ dataCon
+        tyConType <- definitionType =<< getDefinition_ tyCon
         tyConArgs <- fillArgsWithMetas ctx tyConType
-        appliedDataConType <-  Tel.discharge tyConParsTel dataConType tyConArgs
+        appliedDataConType <-  telDischarge tyConParsTel dataConType tyConArgs
         dataConArgs <- elaborateDataConArgs ctx appliedDataConType synArgs
-        type' <- app (Def tyCon) $ map Apply tyConArgs
+        type' <- defName tyCon $ map Apply tyConArgs
         t <- con dataCon dataConArgs
         expect_ type' t
       SA.App h elims -> do
-        elaborateApp' ctx type_ h (Bwd.fromList elims)
+        elaborateApp' ctx type_ h elims
 
 -- | Takes a telescope in the form of a Pi-type and replaces all it's
 -- elements with metavariables.
@@ -101,7 +99,7 @@ fillArgsWithMetas ctx' type' = do
   typeView <- whnfView type'
   case typeView of
     Pi dom cod -> do
-      arg <- addMetaVarInCtx ctx' dom
+      arg <- addMetaInCtx ctx' dom
       cod' <- instantiate_ cod arg
       (arg :) <$> fillArgsWithMetas ctx' cod'
     Set -> do
@@ -125,7 +123,7 @@ inferHead
   => Ctx t -> SA.Head -> ElabM t (Term t, Type t)
 inferHead ctx synH = atSrcLoc synH $ case synH of
   SA.Var name -> do
-    mbV <-  Ctx.lookupName name ctx
+    mbV <-  ctxLookupName name ctx
     case mbV of
       Nothing -> do
         checkError $ NameNotInScope name
@@ -133,8 +131,8 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
         h <- app (Var v) []
         return (h, type_)
   SA.Def name -> do
-    type_ <- definitionType =<< getDefinition name
-    h <- app (Def name) []
+    type_ <- definitionType =<< getDefinition_ name
+    h <- defName name []
     return (h, type_)
   SA.J{} -> do
     h <- app J []
@@ -142,7 +140,7 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 
 elaborateApp'
   :: (IsTerm t)
-  => Ctx t -> Type t -> SA.Head -> Bwd SA.Elim -> ElabM t (Term t)
+  => Ctx t -> Type t -> SA.Head -> [SA.Elim] -> ElabM t (Term t)
 elaborateApp' ctx type_ h elims = do
   let msg = do
         ctxDoc <- prettyM ctx
@@ -152,32 +150,33 @@ elaborateApp' ctx type_ h elims = do
           "type:" //> typeDoc $$
           "head:" //> PP.pretty h $$
           "elims:" //> PP.pretty elims
-  debugBracket "elaborateApp" msg $ elaborateApp ctx type_ h elims
+  debugBracket "elaborateApp" msg $ elaborateApp ctx type_ h $ reverse elims
 
+-- Note that the eliminators are in reverse order.
 elaborateApp
   :: (IsTerm t)
-  => Ctx t -> Type t -> SA.Head -> Bwd SA.Elim -> ElabM t (Term t)
-elaborateApp ctx type_ h B0 = atSrcLoc h $ do
+  => Ctx t -> Type t -> SA.Head -> [SA.Elim] -> ElabM t (Term t)
+elaborateApp ctx type_ h [] = atSrcLoc h $ do
   (t, hType) <- inferHead ctx h
   expect ctx type_ hType t
-elaborateApp ctx type_ h (elims :< SA.Apply arg) = atSrcLoc arg $ do
-  dom <- addMetaVarInCtx ctx set
+elaborateApp ctx type_ h (SA.Apply arg : elims) = atSrcLoc arg $ do
+  dom <- addMetaInCtx ctx set
   -- TODO better name here
-  cod <- addMetaVarInCtx (Ctx.Snoc ctx ("_", dom)) set
+  cod <- addMetaInCtx (ctx :< ("_", dom)) set
   typeF <- pi dom cod
   arg' <- elaborate' ctx dom arg
-  f <- elaborateApp' ctx typeF h elims
+  f <- elaborateApp ctx typeF h elims
   type' <- instantiate_ cod arg'
   t <- eliminate f [Apply arg']
   expect ctx type_ type' t
-elaborateApp ctx type_ h (elims :< SA.Proj projName) = atSrcLoc projName $ do
-  Projection projIx tyCon projTypeTel projType <- getDefinition projName
+elaborateApp ctx type_ h (SA.Proj projName : elims) = atSrcLoc projName $ do
+  Projection projIx tyCon projTypeTel projType <- getDefinition_ projName
   let proj = Projection' projName projIx
-  tyConType <- definitionType =<< getDefinition tyCon
+  tyConType <- definitionType =<< getDefinition_ tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType
-  typeRec <- app (Def tyCon) (map Apply tyConArgs)
-  rec_ <- elaborateApp' ctx typeRec h elims
-  type0 <- Tel.discharge projTypeTel projType tyConArgs
+  typeRec <- defName tyCon (map Apply tyConArgs)
+  rec_ <- elaborateApp ctx typeRec h elims
+  type0 <- telDischarge projTypeTel projType tyConArgs
   Pi _ type1 <- whnfView type0
   type' <- instantiate_ type1 rec_
   t <- eliminate rec_ [Proj proj]

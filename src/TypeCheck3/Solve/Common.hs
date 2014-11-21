@@ -3,56 +3,56 @@
 module TypeCheck3.Solve.Common where
 
 import qualified Prelude
-import           Control.Monad.Trans.Maybe        (MaybeT(MaybeT), runMaybeT)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 import           Data.Tree                        (Tree(Node), subForest, rootLabel, Forest)
 
+import           Instrumentation
 import           Syntax
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           Term
-import qualified Term.Context                     as Ctx
-import qualified Term.Telescope                   as Tel
-import qualified Term.Subst                as Sub
 import           TypeCheck3.Common
 import           TypeCheck3.Monad
 import           TypeCheck3.Check
+import           Data.Collect
+
+#include "impossible.h"
 
 -- Pruning
 ------------------------------------------------------------------------
 
-{-# WARNING curryMetaVar "Remove this, do the unrolling on-demand in prune." #-}
--- | @curryMetaVar t@ checks if @t = α ts@ and for every argument
+{-# WARNING curryMeta "Remove this, do the unrolling on-demand in prune." #-}
+-- | @curryMeta t@ checks if @t = α ts@ and for every argument
 -- of the metavar which is a record type it splits it up in separate
 -- arguments, one for each field.
-curryMetaVar
+curryMeta
   :: forall t s. (IsTerm t) => Term t -> TC t s (Term t)
-curryMetaVar t = do
+curryMeta t = do
   let msg = do
         tDoc <- prettyM t
         return $
           "term:" //> tDoc
-  debugBracket "curryMetaVar" msg $ fmap (fromMaybe t) $ runMaybeT $ do
-    App (Meta mv) _ <- lift $ whnfView t
-    (ctx, mvType) <- lift $ unrollPi =<< getMetaVarType mv
-    (True, args0, newMvType) <- lift $ go (Tel.tel ctx) mvType
+  debugBracket "curryMeta" msg $ fmap (fromMaybe t) $ runMaybeT $ do
+    App (Def (DKMeta mv)) _ <- lift $ whnfView t
+    (tel, mvType) <- lift $ unrollPi =<< getMetaType mv
+    (True, args0, newMvType) <- lift $ go tel mvType
     lift $ do
       let abstractions = length args0
       args <- toArgs args0
-      newMv <- addMetaVar newMvType
-      mvT <- app (Meta newMv) (map Apply args)
-      let mi = MetaVarBody abstractions mvT
+      newMv <- addMeta newMvType
+      mvT <- meta newMv $ map Apply args
+      let mi = MetaBody abstractions mvT
       debug "unrolled" $ do
-        mvTypeDoc <- prettyM =<< Ctx.pi ctx mvType
+        mvTypeDoc <- prettyM =<< telPi tel mvType
         newMvTypeDoc <- prettyM newMvType
-        mvTDoc <- prettyM =<< metaVarBodyToTerm mi
+        mvTDoc <- prettyM =<< metaBodyToTerm mi
         return $
           "old type:" //> mvTypeDoc $$
           "new type:" //> newMvTypeDoc $$
           "term:" //> mvTDoc
-      instantiateMetaVar mv mi
+      instantiateMeta mv mi
       -- Now we return the old type, which normalized will give the new
       -- mv.
       return t
@@ -61,7 +61,7 @@ curryMetaVar t = do
     treePaths tr | null (subForest tr) = [[rootLabel tr]]
     treePaths tr = concatMap (map (rootLabel tr :) . treePaths)  (subForest tr)
 
-    toArgs :: MetaVarArgs -> TC t s [Term t]
+    toArgs :: MetaArgs -> TC t s [Term t]
     toArgs args = fmap concat $ forM args $ \mbArg -> do
       case mbArg of
         Nothing -> do
@@ -75,10 +75,10 @@ curryMetaVar t = do
             else do
               mapM (app (Var v) . map Proj) projsPaths
 
-    go :: Tel.Tel t -> Type t -> TC t s (Bool, MetaVarArgs, Type t)
-    go Tel.Empty type_ = do
+    go :: Tel t -> Type t -> TC t s (Bool, MetaArgs, Type t)
+    go T0 type_ = do
       return (False, [], type_)
-    go (Tel.Cons (n, dom) tel) type0 = do
+    go ((n, dom) :> tel) type0 = do
       let fallback = do
             (changed, args, type1) <- go tel type0
             let argVar = weakenVar_ (length args) $ boundVar n
@@ -89,30 +89,31 @@ curryMetaVar t = do
         App (Def tyCon) elims -> do
           tyConDef <- getDefinition tyCon
           case tyConDef of
-            Constant (Record dataCon projs) _ -> do
+            Constant _ (Record dataCon projs) -> do
               let Just tyConPars = mapM isApply elims
-              DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
-              appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConPars
+              DataCon _ _ dataConTypeTel dataConType <- getDefinition_ dataCon
+              appliedDataConType <- telDischarge dataConTypeTel dataConType tyConPars
               debug_ "tyConPars" $ PP.text $ show $ show tyConPars
-              (dataConPars, _) <-
-                assert_ ("curryMetaVar, unrollPiWithNames:" <+>) $
+              (dataConPars0, _) <-
+                assert_ ("curryMeta, unrollPiWithNames:" <+>) $
                 unrollPiWithNames appliedDataConType (map pName projs)
-              let numDataConPars = Ctx.length dataConPars
-              recordTerm <- con dataCon =<< mapM var (Ctx.vars dataConPars)
-              let telLen = Tel.length tel
+              let dataConPars = telToCtx dataConPars0
+              let numDataConPars = ctxLength dataConPars
+              recordTerm <- con dataCon =<< mapM var (ctxVars dataConPars)
+              let telLen = telLength tel
               let weakenBy = numDataConPars
               if weakenBy <= 0
                 -- This means that the type was unit.
                 then do
                   tel' <- instantiate_ tel recordTerm
-                  type1 <- applySubst type0 . Sub.lift telLen =<< Sub.singleton recordTerm
-                  (_, args, type2) <- go (dataConPars Tel.++ tel') type1
+                  type1 <- applySubst type0 . subLift telLen =<< subSingleton recordTerm
+                  (_, args, type2) <- go (dataConPars `telAppend` tel') type1
                   return (True, Nothing : args, type2)
                 else do
-                  sub <- Sub.instantiate recordTerm $ Sub.weaken numDataConPars Sub.id
+                  sub <- subInstantiate recordTerm $ subWeaken numDataConPars subId
                   tel' <- applySubst tel sub
-                  type1 <- applySubst type0 $ Sub.lift telLen sub
-                  (_, args, type2) <- go (dataConPars Tel.++ tel') type1
+                  type1 <- applySubst type0 $ subLift telLen sub
+                  (_, args, type2) <- go (dataConPars `telAppend` tel') type1
                   let (argsL, argsR) = splitAt (length projs) args
                   let argVar = weakenVar_ (length argsR) $ boundVar n
                   let argL = ( argVar
@@ -159,14 +160,14 @@ pruneTerm' vs t = do
       join $ pi <$> pruneTerm' vs domain <*> pruneTerm' (addVar name) codomain
     Equal type_ x y -> do
       join $ equal <$> pruneTerm' vs type_ <*> pruneTerm' vs x <*> pruneTerm' vs y
-    App (Meta mv) elims -> do
+    App (Def (DKMeta mv)) elims -> do
       -- First try to curry and expand
-      mvT <- metaVar mv elims
+      mvT <- meta mv elims
       -- TODO do expansion/currying more lazily, and optimize by first
       -- checking if we need to do anything at all.
-      mvTView <- whnfView =<< etaExpandMeta =<< curryMetaVar mvT
+      mvTView <- whnfView =<< etaExpandMeta =<< curryMeta mvT
       case mvTView of
-        App (Meta mv') elims' -> do
+        App (Def (DKMeta mv')) elims' -> do
           mbMvT' <- prune vs mv' elims'
           case mbMvT' of
             Nothing   -> return mvT
@@ -187,7 +188,7 @@ pruneTerm' vs t = do
 
     addVar name = Set.insert (boundVar name) (Set.mapMonotonic (weakenVar_ 1) vs)
 
-type MetaVarArgs = [Maybe (Var, Forest Projection)]
+type MetaArgs = [Maybe (Var, Forest Projection)]
 
 -- | @prune vs α es@ tries to prune all the variables in @es@ that are
 --   not in @vs@, by instantiating @α@.  If we managed to prune
@@ -197,7 +198,7 @@ prune
     :: forall t s.
        (IsTerm t)
     => Set.Set Var           -- ^ allowed vars
-    -> MetaVar
+    -> Meta
     -> [Elim (Term t)]       -- ^ Arguments to the metavariable
     -> TC t s (Maybe (Closed (Term t)))
 prune allowedVs oldMv elims = do
@@ -207,7 +208,7 @@ prune allowedVs oldMv elims = do
     kills0 <- MaybeT $ sequence <$> mapM (shouldKill allowedVs) args
     guard (or kills0)
     let msg = do
-          mvTypeDoc <- prettyM =<< getMetaVarType oldMv
+          mvTypeDoc <- prettyM =<< getMetaType oldMv
           elimsDoc <- prettyM elims
           return $
             "metavar type:" //> mvTypeDoc $$
@@ -216,14 +217,14 @@ prune allowedVs oldMv elims = do
             "to kill:" //> PP.pretty kills0 $$
             "allowed vars:" //> PP.pretty (Set.toList allowedVs)
     MaybeT $ debugBracket "prune" msg $ runMaybeT $ do
-      oldMvType <- lift $ getMetaVarType oldMv
+      oldMvType <- lift $ getMetaType oldMv
       (newMvType, kills1) <- lift $ createNewMeta oldMvType kills0
       lift $ debug_ "new kills" $ PP.pretty (map unNamed kills1)
       guard (any unNamed kills1)
-      newMv <- lift $ addMetaVar newMvType
+      newMv <- lift $ addMeta newMvType
       mi <- lift $ killArgs newMv kills1
-      lift $ instantiateMetaVar oldMv mi
-      lift $ metaVarBodyToTerm mi
+      lift $ instantiateMeta oldMv mi
+      lift $ metaBodyToTerm mi
   where
     -- We build a pi-type with the non-killed types in.  This way, we
     -- can analyze the dependency between arguments and avoid killing
@@ -291,10 +292,10 @@ shouldKill vs t = runMaybeT $ do
     isNeutral f = do
       def' <- getDefinition f
       case def' of
-        Constant{}    -> return False
-        DataCon{}     -> fatalError $ "impossible.isNeutral: constructor " ++ show f
-        Projection{}  -> fatalError $ "impossible.isNeutral: projection " ++ show f
-        Function{}    -> return True
+        Constant _ (Instantiable (InstFun _)) -> return True
+        Constant _ _                          -> return False
+        DataCon{}                             -> __IMPOSSIBLE__
+        Projection{}                          -> __IMPOSSIBLE__
         -- TODO: more precise analysis
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
@@ -319,7 +320,7 @@ collectProjectedVar
   :: (IsTerm t) => [Elim t] -> TC t s (Maybe (Var, Name))
 collectProjectedVar elims = runMaybeT $ do
   (v, projName) <- msum $ map isProjectedVar elims
-  tyConDef <- lift $ getDefinition projName
+  tyConDef <- lift $ getDefinition_ projName
   let Projection _ tyCon _ _ = tyConDef
   return (v, tyCon)
 
@@ -335,7 +336,7 @@ collectProjectedVar elims = runMaybeT $ do
 etaExpandContextVar
   :: (IsTerm t)
   => Ctx t -> Var
-  -> TC t s (Either MetaVarSet (Ctx t, Subst t))
+  -> TC t s (Either MetaSet (Tel t, Subst t))
 etaExpandContextVar ctx v = do
   let msg = do
         ctxDoc <- prettyM ctx
@@ -350,9 +351,9 @@ etaExpandContextVar ctx v = do
         return $ Left mvs
       Nothing -> do
         (tel2', acts) <- etaExpandVar vType tel2
-        return $ Right (ctx1 Ctx.++ Tel.unTel tel2', acts)
+        return $ Right (ctx1 `telAppend` tel2', acts)
 
--- | Expands a record-typed variable ranging over the given 'Tel.Tel',
+-- | Expands a record-typed variable ranging over the given 'Tel',
 -- returning a new telescope ranging over all the fields of the record
 -- type and the old telescope with the variable substituted with a
 -- constructed record, and a substitution for the old variable.
@@ -361,69 +362,72 @@ etaExpandVar
   => Type t
   -- ^ The type of the variable we're expanding.
   -> Tel t
-  -> TC t s (Tel.Tel t, Subst t)
+  -> TC t s (Tel t, Subst t)
 etaExpandVar type_ tel = do
-  App (Def tyCon) tyConPars0 <- whnfView type_
-  Constant (Record dataCon projs) _ <- getDefinition tyCon
-  DataCon _ _ dataConTypeTel dataConType <- getDefinition dataCon
+  App (Def (DKName tyCon)) tyConPars0 <- whnfView type_
+  Constant _ (Record dataCon projs) <- getDefinition_ tyCon
+  DataCon _ _ dataConTypeTel dataConType <- getDefinition_ dataCon
   let Just tyConPars = mapM isApply tyConPars0
-  appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConPars
-  (dataConPars, _) <- assert_ ("etaExpandVar, unrollPiWithNames:" <+>) $
+  appliedDataConType <- telDischarge dataConTypeTel dataConType tyConPars
+  (dataConPars0, _) <- assert_ ("etaExpandVar, unrollPiWithNames:" <+>) $
     unrollPiWithNames appliedDataConType (map pName projs)
-  dataConT <- con dataCon =<< mapM var (Ctx.vars dataConPars)
+  let dataConPars = telToCtx dataConPars0
+  dataConT <- con dataCon =<< mapM var (ctxVars dataConPars)
   -- TODO isn't this broken?  don't we have to handle unit types
   -- specially like in metavar expansion?
-  sub <- Sub.instantiate dataConT $ Sub.weaken (Ctx.length dataConPars) Sub.id
+  sub <- subInstantiate dataConT $ subWeaken (ctxLength dataConPars) subId
   tel' <- applySubst tel sub
-  let telLen = Tel.length tel'
-  return (dataConPars Tel.++ tel', Sub.lift telLen sub)
+  let telLen = telLength tel'
+  return (dataConPars `telAppend` tel', subLift telLen sub)
 
 -- | Divides a context at the given variable.
 splitContext
   :: Ctx t -> Var -> (Ctx t, Type t, Tel t)
-splitContext ctx00 v0 = go ctx00 (varIndex v0) Tel.Empty
+splitContext ctx00 v0 =
+  go ctx00 (varIndex v0) T0
   where
     go ctx0 ix0 tel = case (ctx0, ix0) of
-      (Ctx.Empty, _) ->
-        error "impossible.splitContext: var out of scope"
-      (Ctx.Snoc ctx (n', type_), ix) ->
+      (C0, _) ->
+        __IMPOSSIBLE__
+      (ctx :< (n', type_), ix) ->
         if ix > 0
-        then go ctx (ix - 1) (Tel.Cons (n', type_) tel)
+        then go ctx (ix - 1) ((n', type_) :> tel)
         else (ctx, type_, tel)
 
 type ProjectedVar = (Var, [Projection])
 
 -- | Codifies what is acceptable as an argument of a metavariable, if we
 -- want to invert such metavariable.
-data MetaVarArg v
+data MetaArg v
   = MVAVar v               -- This vars might be projected before
                            -- expanding the context.
   | MVARecord
       Name                 -- Datacon name
-      [MetaVarArg v]       -- Arguments to the datacon
+      [MetaArg v]       -- Arguments to the datacon
   deriving (Functor, Foldable, Traversable)
 
-type MetaVarArg' = MetaVarArg ProjectedVar
+type MetaArg' = MetaArg ProjectedVar
 
-instance (PP.Pretty v) => PP.Pretty (MetaVarArg v) where
+instance (PP.Pretty v) => PP.Pretty (MetaArg v) where
   pretty (MVAVar v) =
     "MVAVar" <+> PP.pretty v
   pretty (MVARecord tyCon mvArgs) =
     "MVARecord" <+> PP.pretty tyCon //> PP.pretty mvArgs
 
--- | if @checkMetaVarElims els ==> args@, @length els == length args@.
-checkMetaVarElims
-  :: (IsTerm t) => [Elim (Term t)] -> TC t s (TermTraverse' [MetaVarArg'])
-checkMetaVarElims elims = do
+-- | if @checkMetaElims els ==> args@, @length els == length args@.
+checkMetaElims
+  :: (IsTerm t) => [Elim (Term t)]
+  -> TC t s (Validation (Collect_ MetaSet) [MetaArg'])
+checkMetaElims elims = do
   case mapM isApply elims of
-    Nothing   -> return $ TTFail ()
-    Just args -> sequenceA <$> mapM checkMetaVarArg args
+    Nothing   -> return $ Failure $ CFail ()
+    Just args -> sequenceA <$> mapM checkMetaArg args
 
-checkMetaVarArg
-  :: (IsTerm t) => Term t -> TC t s (TermTraverse' MetaVarArg')
-checkMetaVarArg arg = do
+checkMetaArg
+  :: (IsTerm t) => Term t -> TC t s (Validation (Collect_ MetaSet) MetaArg')
+checkMetaArg arg = do
   blockedArg <- whnf arg
-  let fallback = return $ TTFail ()
+  let fallback = return $ Failure $ CFail ()
   case blockedArg of
     NotBlocked t -> do
       tView <- whnfView =<< etaContract t
@@ -433,20 +437,20 @@ checkMetaVarArg arg = do
             Just ps -> return $ pure $ MVAVar (v, ps)
             Nothing -> fallback
         Con dataCon recArgs -> do
-          DataCon tyCon _ _ _ <- getDefinition dataCon
-          tyConDef <- getDefinition tyCon
+          DataCon tyCon _ _ _ <- getDefinition_ dataCon
+          tyConDef <- getDefinition_ tyCon
           case tyConDef of
-            Constant (Record _ _) _ -> do
-              recArgs'  <- sequenceA <$> mapM checkMetaVarArg recArgs
+            Constant _ (Record _ _) -> do
+              recArgs'  <- sequenceA <$> mapM checkMetaArg recArgs
               return $ MVARecord tyCon <$> recArgs'
             _ -> do
               fallback
         _ -> do
           fallback
-    MetaVarHead mv _ -> do
-      return $ TTMetaVars $ HS.singleton mv
+    BlockingHead mv _ -> do
+      return $ Failure $ CCollect $ HS.singleton mv
     BlockedOn mvs _ _ -> do
-      return $ TTMetaVars mvs
+      return $ Failure $ CCollect mvs
 
 -- | η-contracts a term (both records and lambdas).
 etaContract :: (IsTerm t) => Term t -> TC t s (Term t)
@@ -462,8 +466,8 @@ etaContract t0 = fmap (fromMaybe t0) $ runMaybeT $ do
       t' <- lift $ strengthen_ 1 =<< app h (init elims)
       return t'
     Con dataCon args -> do
-      DataCon tyCon _ _ _ <- lift $ getDefinition dataCon
-      Constant (Record _ fields) _ <- lift $ getDefinition tyCon
+      DataCon tyCon _ _ _ <- lift $ getDefinition_ dataCon
+      Constant _ (Record _ fields) <- lift $ getDefinition_ tyCon
       guard $ length args == length fields
       (t : ts) <- sequence (zipWith isRightProjection fields args)
       guard =<< (and <$> lift (mapM (synEq t) ts))
@@ -485,7 +489,7 @@ lambdaAbstract :: (IsTerm t) => Natural -> Term t -> TC t s (Term t)
 lambdaAbstract 0 t = return t
 lambdaAbstract n t = (lam <=< lambdaAbstract (n - 1)) t
 
-data InvertMetaVar t = InvertMetaVar
+data InvertMeta t = InvertMeta
   { imvSubst :: [(Var, Term t)]
     -- ^ A substitution from variables in equated term to variables by
     -- the metavariable to terms in the context abstracted by the
@@ -494,31 +498,31 @@ data InvertMetaVar t = InvertMetaVar
     -- ^ How many variables the metas abstracts.
   }
 
-instance PrettyM  t (InvertMetaVar t) where
-  prettyM (InvertMetaVar ts vs) = do
+instance PrettyM  t (InvertMeta t) where
+  prettyM (InvertMeta ts vs) = do
     ts' <- forM ts $ \(v, t) -> do
       tDoc <- prettyM t
       return $ PP.pretty (v, tDoc)
     return $ PP.list ts' $$ PP.pretty vs
 
-invertMetaVarVars :: InvertMetaVar t -> [Var]
-invertMetaVarVars (InvertMetaVar sub _) = map fst sub
+invertMetaVars :: InvertMeta t -> [Var]
+invertMetaVars (InvertMeta sub _) = map fst sub
 
-invertMetaVar
+invertMeta
   :: (IsTerm t)
   => Ctx t -> [Elim (Term t)]
-  -> TC t s (TermTraverse' (Ctx t, Subst t, InvertMetaVar t))
-invertMetaVar ctx elims = do
+  -> TC t s (Either (Collect_ MetaSet) (Ctx t, Subst t, InvertMeta t))
+invertMeta ctx elims = do
   let msg = do
         ctxDoc <- prettyM ctx
         elimsDoc <- prettyM elims
         return $
           "ctx:" //> ctxDoc $$
           "elims:" //> elimsDoc
-  debugBracket "invertMetaVar" msg $ runTermTraverseT $ do
-    mvArgs <- TTT $ checkMetaVarElims elims
+  debugBracket "invertMeta" msg $ runExceptT $ do
+    mvArgs <- ExceptT $ fmap validationToEither $ checkMetaElims elims
     (ctx', mvArgs', acts) <- lift $ removeProjections ctx mvArgs
-    lift $ whenDebug $ unless (Sub.null acts) $ do
+    lift $ whenDebug $ unless (subNull acts) $ do
       debug "removeProjections" $ do
         ctx'Doc <- prettyM ctx'
         return $
@@ -527,7 +531,7 @@ invertMetaVar ctx elims = do
     mbInv <- lift $ checkPatternCondition mvArgs'
     case mbInv of
       Nothing  -> do
-        hoistTT $ TTFail ()
+        throwE $ CFail ()
       Just inv -> do
         lift $ debug "inverted" $ do
           ctx'Doc <- prettyM ctx'
@@ -540,7 +544,7 @@ invertMetaVar ctx elims = do
         return (ctx', acts, inv)
 
 mvaApplyActions
-  :: (IsTerm t, MonadTerm t m) => Subst t -> MetaVarArg' -> m MetaVarArg'
+  :: (IsTerm t, MonadTerm t m) => Subst t -> MetaArg' -> m MetaArg'
 mvaApplyActions acts (MVAVar (v, ps)) = do
   vt <- var v
   vt' <- applySubst vt acts
@@ -551,14 +555,14 @@ mvaApplyActions acts (MVARecord n args) = do
   MVARecord n <$> mapM (mvaApplyActions acts) args
 
 varApplyActions
-  :: (IsTerm t) => Subst t -> Var -> TC t s (MetaVarArg Var)
+  :: (IsTerm t) => Subst t -> Var -> TC t s (MetaArg Var)
 varApplyActions acts v = do
   tView <- whnfView =<< ((`applySubst` acts) =<< var v)
   case tView of
     App (Var v') [] -> do
       return $ MVAVar v'
     Con c args -> do
-      TTOK mvArgs <- sequenceA <$> mapM checkMetaVarArg args
+      Success mvArgs <- sequenceA <$> mapM checkMetaArg args
       let mvArgs' = map (fmap (\(x, []) -> x)) mvArgs
       return $ MVARecord c mvArgs'
     _ -> do
@@ -567,8 +571,8 @@ varApplyActions acts v = do
 removeProjections
   :: forall t s .
      (IsTerm t)
-  => Ctx t -> [MetaVarArg']
-  -> TC t s (Ctx t, [MetaVarArg Var], Subst t)
+  => Ctx t -> [MetaArg']
+  -> TC t s (Ctx t, [MetaArg Var], Subst t)
 removeProjections ctx0 mvArgs0 = do
     let msg = do
           ctxDoc <- prettyM ctx0
@@ -577,10 +581,10 @@ removeProjections ctx0 mvArgs0 = do
             "args:" //> PP.pretty mvArgs0
     debugBracket "removeProjections" msg $ go ctx0 mvArgs0
   where
-    go :: Ctx t -> [MetaVarArg']
-       -> TC t s (Ctx t, [MetaVarArg Var], Subst t)
+    go :: Ctx t -> [MetaArg']
+       -> TC t s (Ctx t, [MetaArg Var], Subst t)
     go ctx [] = do
-      return (ctx, [], Sub.id)
+      return (ctx, [], subId)
     go ctx (MVAVar (v, []) : mvArgs) = do
       (ctx', mvArgs', tActs) <- go ctx mvArgs
       mvArg <- varApplyActions tActs v
@@ -590,20 +594,20 @@ removeProjections ctx0 mvArgs0 = do
       t <- (`eliminate` [Proj p]) =<< var v
       App (Var v') [] <- whnfView =<< applySubst t tActs
       mvArgs' <- mapM (mvaApplyActions tActs) mvArgs
-      (ctx3, mvArgs'', tActs') <- go ctx2 (MVAVar (v', ps) : mvArgs')
-      tActs'' <- Sub.compose tActs' tActs
+      (ctx3, mvArgs'', tActs') <- go (telToCtx ctx2) (MVAVar (v', ps) : mvArgs')
+      tActs'' <- subCompose tActs' tActs
       return (ctx3, mvArgs'', tActs'')
     go ctx1 (MVARecord tyCon mvArgs1 : mvArgs2) = do
       (ctx2, mvArgs1', tActs1) <- go ctx1 mvArgs1
       (ctx3, mvArgs2', tActs2) <- go ctx2 mvArgs2
-      tActs3 <- Sub.compose tActs2 tActs1
+      tActs3 <- subCompose tActs2 tActs1
       return (ctx3, MVARecord tyCon mvArgs1' : mvArgs2', tActs3)
 
 -- | Returns an inversion if the pattern condition is respected for the
--- given 'MetaVarArg's.
+-- given 'MetaArg's.
 checkPatternCondition
   :: forall t s. (IsTerm t)
-  => [MetaVarArg Var] -> TC t s (Maybe (InvertMetaVar t))
+  => [MetaArg Var] -> TC t s (Maybe (InvertMeta t))
 checkPatternCondition mvArgs = do
   let allVs = concatMap toList mvArgs
   let linear = length allVs == fromIntegral (Set.size (Set.fromList allVs))
@@ -611,17 +615,17 @@ checkPatternCondition mvArgs = do
     then do
       vs <- mapM var $ reverse [mkVar "_" ix | (ix, _) <- zip [0..] mvArgs]
       subs <- projectRecords $ zip mvArgs vs
-      return $ Just $ InvertMetaVar subs (length vs)
+      return $ Just $ InvertMeta subs (length vs)
     else do
       return $ Nothing
   where
     projectRecords xs = concat <$> mapM (uncurry projectRecord) xs
 
-    projectRecord :: MetaVarArg Var -> Term t -> TC t s [(Var, Term t)]
+    projectRecord :: MetaArg Var -> Term t -> TC t s [(Var, Term t)]
     projectRecord (MVAVar v) t = do
       return [(v, t)]
     projectRecord (MVARecord tyCon mvArgs') t = do
-      Constant (Record _ fields) _ <- getDefinition tyCon
+      Constant _ (Record _ fields) <- getDefinition_ tyCon
       mvArgs'' <- forM (zip mvArgs' fields) $ \(mvArg, proj) ->
         (mvArg, ) <$> eliminate t [Proj proj]
       projectRecords mvArgs''
@@ -630,23 +634,14 @@ checkPatternCondition mvArgs = do
 --   a 'Var' if that 'Var' couldn't be substituted in the term -- in
 --   other word if the term contains variables not present in the
 --   substitution.
-applyInvertMetaVar
+applyInvertMeta
   :: forall t s.
      (IsTerm t)
-  => Ctx t -> InvertMetaVar t -> Term t
-  -> TC t s (TermTraverse Var (MetaVarBody t))
-applyInvertMetaVar ctx (InvertMetaVar sub vsNum) t = do
-  let fallback = do
-        tt <- applyInvertMetaSubst sub t
-        case tt of
-          TTFail v ->
-            return $ TTFail v
-          TTMetaVars mvs ->
-            return $ TTMetaVars mvs
-          TTOK t' -> do
-            return $ TTOK $ MetaVarBody vsNum t'
-  let dontTouch = do
-        return $ TTOK $ MetaVarBody vsNum t
+  => Ctx t -> InvertMeta t -> Term t
+  -> TC t s (Validation (Collect Var MetaSet) (MetaBody t))
+applyInvertMeta ctx (InvertMeta sub vsNum) t = do
+  let fallback = fmap (MetaBody vsNum) <$> applyInvertMetaSubst sub t
+  let dontTouch = return $ Success $ MetaBody vsNum t
   -- Optimization: if the substitution is the identity, and if the free
   -- variables in the term are a subset of the variables that the
   -- substitution covers, don't touch the term.
@@ -654,7 +649,7 @@ applyInvertMetaVar ctx (InvertMetaVar sub vsNum) t = do
   if isId
     then do
       let vs = Set.fromList (map fst sub)
-      if Set.size vs == Prelude.length (Ctx.vars ctx)
+      if Set.size vs == Prelude.length (ctxVars ctx)
         then dontTouch
         else do
           fvs <- freeVars t
@@ -679,7 +674,7 @@ applyInvertMetaSubst
   -- ^ Inversion from variables outside to terms inside
   -> Term t
   -- ^ Term outside
-  -> TC t s (TermTraverse Var (Term t))
+  -> TC t s (Validation (Collect Var MetaSet) (Term t))
   -- ^ Either we fail with a variable that isn't present in the
   -- substitution, or we return a new term.
 applyInvertMetaSubst sub t0 =
@@ -697,7 +692,7 @@ applyInvertMetaSubst sub t0 =
           Right t -> Right <$> weaken_ 1 t
 
     go :: (Var -> TC t s (Either Var (Term t))) -> Term t
-       -> TC t s (TermTraverse Var t)
+       -> TC t s (Validation (Collect Var MetaSet) t)
     go invert t = do
       tView <- whnfView t
       case tView of
@@ -722,35 +717,38 @@ applyInvertMetaSubst sub t0 =
         App h elims -> do
           let goElim (Apply t') = fmap Apply <$> go invert t'
               goElim (Proj p)   = return $ pure $ Proj p
-
           resElims <- sequenceA <$> mapM goElim elims
-          case (h, resElims) of
-            (Meta mv, TTMetaVars mvs) ->
-              return $ TTMetaVars $ HS.insert mv mvs
-            (Meta mv, TTFail _) ->
-              return $ TTMetaVars $ HS.singleton mv
-            (Var v, _) -> do
+          let fallback = sequenceA $ app h <$> resElims
+          let checkBlocking bl = case resElims of
+                Failure (CCollect mvs) ->
+                  return $ Failure $ CCollect $ HS.insert bl mvs
+                Failure (CFail _) ->
+                  return $ Failure $ CCollect $ HS.singleton bl
+                _ ->
+                  fallback
+          case h of
+            Def (DKMeta mv) -> do
+              checkBlocking mv
+            Var v -> do
               inv <- invert v
-              sequenceA $ eliminate <$> either TTFail pure inv <*> resElims
-            (Def f, _) ->
-              sequenceA $ app (Def f) <$> resElims
-            (J, _) ->
-              sequenceA $ app J <$> resElims
-            (Meta mv, _) ->
-              sequenceA $ app (Meta mv) <$> resElims
+              sequenceA $ eliminate <$> either (Failure . CFail) pure inv <*> resElims
+            Def _ -> do
+              fallback
+            J -> do
+              fallback
 
 -- Various
 ------------------------------------------------------------------------
 
 -- | @killArgs α kills@ instantiates @α@ so that it discards the
 --   arguments indicated by @kills@.
-killArgs :: (IsTerm t) => MetaVar -> [Named Bool] -> TC t s (MetaVarBody t)
+killArgs :: (IsTerm t) => Meta -> [Named Bool] -> TC t s (MetaBody t)
 killArgs newMv kills = do
   let vs = reverse [ mkVar n ix
                    | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
                    ]
-  body <- metaVar newMv . map Apply =<< mapM var vs
-  return $ MetaVarBody (length kills) body
+  body <- meta newMv . map Apply =<< mapM var vs
+  return $ MetaBody (length kills) body
 
 -- | If @t = α ts@ and @α : Δ -> D us@ where @D@ is some record type, it
 -- will instantiate @α@ accordingly.
@@ -762,11 +760,11 @@ etaExpandMeta t = do
   debugBracket "etaExpandMeta" (prettyM t) $ do
     mbT <- runMaybeT $ do
       -- TODO duplication between this and 'instantiateDataCon'
-      App (Meta mv) elims <- lift $ whnfView t
-      mvType <- lift $ getMetaVarType mv
+      App (Def (DKMeta mv)) elims <- lift $ whnfView t
+      mvType <- lift $ getMetaType mv
       (_, endType) <- lift $ unrollPi mvType
       App (Def tyCon) _ <- lift $ whnfView endType
-      Constant (Record dataCon _) _ <- lift $ getDefinition tyCon
+      Constant _ (Record dataCon _) <- lift $ getDefinition tyCon
       mvT :: Term t <- lift $ instantiateDataCon mv dataCon
       lift $ eliminate mvT elims
     case mbT of
@@ -796,7 +794,7 @@ etaExpand type_ t0 = do
       App (Def tyCon) _ -> do
         tyConDef <- getDefinition tyCon
         case tyConDef of
-          Constant (Record dataCon projs) _ -> do
+          Constant _ (Record dataCon projs) -> do
             tView <- whnfView t
             case tView of
               -- Optimization: if it's already of the right shape, do nothing
@@ -844,39 +842,41 @@ intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
 --   constructor for @c@.
 instantiateDataCon
   :: (IsTerm t)
-  => MetaVar
+  => Meta
   -> Name
   -- ^ Name of the datacon
   -> TC t s (Closed (Term t))
 instantiateDataCon mv dataCon = do
-  mvType <- getMetaVarType mv
-  (ctxMvArgs, endType') <- unrollPi mvType
-  DataCon tyCon _ dataConTypeTel dataConType <- getDefinition dataCon
+  mvType <- getMetaType mv
+  (telMvArgs, endType') <- unrollPi mvType
+  DataCon tyCon _ dataConTypeTel dataConType <- getDefinition_ dataCon
   -- We know that the metavariable must have the right type (we have
   -- typechecked the arguments already).
-  App (Def tyCon') tyConArgs0 <- whnfView endType'
+  App (Def (DKName tyCon')) tyConArgs0 <- whnfView endType'
   Just tyConArgs <- return $ mapM isApply tyConArgs0
   True <- return $ tyCon == tyCon'
-  appliedDataConType <- Tel.discharge dataConTypeTel dataConType tyConArgs
-  (dataConArgsCtx, _) <- unrollPi appliedDataConType
-  dataConArgs <- createMvsPars ctxMvArgs $ Tel.tel dataConArgsCtx
+  appliedDataConType <- telDischarge dataConTypeTel dataConType tyConArgs
+  (dataConArgsTel, _) <- unrollPi appliedDataConType
+  dataConArgs <- createMvsPars (telToCtx telMvArgs) dataConArgsTel
   mvT <- con dataCon dataConArgs
-  let mi = MetaVarBody (length (Ctx.vars ctxMvArgs)) mvT
+  let mi = MetaBody (telLength telMvArgs) mvT
   -- given the usage, here we know that the body is going to be well typed.
   -- TODO make sure that the above holds.
-  instantiateMetaVar mv mi
-  metaVarBodyToTerm mi
+  instantiateMeta mv mi
+  metaBodyToTerm mi
 
 -- | @createMvsPars Γ Δ@ unrolls @Δ@ and creates a metavariable for
 --   each of the elements.
 createMvsPars
-  :: (IsTerm t) => Ctx t -> Tel.Tel (Type t) -> TC t s [Term t]
-createMvsPars _ Tel.Empty =
-  return []
-createMvsPars ctx (Tel.Cons (_, type') tel) = do
-  mv  <- addMetaVarInCtx ctx type'
-  mvs <- createMvsPars ctx =<< instantiate_ tel mv
-  return (mv : mvs)
+  :: (IsTerm t) => Ctx t -> Tel (Type t) -> TC t s [Term t]
+createMvsPars ctx0 tel0 = go ctx0 tel0
+  where
+    go _ T0 =
+      return []
+    go ctx ((_, type') :> tel) = do
+      mv  <- addMetaInCtx ctx type'
+      mvs <- go ctx =<< instantiate_ tel mv
+      return (mv : mvs)
 
 -- | Applies a projection to a term, and returns the new term and the
 --   new type.
@@ -889,12 +889,12 @@ applyProjection
   -- ^ Type of the head
   -> TC t s (Term t, Type t)
 applyProjection proj h type_ = do
-  Projection _ tyCon projTypeTel projType <- getDefinition $ pName proj
+  Projection _ tyCon projTypeTel projType <- getDefinition_ $ pName proj
   h' <- eliminate h [Proj proj]
-  App (Def tyCon') tyConArgs0 <- whnfView type_
+  App (Def (DKName tyCon')) tyConArgs0 <- whnfView type_
   let _assert@True = tyCon == tyCon'
   let Just tyConArgs = mapM isApply tyConArgs0
-  appliedProjType <- Tel.discharge projTypeTel projType tyConArgs
+  appliedProjType <- telDischarge projTypeTel projType tyConArgs
   Pi _ endType <- whnfView appliedProjType
   endType' <- instantiate_ endType h
   return (h', endType')
@@ -903,21 +903,20 @@ headType
   :: (IsTerm t)
   => Ctx t -> Head -> TC t s (Type t)
 headType ctx h = case h of
-  Var v   -> Ctx.getVar v ctx
+  Var v   -> ctxGetVar v ctx
   Def f   -> definitionType =<< getDefinition f
   J       -> return typeOfJ
-  Meta mv -> getMetaVarType mv
 
 isRecordConstr :: (IsTerm t) => Name -> TC t s Bool
 isRecordConstr dataCon = do
-  def' <- getDefinition dataCon
+  def' <- getDefinition_ dataCon
   case def' of
     DataCon tyCon _ _ _ -> isRecordType tyCon
     _                   -> return False
 
 isRecordType :: (IsTerm t) => Name -> TC t s Bool
 isRecordType tyCon = do
-  def' <- getDefinition tyCon
+  def' <- getDefinition_ tyCon
   return $ case def' of
-    Constant (Record _ _) _ -> True
+    Constant _ (Record _ _) -> True
     _                       -> False
