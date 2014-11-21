@@ -221,7 +221,8 @@ checkFunDef fun synClauses = do
       Constant funType (Instantiable Open) -> do
         clauses <- mapM (checkClause fun funType) synClauses
         inv <- checkInvertibility clauses
-        addClauses fun inv
+        -- TODO change when we support modules/wheres/etc.
+        addClauses fun 0 inv
       Constant _ Postulate -> do
         typeError $ "Cannot give body to postulate" <+> PP.pretty fun
       _ -> do

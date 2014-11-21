@@ -177,8 +177,8 @@ addTypeSig :: Name -> Type t -> TC t s ()
 addTypeSig f type_ = do
   modifySignature $ \sig -> sigAddTypeSig sig f type_
 
-addClauses :: Name -> Invertible t -> TC t s ()
-addClauses f cs = modifySignature $ \sig -> sigAddClauses sig f cs
+addClauses :: Name -> Natural -> Invertible t -> TC t s ()
+addClauses f vars cs = modifySignature $ \sig -> sigAddClauses sig f vars cs
 
 addProjection
   :: Projection -> Name -> Tel (Type t) -> Type t -> TC t s ()

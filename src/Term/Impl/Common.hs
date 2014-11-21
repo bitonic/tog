@@ -101,11 +101,11 @@ eliminateInst (DKMeta mv) Open es = do
   return $ BlockingHead mv es
 eliminateInst (DKName f) Open es = do
   NotBlocked <$> defName f es
--- This is a special case, we know that all meta-variable bodies will be
--- stored in this form, and we want to optimize for that.  If some
--- functions fall under this pattern too, it doesn't matter.
-eliminateInst _ (Inst n inv) es | [Clause [] t] <- ignoreInvertible inv =
-  whnf =<< do
+eliminateInst dkey (Inst n inv) es | clauses <- ignoreInvertible inv = do
+    -- This is a special case, we know that all meta-variable bodies will be
+    -- stored in this form, and we want to optimize for that.  If some
+    -- functions fall under this pattern too, it doesn't matter.
+    --
     -- Optimization: if the arguments are all lined up, don't touch
     -- the body.
     if length es >= n
@@ -113,18 +113,23 @@ eliminateInst _ (Inst n inv) es | [Clause [] t] <- ignoreInvertible inv =
         let (esl, es') = splitAt n es
         Just args <- return $ mapM isApply esl
         simple <- isSimple (n-1) args
-        if simple
-          then eliminate t es'
-          else (`eliminate` es') =<< instantiate t args
+        clauses' <- if simple
+          then return clauses
+          else instantiate clauses args
+        eliminateClauses dkey clauses' es'
       else do
-        -- TODO should we do this?  It seems like we need it for
-        -- meta-variables, but I'm not sure if it's good for defs.
-        --
-        -- If we
-        -- can't, we can turn the thing into a lambda and partially apply
-        -- it.
-        mvT <- mkBody n t
-        eliminate mvT es
+        case (dkey, clauses) of
+          -- TODO should we do this?  It seems like we need it for
+          -- meta-variables, but I'm not sure if it's good for defs.
+          --
+          -- If we can't, we can turn the thing into a lambda and
+          -- partially apply it.
+          (_, [Clause [] t]) -> do mvT <- mkBody n t
+                                   whnf =<< eliminate mvT es
+          -- Remember, Metas only ever have a no-pattern single clause.
+          (DKMeta _, _)      -> __IMPOSSIBLE__
+          -- Give up.
+          (_, _)             -> NotBlocked <$> def dkey es
   where
     isSimple _ [] = do
       return True
@@ -136,17 +141,22 @@ eliminateInst _ (Inst n inv) es | [Clause [] t] <- ignoreInvertible inv =
 
     mkBody 0 body' = return body'
     mkBody m body' = lam =<< mkBody (m-1) body'
--- Currently we only support top-level functions, and metas can't have clauses.
-eliminateInst (DKName f) (Inst 0 inv) es = do
-  let clauses = ignoreInvertible inv
+
+eliminateClauses
+  :: (IsTerm t, MonadTerm t m)
+  => DefKey -> [Clause t] -> [Elim t] -> m (Blocked Meta t)
+-- Again, metas only ever have one clause.  Note that all these are just
+-- assertions, things would work just fine without them, but let's
+-- program defensively.
+eliminateClauses (DKMeta _) [Clause [] t] es = do
+  whnf =<< eliminate t es
+eliminateClauses (DKMeta _) _ _  = do
+  __IMPOSSIBLE__
+eliminateClauses (DKName f) clauses es = do
   mbT <- whnfFun f es clauses
   case mbT of
     Nothing -> NotBlocked <$> defName f es
     Just t  -> return t
-eliminateInst (DKName _) (Inst _ _) _ = do
-  __IMPOSSIBLE__
-eliminateInst (DKMeta _) (Inst _ _) _ = do
-  __IMPOSSIBLE__
 
 whnfFun
   :: (IsTerm t, MonadTerm t m)

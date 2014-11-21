@@ -370,6 +370,10 @@ instance ApplySubst t (Elim t) where
 instance ApplySubst t a => ApplySubst t [a] where
   safeApplySubst t rho = mapM (`safeApplySubst` rho) t
 
+instance ApplySubst t (Clause t) where
+  safeApplySubst (Clause pats t) rho =
+    Clause pats <$> safeApplySubst t (subLift (patternsBindings pats) rho)
+
 applySubst :: (IsTerm t, MonadTerm t m, ApplySubst t a) => a -> Subst t -> m a
 applySubst x rho = do
   nameOrRes <- runExceptT $ safeApplySubst x rho
@@ -535,11 +539,11 @@ data Pattern
     | ConP Name [Pattern]
     deriving (Eq, Show, Read)
 
-patternBindings :: Pattern -> Int
+patternBindings :: Pattern -> Natural
 patternBindings VarP          = 1
 patternBindings (ConP _ pats) = patternsBindings pats
 
-patternsBindings :: [Pattern] -> Int
+patternsBindings :: [Pattern] -> Natural
 patternsBindings = sum . map patternBindings
 
 -- Definition
@@ -756,12 +760,11 @@ sigAddTypeSig :: Signature t -> Name -> Type t -> Signature t
 sigAddTypeSig sig name type_ =
   sigAddDefinition sig (DKName name) $ Constant type_ $ Instantiable Open
 
-sigAddClauses :: Signature t -> Name -> Invertible t -> Signature t
-sigAddClauses sig name clauses =
+sigAddClauses :: Signature t -> Name -> Natural -> Invertible t -> Signature t
+sigAddClauses sig name vars clauses =
   let def' = case sigGetDefinition sig name of
         Constant type_ (Instantiable Open) ->
-          -- TODO change when we add modules/where clauses
-          Constant type_ $ Instantiable $ Inst 0 clauses
+          Constant type_ $ Instantiable $ Inst vars clauses
         _ ->
           __IMPOSSIBLE__
   in sigInsertDefinition sig (DKName name) def'

@@ -76,6 +76,7 @@ module Prelude.Extended
   , L._3
   , Collect(..)
   , catMaybes
+  , strictDrop
   ) where
 
 import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)
@@ -125,3 +126,8 @@ replicate n = Prelude.replicate (fromIntegral n)
 
 splitAt :: Natural -> [a] -> ([a], [a])
 splitAt n = Prelude.splitAt (fromIntegral n)
+
+strictDrop :: Natural -> [a] -> [a]
+strictDrop 0 xs       = xs
+strictDrop _ []       = error "strictDrop: list too short"
+strictDrop n (_ : xs) = strictDrop (n-1) xs

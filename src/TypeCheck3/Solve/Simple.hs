@@ -23,6 +23,8 @@ import           TypeCheck3.Monad
 import           TypeCheck3.Check
 import           TypeCheck3.Solve.Common
 
+#include "impossible.h"
+
 -- These definitions should be in every Solve module
 ----------------------------------------------------
 
@@ -261,8 +263,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
         debug_ "head is J, couldn't invert." ""
         fallback t1
       BlockedOnFunction fun1 -> do
-        -- TODO change the 0 when we support more
-        Constant _ (Instantiable (Inst 0 clauses)) <- getDefinition_ fun1
+        Constant _ (Instantiable (Inst vars clauses)) <- getDefinition_ fun1
         case clauses of
           NotInvertible _ -> do
             debug_ "couldn't invert." ""
@@ -282,7 +283,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
                   Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
                     debug_ ("inverting on" <+> PP.pretty tHead) ""
                     -- Make the eliminators match the patterns
-                    matched <- matchPats pats elims1
+                    matched <- matchHeads vars pats elims1
                     -- And restart, if we matched something.
                     if matched
                       then do
@@ -295,6 +296,16 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
                     checkError $ TermsNotEqual type_ t1 type_ t2
   where
     fallback t1 = return $ [(mvs, Unify ctx type_ t1 t2)]
+
+    -- To remove the context variables of the given clauses, we simply
+    -- need to drop enough eliminators -- it is an invariant that if a
+    -- function definition has context variables, it is always applied
+    -- to at least as many eliminators as context variables.
+    matchHeads :: Natural -> [Pattern] -> [Elim t] -> TC t s Bool
+    matchHeads vars _ es | length es < vars = do
+      __IMPOSSIBLE__
+    matchHeads vars pats es = do
+      matchPats pats $ strictDrop vars es
 
     matchPats :: [Pattern] -> [Elim t] -> TC t s Bool
     matchPats (VarP : pats) (_ : elims) = do
