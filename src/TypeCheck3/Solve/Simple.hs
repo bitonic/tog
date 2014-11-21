@@ -75,17 +75,14 @@ solve c = do
       then go False [] constrs
       else return constrs
     go progress newConstrs ((mvs, constr) : constrs) = do
-      attempt <- do mvsBodies <- forM (HS.toList mvs) getMetaInst
-                    return $ null mvsBodies || any isInst mvsBodies
+      attempt <- do mvsBodies <- forM (HS.toList mvs) lookupMetaInst
+                    return $ null mvsBodies || any isJust mvsBodies
       if attempt
         then do
           constrs' <- solveConstraint constr
           go True (constrs' ++ newConstrs) constrs
         else do
           go progress ((mvs, constr) : newConstrs) constrs
-
-    isInst Open       = False
-    isInst (Inst _ _) = True
 
 solveConstraint :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
 solveConstraint constr0 = do
@@ -265,7 +262,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
         fallback t1
       BlockedOnFunction fun1 -> do
         -- TODO change the 0 when we support more
-        Constant _ (Instantiable (InstFun (Inst 0 clauses))) <- getDefinition_ fun1
+        Constant _ (Instantiable (Inst 0 clauses)) <- getDefinition_ fun1
         case clauses of
           NotInvertible _ -> do
             debug_ "couldn't invert." ""

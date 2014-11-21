@@ -62,11 +62,11 @@ module Term.Types
   , DefKey(..)
   , Definition(..)
   , Constant(..)
-  , InstKind(..)
   , Inst(..)
-  , MetaInst
+  , MetaInst(..)
+  , instToMetaInst
+  , metaInstToInst
   , metaInstToTerm
-  , metaInstBody
   , ClauseBody
   , Clause(..)
   , Pattern(..)
@@ -85,7 +85,8 @@ module Term.Types
   , getDefinition
   , getDefinition_
   , getMetaType
-  , getMetaInst
+  , lookupMetaInst
+  , lookupDefinition
     -- * Signature
   , Signature(..)
   , sigEmpty
@@ -93,7 +94,7 @@ module Term.Types
   , sigGetDefinition
   , sigLookupDefinition
   , sigGetMetaType
-  , sigGetMetaInst
+  , sigLookupMetaInst
   , sigDefinedNames
   , sigDefinedMetas
     -- ** Updating
@@ -307,7 +308,7 @@ instance (Hashable t) => Hashable (TermView t)
 type MetaSet = HS.HashSet Meta
 
 class Metas t a where
-  metas :: (IsTerm t, MonadTerm t m) => a -> m (HS.HashSet Meta)
+  metas :: (IsTerm t, MonadTerm t m) => a -> m MetaSet
 
 instance Metas t (Elim t) where
   metas (Apply t) = metas t
@@ -401,7 +402,7 @@ instance (Hashable key, Eq key) => SynEq t (Blocked key t) where
 
 instance SynEq t a => SynEq t [a] where
   synEq []       []       = return True
-  synEq (x : xs) (y : ys) = (&&) <$> synEq x y <*> synEq xs ys
+  synEq (x : xs) (y : ys) = synEq (x, xs) (y, ys)
   synEq _        _        = return False
 
 instance (SynEq t a, SynEq t b) => SynEq t (a, b) where
@@ -559,38 +560,47 @@ data Definition t
 
 data Constant t
   = Postulate
-  | Data [Name]
+  | Data ![Name]
   -- ^ A data type, with constructors.
-  | Record Name [Projection]
+  | Record !Name ![Projection]
   -- ^ A record, with its constructor and projections.
-  | Instantiable !(InstKind t)
+  | Instantiable !(Inst t)
   -- ^ A function or a metavar, which might be waiting for instantiation
   deriving (Eq, Show, Typeable)
 
--- | Two things are instantiable: Meta's and Functions.
-data InstKind t
-  = InstMeta (MetaInst t)
-  | InstFun (Inst (Invertible t))
+-- | Two things are instantiable: Meta's and Functions.  In practice,
+-- meta-variables instantiations are always going to be of the same
+-- shape, see 'MetaInst'.
+data Inst t
+  = Inst !Natural        -- The number of variables in the context
+         !(Invertible t) -- The contents itself
+  | Open
   deriving (Eq, Show, Typeable)
 
-data Inst a
-  = Inst !Natural  -- The number of variables in the context
-         !a        -- The contents itself
-  | Open
-  deriving (Eq, Show, Typeable, Functor)
+-- | This is a specialization of 'Inst' -- an instantiated 'Inst' where
+-- we have only one clause with no variables.  We use it to represent
+-- the body of meta-variables easily, since they always follow this
+-- form.
+data MetaInst t = MetaInst
+  { metaInstVars :: !Natural
+  , metaInstBody :: !(Term t)
+  }
 
-type MetaInst t = Inst (Term t)
+-- | As said, we store all meta-vars in the same form -- not invertible
+-- (it'll always reduce anyway), and one clause with no patterns.
+instToMetaInst :: Inst t -> Maybe (MetaInst t)
+instToMetaInst Open                                      = Nothing
+instToMetaInst (Inst vars (NotInvertible [Clause [] t])) = Just $ MetaInst vars t
+instToMetaInst _                                         = __IMPOSSIBLE__
+
+metaInstToInst :: MetaInst t -> Inst t
+metaInstToInst (MetaInst vars body) = Inst vars $ NotInvertible [Clause [] body]
 
 metaInstToTerm :: (IsTerm t, MonadTerm t m) => MetaInst t -> m (Term t)
-metaInstToTerm Open             = __IMPOSSIBLE__
-metaInstToTerm (Inst vars body0) = go vars body0
+metaInstToTerm (MetaInst n0 body0) = go n0 body0
   where
     go 0 body = return body
     go n body = lam =<< go (n-1) body
-
-metaInstBody :: MetaInst t -> Term t
-metaInstBody Open          = __IMPOSSIBLE__
-metaInstBody (Inst _ body) = body
 
 -- | A function is invertible if each of its clauses is headed by a
 -- different 'TermHead'.
@@ -675,8 +685,11 @@ getDefinition name = (`sigGetDefinition'` name) <$> askSignature
 getDefinition_ :: MonadTerm t m => Name -> m (Definition t)
 getDefinition_ name = (`sigGetDefinition` name) <$> askSignature
 
-getMetaInst :: MonadTerm t m => Meta -> m (MetaInst t)
-getMetaInst mv = (`sigGetMetaInst` mv) <$> askSignature
+lookupMetaInst :: MonadTerm t m => Meta -> m (Maybe (MetaInst t))
+lookupMetaInst mv = (`sigLookupMetaInst` mv) <$> askSignature
+
+lookupDefinition :: MonadTerm t m => DefKey -> m (Maybe (Definition t))
+lookupDefinition f = (`sigLookupDefinition` f) <$> askSignature
 
 getMetaType :: MonadTerm t m => Meta -> m (Type t)
 getMetaType mv = (`sigGetMetaType` mv) <$> askSignature
@@ -693,11 +706,8 @@ data Signature t = Signature
 sigEmpty :: Signature t
 sigEmpty = Signature HMS.empty 0
 
-sigLookupDefinition' :: Signature t -> DefKey -> Maybe (Definition t)
-sigLookupDefinition' sig key = HMS.lookup key (sigDefinitions sig)
-
-sigLookupDefinition :: Signature t -> Name -> Maybe (Definition t)
-sigLookupDefinition sig name = sigLookupDefinition' sig $ DKName name
+sigLookupDefinition :: Signature t -> DefKey -> Maybe (Definition t)
+sigLookupDefinition sig key = HMS.lookup key (sigDefinitions sig)
 
 -- | Gets a definition for the given 'DefKey'.
 sigGetDefinition' :: Signature t -> DefKey -> Closed (Definition t)
@@ -709,7 +719,7 @@ sigGetDefinition :: Signature t -> Name -> Closed (Definition t)
 sigGetDefinition sig name = sigGetDefinition' sig $ DKName name
 
 sigAddDefinition :: Signature t -> DefKey -> Definition t -> Signature t
-sigAddDefinition sig key def' = case sigLookupDefinition' sig key of
+sigAddDefinition sig key def' = case sigLookupDefinition sig key of
   Nothing -> sigInsertDefinition sig key def'
   Just _  -> __IMPOSSIBLE__
 
@@ -735,14 +745,14 @@ sigAddRecordCon sig name dataCon =
 
 sigAddTypeSig :: Signature t -> Name -> Type t -> Signature t
 sigAddTypeSig sig name type_ =
-  sigAddDefinition sig (DKName name) $ Constant type_ $ Instantiable $ InstFun Open
+  sigAddDefinition sig (DKName name) $ Constant type_ $ Instantiable Open
 
 sigAddClauses :: Signature t -> Name -> Invertible t -> Signature t
 sigAddClauses sig name clauses =
   let def' = case sigGetDefinition sig name of
-        Constant type_ (Instantiable (InstFun Open)) ->
+        Constant type_ (Instantiable Open) ->
           -- TODO change when we add modules/where clauses
-          Constant type_ $ Instantiable $ InstFun $ Inst 0 clauses
+          Constant type_ $ Instantiable $ Inst 0 clauses
         _ ->
           __IMPOSSIBLE__
   in sigInsertDefinition sig (DKName name) def'
@@ -783,16 +793,16 @@ sigAddDataCon sig0 dataConName tyCon numArgs tel type_ =
 -- present.
 sigGetMetaType :: Signature t -> Meta -> Closed (Type t)
 sigGetMetaType sig mv = case sigGetDefinition' sig (DKMeta mv) of
-  Constant type_ (Instantiable (InstMeta Open)) -> type_
-  Constant type_ (Instantiable (InstMeta _))    -> type_
-  _                                             -> __IMPOSSIBLE__  -- Wrong definition
+  Constant type_ (Instantiable Open) -> type_
+  Constant type_ (Instantiable _)    -> type_
+  _                                  -> __IMPOSSIBLE__  -- Wrong definition
 
 -- | Gets the body of a 'Meta', if present.
-sigGetMetaInst :: Signature t -> Meta -> MetaInst t
-sigGetMetaInst sig mv = case sigLookupDefinition' sig (DKMeta mv) of
-  Nothing                                         -> __IMPOSSIBLE__
-  Just (Constant _ (Instantiable (InstMeta mvb))) -> mvb
-  _                                               -> __IMPOSSIBLE__
+sigLookupMetaInst :: Signature t -> Meta -> Maybe (MetaInst t)
+sigLookupMetaInst sig mv = case sigLookupDefinition sig (DKMeta mv) of
+  Nothing                              -> __IMPOSSIBLE__
+  Just (Constant _ (Instantiable mvb)) -> instToMetaInst mvb
+  _                                    -> __IMPOSSIBLE__
 
 -- | Creates a new 'Meta' with the provided type.
 sigAddMeta :: Signature t -> SrcLoc -> Closed (Type t) -> (Meta, Signature t)
@@ -800,18 +810,15 @@ sigAddMeta sig0 loc type_ = (mv, sigAddDefinition sig (DKMeta mv) def')
   where
     mv = Meta (sigMetasCount sig) loc
     sig = sig0{sigMetasCount = sigMetasCount sig0 + 1}
-    def' = Constant type_ (Instantiable (InstMeta Open))
+    def' = Constant type_ (Instantiable Open)
 
 -- | Instantiates the given 'Meta' with the given body.  Fails if no
--- type is present for the 'Meta', or if the 'MetaInst' is an 'Open'.
+-- type is present for the 'Meta'.
 sigInstantiateMeta :: Signature t -> Meta -> MetaInst t -> Signature t
-sigInstantiateMeta _ _ Open = do
-  -- You must invoke this function with an 'Inst'
-  __IMPOSSIBLE__
-sigInstantiateMeta sig mv mvb@(Inst _ _) = do
+sigInstantiateMeta sig mv mi = do
   let def' = case sigGetDefinition' sig (DKMeta mv) of
-        Constant type_ (Instantiable (InstMeta Open)) ->
-          Constant type_ $ Instantiable $ InstMeta mvb
+        Constant type_ (Instantiable Open) ->
+          Constant type_ $ Instantiable $ metaInstToInst mi
         _ ->
           __IMPOSSIBLE__
   sigInsertDefinition sig (DKMeta mv) def'

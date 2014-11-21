@@ -218,7 +218,7 @@ checkFunDef :: (IsTerm t) => Name -> [SA.Clause] -> CheckM t ()
 checkFunDef fun synClauses = do
     funDef <- getDefinition_ fun
     case funDef of
-      Constant funType (Instantiable (InstFun Open)) -> do
+      Constant funType (Instantiable Open) -> do
         clauses <- mapM (checkClause fun funType) synClauses
         inv <- checkInvertibility clauses
         addClauses fun inv
@@ -376,10 +376,7 @@ checkProgram' _ decls0 ret = do
         mvReport <- confMetasReport <$> readConf
         mvOnlyUnsolved <- confMetasOnlyUnsolved <$> readConf
         when (not mvNoSummary || mvReport) $ do
-          let catInsts xs = [i | i@Inst{} <- xs]
-          let solvedMvs = catInsts $ map (sigGetMetaInst sig) $ sigDefinedMetas sig
-          let isInst Inst{} = True
-              isInst Open   = False
+          let solvedMvs = catMaybes $ map (sigLookupMetaInst sig) $ sigDefinedMetas sig
           drawLine
           putStrLn $ "-- Solved Metas: " ++ show (length solvedMvs)
           putStrLn $ "-- Unsolved Metas: " ++ show (HS.size unsolvedMvs)
@@ -387,15 +384,15 @@ checkProgram' _ decls0 ret = do
             drawLine
             let mvsTypes = map (\mv -> (mv, sigGetMetaType sig mv)) $ sigDefinedMetas sig
             forM_ (sortBy (comparing fst) $ mvsTypes) $ \(mv, mvType) -> do
-              let mbMvb = sigGetMetaInst sig mv
-              when (not (isInst mbMvb) || not mvOnlyUnsolved) $ do
+              let mbMvb = sigLookupMetaInst sig mv
+              when (not (isJust mbMvb) || not mvOnlyUnsolved) $ do
                 mvTypeDoc <- runTermM sig $ prettyM mvType
                 putStrLn $ render $
                   PP.pretty mv <+> PP.parens (PP.pretty (srcLoc mv)) <+> ":" //> mvTypeDoc
                 when (not mvOnlyUnsolved) $ do
                   mvBody <- case mbMvb of
-                    Open   -> return "?"
-                    Inst{} -> runTermM sig $ prettyM =<< metaInstToTerm mbMvb
+                    Nothing -> return "?"
+                    Just mi -> runTermM sig $ prettyM mi
                   putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
                 putStrLn ""
         noProblemsSummary <- confNoProblemsSummary <$> readConf
@@ -471,9 +468,11 @@ runCommand ts cmd =
       prettyM =<< L.use csSolveState
     ShowMeta mv -> runTC' $ do
       mvType <- getMetaType mv
-      mbMvBody <- getMetaInst mv
+      mbMvBody <- lookupMetaInst mv
       mvTypeDoc <- prettyM mvType
-      mvBodyDoc <- prettyM mbMvBody
+      mvBodyDoc <- case mbMvBody of
+        Nothing -> return "?"
+        Just mi -> prettyM mi
       return $
         PP.pretty mv <+> ":" <+> mvTypeDoc $$
         PP.pretty mv <+> "=" <+> mvBodyDoc

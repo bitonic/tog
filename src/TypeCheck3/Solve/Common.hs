@@ -43,11 +43,11 @@ curryMeta t = do
       args <- toArgs args0
       newMv <- addMeta newMvType
       mvT <- meta newMv $ map Apply args
-      let mi = Inst abstractions mvT
+      let mi = MetaInst abstractions mvT
       debug "unrolled" $ do
         mvTypeDoc <- prettyM =<< telPi tel mvType
         newMvTypeDoc <- prettyM newMvType
-        mvTDoc <- prettyM =<< metaInstToTerm mi
+        mvTDoc <- prettyM mi
         return $
           "old type:" //> mvTypeDoc $$
           "new type:" //> newMvTypeDoc $$
@@ -292,10 +292,10 @@ shouldKill vs t = runMaybeT $ do
     isNeutral f = do
       def' <- getDefinition f
       case def' of
-        Constant _ (Instantiable (InstFun _)) -> return True
-        Constant _ _                          -> return False
-        DataCon{}                             -> __IMPOSSIBLE__
-        Projection{}                          -> __IMPOSSIBLE__
+        Constant _ (Instantiable _) -> return True
+        Constant _ _                -> return False
+        DataCon{}                   -> __IMPOSSIBLE__
+        Projection{}                -> __IMPOSSIBLE__
         -- TODO: more precise analysis
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
@@ -640,8 +640,8 @@ applyInvertMeta
   => Ctx t -> InvertMeta t -> Term t
   -> TC t s (Validation (Collect Var MetaSet) (MetaInst t))
 applyInvertMeta ctx (InvertMeta sub vsNum) t = do
-  let fallback = fmap (Inst vsNum) <$> applyInvertMetaSubst sub t
-  let dontTouch = return $ Success $ Inst vsNum t
+  let fallback = fmap (MetaInst vsNum) <$> applyInvertMetaSubst sub t
+  let dontTouch = return $ Success $ MetaInst vsNum t
   -- Optimization: if the substitution is the identity, and if the free
   -- variables in the term are a subset of the variables that the
   -- substitution covers, don't touch the term.
@@ -748,7 +748,7 @@ killArgs newMv kills = do
                    | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
                    ]
   body <- meta newMv . map Apply =<< mapM var vs
-  return $ Inst (length kills) body
+  return $ MetaInst (length kills) body
 
 -- | If @t = α ts@ and @α : Δ -> D us@ where @D@ is some record type, it
 -- will instantiate @α@ accordingly.
@@ -859,7 +859,7 @@ instantiateDataCon mv dataCon = do
   (dataConArgsTel, _) <- unrollPi appliedDataConType
   dataConArgs <- createMvsPars (telToCtx telMvArgs) dataConArgsTel
   mvT <- con dataCon dataConArgs
-  let mi = Inst (telLength telMvArgs) mvT
+  let mi = MetaInst (telLength telMvArgs) mvT
   -- given the usage, here we know that the body is going to be well typed.
   -- TODO make sure that the above holds.
   instantiateMeta mv mi
