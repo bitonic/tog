@@ -92,16 +92,11 @@ instance PrettyM t (Sub.Subst t) where
       return $ "Lift" <+> PP.pretty i //> subDoc
 
 instance (IsTerm t) => PrettyM t (Inst t) where
-  prettyM Open =
+  prettyM Open = do
     return "Open"
-  prettyM (Inst vars t) = do
+  prettyM (Inst t) = do
     tDoc <- prettyM t
-    return $
-      "Inst" <+> PP.pretty vars $$
-      PP.indent 2 tDoc
-
-instance (IsTerm t) => PrettyM t (MetaInst t) where
-  prettyM = prettyM . metaInstToInst
+    return $ "Inst" //> tDoc
 
 instance (IsTerm t) => PrettyM t (Invertible t) where
   prettyM = prettyM . ignoreInvertible

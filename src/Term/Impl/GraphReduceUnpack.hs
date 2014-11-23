@@ -4,7 +4,7 @@ import           Data.IORef                       (IORef, readIORef, writeIORef,
 import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Syntax
-import qualified Term                             as T
+import qualified Term.Types                       as T
 import           Term.Impl.Common
 import           Prelude.Extended
 
@@ -29,7 +29,7 @@ data Tm
     | Refl
     | Set
     | Con !Name ![Ref]
-    | App !T.Head ![T.Elim Ref]
+    | App !(T.Head Ref) ![T.Elim Ref]
     deriving (Show, Eq, Typeable)
 
 instance T.Metas GraphReduceUnpack GraphReduceUnpack where

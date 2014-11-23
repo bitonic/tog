@@ -42,9 +42,9 @@ tm nms e0 = case e0 of
   SA.App h es -> do
     let h' = case h of
           SA.Var n -> case n `elemIndex` nms of
-                        Nothing -> Def $ DKName n
-                        Just i  -> Var $ mkVar n $ fromIntegral i
-          SA.Def n -> Def $ DKName n
+            Nothing -> Def $ Opened (DKName n) []
+            Just i  -> Var $ mkVar n $ fromIntegral i
+          SA.Def n -> Def $ Opened (DKName n) []
           SA.J _   -> J
     Term.app h' =<< mapM tmElim es
   where

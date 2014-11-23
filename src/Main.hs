@@ -33,7 +33,9 @@ parseTypeCheckConf = Conf
         help "Select debug labels to print."
       )
   <*> switch
-      (long "stackTrace" <> short 's' <> help "Print debug output")
+      ( long "stackTrace" <> short 's' <>
+        help "Print a stack trace on error."
+      )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch

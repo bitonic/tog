@@ -3,7 +3,7 @@ module Term.Impl.GraphReduce (GraphReduce) where
 import           Data.IORef                       (IORef, readIORef, writeIORef, newIORef)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
-import           Term
+import           Term.Types
 import           Term.Impl.Common
 import           Prelude.Extended
 

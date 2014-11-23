@@ -106,6 +106,7 @@ initEnv =
 
 data TCState t s = TCState
     { tsSignature        :: !(Signature t)
+    , tsOpened           :: !(Opened t)
     , tsState            :: !s
     } deriving (Functor)
 
@@ -114,6 +115,7 @@ initTCState
   :: s -> TCState t s
 initTCState s = TCState
   { tsSignature        = sigEmpty
+  , tsOpened           = mempty
   , tsState            = s
   }
 
@@ -206,6 +208,9 @@ addMeta type_ = do
 uncheckedInstantiateMeta :: Meta -> MetaInst t -> TC t s ()
 uncheckedInstantiateMeta mv mvb =
   modifySignature $ \sig -> sigInstantiateMeta sig mv mvb
+
+-- Opened
+------------------------------------------------------------------------
 
 -- State
 ------------------------------------------------------------------------

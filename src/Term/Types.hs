@@ -19,6 +19,7 @@ module Term.Types
   , TermView(..)
   , Projection(..)
   , Head(..)
+  , Opened(..)
   , Elim(..)
   , isApply
   , isProj
@@ -54,19 +55,16 @@ module Term.Types
   , pi
   , equal
   , app
-  , meta
   , def
   , defName
+  , defMeta
   , con
     -- * Definition
   , DefKey(..)
+  , Contextual(..)
   , Definition(..)
   , Constant(..)
   , Inst(..)
-  , MetaInst(..)
-  , instToMetaInst
-  , metaInstToInst
-  , metaInstToTerm
   , ClauseBody
   , Clause(..)
   , Pattern(..)
@@ -81,12 +79,6 @@ module Term.Types
   , MonadTerm(..)
   , TermM
   , runTermM
-    -- ** Operations
-  , getDefinition
-  , getDefinition_
-  , getMetaType
-  , lookupMetaInst
-  , lookupDefinition
     -- * Signature
   , Signature(..)
   , sigEmpty
@@ -94,7 +86,6 @@ module Term.Types
   , sigGetDefinition
   , sigLookupDefinition
   , sigGetMetaType
-  , sigLookupMetaInst
   , sigDefinedNames
   , sigDefinedMetas
     -- ** Updating
@@ -249,13 +240,26 @@ newtype Field = Field {unField :: Natural}
 
 -- | A 'Head' heads a neutral term -- something which can't reduce
 -- further.
-data Head
+data Head t
     = Var !Var
-    | Def !DefKey
+    | Def !(Opened DefKey t)
     | J
-    deriving (Show, Read, Eq, Generic)
+    deriving (Show, Read, Eq, Generic, Functor)
 
-instance Hashable Head
+instance (Hashable t) => Hashable (Head t)
+
+data Opened key t = Opened
+  { opndKey  :: !key
+  , opndArgs :: ![Term t]
+    -- ^ The arguments of the contexts the definition corresponding to
+    -- 'DefKey' is in.  They must match the length of the telescope in
+    -- 'Contextual'.
+  } deriving (Show, Read, Eq, Generic, Functor)
+
+instance (Hashable key, Hashable t) => Hashable (Opened key t)
+
+instance Bifunctor Opened where
+  bimap f g (Opened k args) = Opened (f k) (fmap g args)
 
 -- | 'Elim's are applied to 'Head's.  They're either arguments applied
 -- to functions, or projections applied to records.
@@ -294,7 +298,7 @@ data TermView t
     | Refl
     | Set
     | Con !Name [t]
-    | App !Head [Elim t]
+    | App !(Head t) [Elim t]
     deriving (Eq, Generic, Show)
 
 instance (Hashable t) => Hashable (TermView t)
@@ -370,7 +374,7 @@ instance ApplySubst t (Elim t) where
 instance ApplySubst t a => ApplySubst t [a] where
   safeApplySubst t rho = mapM (`safeApplySubst` rho) t
 
-instance ApplySubst t (Clause t) where
+instance (IsTerm t) => ApplySubst t (Clause t) where
   safeApplySubst (Clause pats t) rho =
     Clause pats <$> safeApplySubst t (subLift (patternsBindings pats) rho)
 
@@ -397,10 +401,10 @@ instance (Hashable key, Eq key) => SynEq t (Blocked key t) where
   synEq blockedX blockedY = case (blockedX, blockedY) of
     (NotBlocked x, NotBlocked y) ->
       synEq x y
-    (BlockingHead mv1 els1, BlockingHead mv2 els2) | mv1 == mv2 ->
-      synEq els1 els2
-    (BlockedOn mvs1 f1 els1, BlockedOn mvs2 f2 els2) | mvs1 == mvs2 && f1 == f2 ->
-      synEq els1 els2
+    (BlockingHead mv1 els1, BlockingHead mv2 els2) ->
+      synEq (mv1, els1) (mv2, els2)
+    (BlockedOn mvs1 f1 els1, BlockedOn mvs2 f2 els2) | mvs1 == mvs2 ->
+      synEq (f1, els1) (f2, els2)
     (_, _) ->
       return False
 
@@ -414,8 +418,38 @@ instance (SynEq t a, SynEq t b) => SynEq t (a, b) where
     b <- synEq x1 x2
     if b then synEq y1 y2 else return False
 
--- HasAbs
----------
+instance (SynEq t a, SynEq t b, SynEq t c) => SynEq t (a, b, c) where
+  synEq (x1, y1, z1) (x2, y2, z2) = do
+    b1 <- synEq x1 x2
+    if b1
+      then do
+        b2 <- synEq y1 y2
+        if b2 then synEq z1 z2 else return False
+      else return False
+
+instance (Eq key, IsTerm t) => SynEq t (Opened key t) where
+  synEq (Opened k1 args1) (Opened k2 args2) =
+    if k1 == k2
+      then synEq args1 args2
+      else return False
+
+instance (IsTerm t) => SynEq t (BlockedHead t) where
+  synEq (BlockedOnFunction f1) (BlockedOnFunction f2) =
+    synEq f1 f2
+  synEq BlockedOnJ BlockedOnJ =
+    return True
+  synEq _ _ =
+    return False
+
+instance (IsTerm t) => SynEq t (Head t) where
+  synEq (Var v1) (Var v2) =
+    return $ v1 == v2
+  synEq (Def dk1) (Def dk2) =
+    synEq dk1 dk2
+  synEq J J =
+    return True
+  synEq _ _ =
+    return False
 
 class (Typeable t, Show t, Metas t t, Nf t t, PrettyM t t, ApplySubst t t, SynEq t t) => IsTerm t where
     -- Evaluation
@@ -448,44 +482,50 @@ whnfView t = (view <=< ignoreBlocking <=< whnf) t
 
 type DefKeySet = HS.HashSet DefKey
 
+-- | Representation of blocked terms.  Parametrised over the things that
+-- could block -- right now we just use 'Meta', but in the future we
+-- want to support unistantiated functions too (see Issue 5).
 data Blocked key t
   = NotBlocked t
-  | BlockingHead key [Elim t]
-  -- ^ The term is headed by a blocking 'DefKey'.
-  | BlockedOn (HS.HashSet key) BlockedHead [Elim t]
-  -- ^ Returned when some uninstantiated 'Meta's or functions are
-  -- preventing us from reducing a definition.  The 'BlockedHead' is
-  -- the head, the 'Elim's the eliminators stuck on it.
+  | BlockingHead (Opened key t) [Elim t]
+  -- ^ The term is headed by some blocking thing.
+  | BlockedOn (HS.HashSet key) (BlockedHead t) [Elim t]
+  -- ^ Some keys are preventing us from reducing a definition.  The
+  -- 'BlockedHead' is the head, the 'Elim's the eliminators stuck on it.
   --
   -- Note that the metavariables impeding reduction might be both at
   -- the head of some eliminators, or impeding reduction of some other
   -- definition heading an eliminator.  In other words, even if the
   -- term is blocked, we don't guarantee that every eliminator is
   -- constructor headed.
- deriving (Eq, Show)
+ deriving (Eq, Show, Read, Typeable, Functor)
 
-data BlockedHead
-    = BlockedOnFunction Name
+-- Why isnt HS.HashSet a Functor?
+-- instance Bifunctor Blocked where
+--   bimap f g blckd = case blckd of
+--     NotBlocked t         -> NotBlocked $ g t
+--     BlockingHead opnd es -> BlockingHead (bimap f g opnd) (map (fmap g) es)
+--     BlockedOn mvs h es   -> BlockedOn (fmap f mvs) (fmap g h) (map (fmap g) es)
+
+data BlockedHead t
+    = BlockedOnFunction !(Opened Name t)
     | BlockedOnJ
-    deriving (Eq, Show)
+    deriving (Eq, Show, Read, Typeable, Functor)
 
 isBlocked :: (Eq key, Hashable key) => Blocked key t -> Maybe (HS.HashSet key)
 isBlocked (NotBlocked _)      = Nothing
-isBlocked (BlockingHead mv _) = Just $ HS.singleton mv
+isBlocked (BlockingHead mv _) = Just $ HS.singleton $ opndKey mv
 isBlocked (BlockedOn mvs _ _) = Just mvs
-
-instance PP.Pretty BlockedHead where
-  pretty = PP.text . show
 
 ignoreBlocking :: (IsTerm t, MonadTerm t m) => Blocked Meta t -> m t
 ignoreBlocking (NotBlocked t) =
   return t
 ignoreBlocking (BlockingHead mv es) =
-  meta mv es
+  defMeta mv es
 ignoreBlocking (BlockedOn _ bh es) =
   let h = case bh of
-            BlockedOnFunction funName -> Def $ DKName funName
-            BlockedOnJ                -> J
+            BlockedOnFunction fun -> Def $ first DKName fun
+            BlockedOnJ            -> J
   in app h es
 
 -- Term utils
@@ -507,17 +547,17 @@ pi domain codomain = unview $ Pi domain codomain
 equal :: (IsTerm t, MonadTerm t m) => t -> t -> t -> m t
 equal type_ x y = unview $ Equal type_ x y
 
-app :: (IsTerm t, MonadTerm t m) => Head -> [Elim t] -> m t
+app :: (IsTerm t, MonadTerm t m) => Head t -> [Elim t] -> m t
 app h elims = seqList elims $ unview $ App h elims
 
-meta :: (IsTerm t, MonadTerm t m) => Meta -> [Elim t] -> m t
-meta mv = def (DKMeta mv)
+defMeta :: (IsTerm t, MonadTerm t m) => Opened Meta t -> [Elim t] -> m t
+defMeta mv = def (first DKMeta mv)
 
-def :: (IsTerm t, MonadTerm t m) => DefKey -> [Elim t] -> m t
+def :: (IsTerm t, MonadTerm t m) => Opened DefKey t -> [Elim t] -> m t
 def key = app (Def key)
 
-defName :: (IsTerm t, MonadTerm t m) => Name -> [Elim t] -> m t
-defName name = def (DKName name)
+defName :: (IsTerm t, MonadTerm t m) => Opened Name t -> [Elim t] -> m t
+defName name = def (first DKName name)
 
 con :: (IsTerm t, MonadTerm t m) => Name -> [t] -> m t
 con c args = seqList args $ unview $ Con c args
@@ -556,6 +596,11 @@ data DefKey
 
 instance Hashable DefKey
 
+data Contextual t = Contextual
+  { ctxtTelescope  :: !(Tel t)
+  , ctxtDefinition :: !(Definition t)
+  } deriving (Eq, Show, Typeable)
+
 data Definition t
   = Constant (Type t) (Constant t)
   | DataCon Name Natural (Tel (Type t)) (Type t)
@@ -569,7 +614,7 @@ data Definition t
   --
   -- Note that the type of the projection is always a pi type from a
   -- member of the record type to the type of the projected thing.
-  deriving (Typeable)
+  deriving (Eq, Show, Typeable)
 
 data Constant t
   = Postulate
@@ -581,39 +626,25 @@ data Constant t
   -- ^ A function or a metavar, which might be waiting for instantiation
   deriving (Eq, Show, Typeable)
 
--- | Two things are instantiable: Meta's and Functions.  In practice,
--- meta-variables instantiations are always going to be of the same
--- shape, see 'MetaInst'.
+-- | Two things are instantiable: Meta's and Functions.  Meta-variables
+-- instantiations are always going to be of the same shape: one, non
+-- invertible clause, with no patterns.
 data Inst t
-  = Inst !Natural        -- The number of variables in the context
-         !(Invertible t) -- The contents itself
+  = Inst !(Invertible t)
   | Open
   deriving (Eq, Show, Typeable)
 
--- | This is a specialization of 'Inst' -- an instantiated 'Inst' where
--- we have only one clause with no variables.  We use it to represent
--- the body of meta-variables easily, since they always follow this
--- form.
-data MetaInst t = MetaInst
-  { metaInstVars :: !Natural
-  , metaInstBody :: !(Term t)
-  }
-
--- | As said, we store all meta-vars in the same form -- not invertible
+{-
+-- | All meta-variable instantiations will be 'Inst's where we have only
+-- one clause and no patterns.
+--
+-- As said, we store all meta-vars in the same form -- not invertible
 -- (it'll always reduce anyway), and one clause with no patterns.
-instToMetaInst :: Inst t -> Maybe (MetaInst t)
-instToMetaInst Open                                      = Nothing
-instToMetaInst (Inst vars (NotInvertible [Clause [] t])) = Just $ MetaInst vars t
-instToMetaInst _                                         = __IMPOSSIBLE__
-
-metaInstToInst :: MetaInst t -> Inst t
-metaInstToInst (MetaInst vars body) = Inst vars $ NotInvertible [Clause [] body]
-
-metaInstToTerm :: (IsTerm t, MonadTerm t m) => MetaInst t -> m (Term t)
-metaInstToTerm (MetaInst n0 body0) = go n0 body0
-  where
-    go 0 body = return body
-    go n body = lam =<< go (n-1) body
+instToMetaBody :: Inst t -> Maybe (Term t)
+instToMetaBody Open                                 = Nothing
+instToMetaBody (Inst (NotInvertible [Clause [] t])) = Just t
+instToMetaBody _                                    = __IMPOSSIBLE__
+-}
 
 -- | A function is invertible if each of its clauses is headed by a
 -- different 'TermHead'.
@@ -692,79 +723,79 @@ instance MonadTerm t (TermM t) where
 runTermM :: Signature t -> TermM t a -> IO a
 runTermM sig (TermM m) = runReaderT m sig
 
-getDefinition :: MonadTerm t m => DefKey -> m (Definition t)
-getDefinition name = (`sigGetDefinition'` name) <$> askSignature
+-- getDefinition :: MonadTerm t m => DefKey -> m (Contextual t)
+-- getDefinition name = (`sigGetDefinition'` name) <$> askSignature
 
-getDefinition_ :: MonadTerm t m => Name -> m (Definition t)
-getDefinition_ name = (`sigGetDefinition` name) <$> askSignature
+-- getDefinition_ :: MonadTerm t m => Name -> m (Contextual t)
+-- getDefinition_ name = (`sigGetDefinition` name) <$> askSignature
 
-lookupMetaInst :: MonadTerm t m => Meta -> m (Maybe (MetaInst t))
-lookupMetaInst mv = (`sigLookupMetaInst` mv) <$> askSignature
+-- lookupMetaInst :: MonadTerm t m => Meta -> m (Maybe (MetaInst t))
+-- lookupMetaInst mv = (`sigLookupMetaInst` mv) <$> askSignature
 
-lookupDefinition :: MonadTerm t m => DefKey -> m (Maybe (Definition t))
-lookupDefinition f = (`sigLookupDefinition` f) <$> askSignature
+-- lookupDefinition :: MonadTerm t m => DefKey -> m (Maybe (Contextual t))
+-- lookupDefinition f = (`sigLookupDefinition` f) <$> askSignature
 
-getMetaType :: MonadTerm t m => Meta -> m (Type t)
-getMetaType mv = (`sigGetMetaType` mv) <$> askSignature
+-- getMetaType :: MonadTerm t m => Meta -> m (Type t)
+-- getMetaType mv = (`sigGetMetaType` mv) <$> askSignature
 
 -- Signature
 ------------------------------------------------------------------------
 
 -- | A 'Signature' stores every globally scoped thing.
 data Signature t = Signature
-    { sigDefinitions    :: HMS.HashMap DefKey (Definition t)
+    { sigDefinitions    :: HMS.HashMap DefKey (Contextual t)
     , sigMetasCount     :: Int
     }
 
 sigEmpty :: Signature t
 sigEmpty = Signature HMS.empty 0
 
-sigLookupDefinition :: Signature t -> DefKey -> Maybe (Definition t)
+sigLookupDefinition :: Signature t -> DefKey -> Maybe (Contextual t)
 sigLookupDefinition sig key = HMS.lookup key (sigDefinitions sig)
 
 -- | Gets a definition for the given 'DefKey'.
-sigGetDefinition' :: Signature t -> DefKey -> Closed (Definition t)
+sigGetDefinition' :: Signature t -> DefKey -> Closed (Contextual t)
 sigGetDefinition' sig key = case HMS.lookup key (sigDefinitions sig) of
   Nothing   -> __IMPOSSIBLE__
   Just def' -> def'
 
-sigGetDefinition :: Signature t -> Name -> Closed (Definition t)
+sigGetDefinition :: Signature t -> Name -> Closed (Contextual t)
 sigGetDefinition sig name = sigGetDefinition' sig $ DKName name
 
-sigAddDefinition :: Signature t -> DefKey -> Definition t -> Signature t
+sigAddDefinition :: Signature t -> DefKey -> Contextual t -> Signature t
 sigAddDefinition sig key def' = case sigLookupDefinition sig key of
   Nothing -> sigInsertDefinition sig key def'
   Just _  -> __IMPOSSIBLE__
 
-sigInsertDefinition :: Signature t -> DefKey -> Definition t -> Signature t
+sigInsertDefinition :: Signature t -> DefKey -> Contextual t -> Signature t
 sigInsertDefinition sig key def' =
   sig{sigDefinitions = HMS.insert key def' (sigDefinitions sig)}
 
-sigAddPostulate :: Signature t -> Name -> Type t -> Signature t
-sigAddPostulate sig name type_ =
-  sigAddDefinition sig (DKName name) $ Constant type_ Postulate
+sigAddPostulate :: Signature t -> Name -> Tel t -> Type t -> Signature t
+sigAddPostulate sig name tel type_ =
+  sigAddDefinition sig (DKName name) $ Contextual tel $ Constant type_ Postulate
 
-sigAddData :: Signature t -> Name -> Type t -> Signature t
-sigAddData sig name type_ =
-  sigAddDefinition sig (DKName name) $ Constant type_ $ Data []
+sigAddData :: Signature t -> Name -> Tel t -> Type t -> Signature t
+sigAddData sig name tel type_ =
+  sigAddDefinition sig (DKName name) $ Contextual tel $ Constant type_ $ Data []
 
 sigAddRecordCon :: Signature t -> Name -> Name -> Signature t
 sigAddRecordCon sig name dataCon =
   case sigGetDefinition sig name of
-    Constant type_ Postulate -> do
-      sigInsertDefinition sig (DKName name) $ Constant type_ $ Record dataCon []
+    Contextual tel (Constant type_ Postulate) -> do
+      sigInsertDefinition sig (DKName name) $ Contextual tel $ Constant type_ $ Record dataCon []
     _ -> do
       __IMPOSSIBLE__
 
-sigAddTypeSig :: Signature t -> Name -> Type t -> Signature t
-sigAddTypeSig sig name type_ =
-  sigAddDefinition sig (DKName name) $ Constant type_ $ Instantiable Open
+sigAddTypeSig :: Signature t -> Name -> Tel t -> Type t -> Signature t
+sigAddTypeSig sig name tel type_ =
+  sigAddDefinition sig (DKName name) $ Contextual tel $ Constant type_ $ Instantiable Open
 
-sigAddClauses :: Signature t -> Name -> Natural -> Invertible t -> Signature t
-sigAddClauses sig name vars clauses =
+sigAddClauses :: Signature t -> Name -> Invertible t -> Signature t
+sigAddClauses sig name clauses =
   let def' = case sigGetDefinition sig name of
-        Constant type_ (Instantiable Open) ->
-          Constant type_ $ Instantiable $ Inst vars clauses
+        Contextual tel (Constant type_ (Instantiable Open)) ->
+          Contextual tel $ Constant type_ $ Instantiable $ Inst clauses
         _ ->
           __IMPOSSIBLE__
   in sigInsertDefinition sig (DKName name) def'
@@ -772,68 +803,74 @@ sigAddClauses sig name vars clauses =
 sigAddProjection
   :: Signature t -> Name -> Field -> Name -> Tel (Type t) -> Type t -> Signature t
 sigAddProjection sig0 projName projIx tyCon tel type_ =
-  case sigGetDefinition sig tyCon of
-    Constant tyConType (Record dataCon projs) ->
-      let projs' = projs ++ [Projection' projName projIx]
-      in sigInsertDefinition sig (DKName tyCon) (Constant tyConType (Record dataCon projs'))
+  case sigGetDefinition sig0 tyCon of
+    Contextual tel' (Constant tyConType (Record dataCon projs)) ->
+      let def' = Contextual tel' $ Projection projIx tyCon tel type_
+          sig  = sigAddDefinition sig0 key def'
+          projs' = projs ++ [Projection' projName projIx]
+      in sigInsertDefinition sig (DKName tyCon) $
+         Contextual tel $ Constant tyConType (Record dataCon projs')
     _ ->
       __IMPOSSIBLE__
   where
-    key = DKName projName
-    def' = Projection projIx tyCon tel type_
-    sig = sigAddDefinition sig0 key def'
+    key      = DKName projName
 
 sigAddDataCon
   :: Signature t -> Name -> Name -> Natural -> Tel (Type t) -> Type t -> Signature t
 sigAddDataCon sig0 dataConName tyCon numArgs tel type_ =
-  case sigGetDefinition sig tyCon of
-    Constant tyConType (Data dataCons) ->
-      let dataCons' = dataCons ++ [dataConName]
-      in sigInsertDefinition sig (DKName tyCon) (Constant tyConType (Data dataCons'))
+  case sigGetDefinition sig0 tyCon of
+    Contextual tel' (Constant tyConType (Data dataCons)) ->
+      let sig = mkSig tel'
+          dataCons' = dataCons ++ [dataConName]
+      in sigInsertDefinition sig (DKName tyCon) $
+         Contextual tel $ Constant tyConType (Data dataCons')
     -- With records, we must have already inserted the data constructor
     -- name using `sigAddRecordCon'
-    Constant _ (Record _ _) ->
-      sig
+    Contextual tel' (Constant _ (Record _ _)) ->
+      mkSig tel'
     _ ->
       __IMPOSSIBLE__
   where
     key = DKName dataConName
-    def' = DataCon tyCon numArgs tel type_
-    sig = sigAddDefinition sig0 key def'
+    def' tel' = Contextual tel' $ DataCon tyCon numArgs tel type_
+    mkSig tel' = sigAddDefinition sig0 key $ def' tel'
 
 -- | Gets the type of a 'Meta'.  Fails if the 'Meta' if not
 -- present.
-sigGetMetaType :: Signature t -> Meta -> Closed (Type t)
+sigGetMetaType
+  :: (IsTerm t, MonadTerm t m) => Signature t -> Meta -> m (Closed (Type t))
 sigGetMetaType sig mv = case sigGetDefinition' sig (DKMeta mv) of
-  Constant type_ (Instantiable Open) -> type_
-  Constant type_ (Instantiable _)    -> type_
-  _                                  -> __IMPOSSIBLE__  -- Wrong definition
+  Contextual tel (Constant type_ (Instantiable Open)) -> telPi tel type_
+  Contextual tel (Constant type_ (Instantiable _)) -> telPi tel type_
+  _ -> __IMPOSSIBLE__  -- Wrong definition
 
--- | Gets the body of a 'Meta', if present.
-sigLookupMetaInst :: Signature t -> Meta -> Maybe (MetaInst t)
-sigLookupMetaInst sig mv = case sigLookupDefinition sig (DKMeta mv) of
-  Nothing                              -> __IMPOSSIBLE__
-  Just (Constant _ (Instantiable mvb)) -> instToMetaInst mvb
-  _                                    -> __IMPOSSIBLE__
+-- -- | Gets the body of a 'Meta', if present.
+-- sigLookupMetaInst :: Signature t -> Meta -> Maybe (MetaInst t)
+-- sigLookupMetaInst sig mv = case sigLookupDefinition sig (DKMeta mv) of
+--   Nothing                              -> __IMPOSSIBLE__
+--   Just (Contextual tel, Constant _ (Instantiable mvb)) -> instToMetaInst mvb
+--   _                                    -> __IMPOSSIBLE__
 
 -- | Creates a new 'Meta' with the provided type.
-sigAddMeta :: Signature t -> SrcLoc -> Closed (Type t) -> (Meta, Signature t)
-sigAddMeta sig0 loc type_ = (mv, sigAddDefinition sig (DKMeta mv) def')
+sigAddMeta :: Signature t -> SrcLoc -> Tel t -> Closed (Type t) -> (Meta, Signature t)
+sigAddMeta sig0 loc tel type_ = (mv, sigAddDefinition sig (DKMeta mv) def')
   where
     mv = Meta (sigMetasCount sig) loc
     sig = sig0{sigMetasCount = sigMetasCount sig0 + 1}
-    def' = Constant type_ (Instantiable Open)
+    def' = Contextual tel $ Constant type_ (Instantiable Open)
 
 -- | Instantiates the given 'Meta' with the given body.  Fails if no
 -- type is present for the 'Meta'.
-sigInstantiateMeta :: Signature t -> Meta -> MetaInst t -> Signature t
-sigInstantiateMeta sig mv mi = do
+sigInstantiateMeta :: Signature t -> Meta -> Term t -> Signature t
+sigInstantiateMeta sig mv t = do
   let def' = case sigGetDefinition' sig (DKMeta mv) of
-        Constant type_ (Instantiable Open) ->
-          Constant type_ $ Instantiable $ metaInstToInst mi
+        Contextual tel (Constant type_ (Instantiable Open)) ->
+          Contextual tel $ Constant type_ $ Instantiable $ metaInstToInst t
         _ ->
           __IMPOSSIBLE__
   sigInsertDefinition sig (DKMeta mv) def'
+  where
+    metaInstToInst body = Inst $ NotInvertible [Clause [] body]
 
 sigDefinedNames :: Signature t -> [Name]
 sigDefinedNames sig = [n | DKName n <- HMS.keys $ sigDefinitions sig]
@@ -844,7 +881,7 @@ sigDefinedMetas sig = [mv | DKMeta mv <- HMS.keys $ sigDefinitions sig]
 sigToScope :: Signature t -> Scope
 sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
   where
-    f n = (nameString n, definitionToNameInfo n (sigGetDefinition sig n))
+    f n = (nameString n, definitionToNameInfo n (ctxtDefinition (sigGetDefinition sig n)))
 
 -- Context
 ------------------------------------------------------------------------
@@ -853,7 +890,8 @@ sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
 -- the previous ones.
 data Ctx t
   = C0
-  | !(Ctx t) :< (Name, Type t)
+  | !(Ctx t) :< !(Name, Type t)
+  deriving (Eq, Show, Typeable)
 
 instance Monoid (Ctx t) where
   mempty = C0
@@ -1193,3 +1231,23 @@ eliminate t elims = do
         app h (es1 ++ es2)
     (_, _) ->
         badElimination
+
+
+{-
+data OpenedItem t = OpenedItem
+  { oiArguments :: ![Term t]
+  , oiWeakenBy  :: !Natural
+  }
+
+-- | Here we store definitions that have been opened -- specifically, if
+-- some definition is under a context with n variables, its entry here
+-- should contain the n terms to apply to it to eliminate the context.
+data Opened t
+  = ONil
+  | OSnoc (Opened t)
+          -- The number of abstractions we went past to get to this point.
+          !Natural
+          -- The things we've opened -- note that we don't have
+          -- 'Contextual' anymore.
+          !(HMS.HashMap Name (Definition t))
+-}

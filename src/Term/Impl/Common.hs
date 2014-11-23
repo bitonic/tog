@@ -21,8 +21,8 @@ import           Prelude.Extended                 hiding (foldr, mapM, sequence)
 import           Syntax
 import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
-import           Term
-import           Term.Types                       (unview, view)
+import           Term.Synonyms
+import           Term.Types
 import qualified Term.Subst                       as Sub
 import           Data.Collect
 
@@ -69,22 +69,23 @@ genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked Meta t)
 genericWhnf t = do
   tView <- view t
-  -- Note that here we don't want to crash if the definition is not
-  -- set, since I want to be able to test non-typechecked terms.
   let fallback = return $ NotBlocked t
   case tView of
-    App (Def dkey) es -> do
-      mbDef <- lookupDefinition dkey
-      case mbDef of
-        Just (Constant _ (Instantiable inst)) -> do
-          eliminateInst dkey inst es
+    App (Def opnd@(Opened dkey _)) es -> do
+      sig <- askSignature
+      -- Note that here we don't want to crash if the definition is not
+      -- set, since I want to be able to test non-typechecked terms.
+      case sigLookupDefinition sig dkey of
+        Just (Contextual tel (Constant _ (Instantiable inst))) -> do
+          eliminateInst tel opnd inst es
         _ -> do
           fallback
     App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
       refl'' <- whnf refl'
       case refl'' of
         BlockingHead bl _ ->
-          return $ BlockedOn (HS.singleton bl) BlockedOnJ es0
+          -- return $ BlockedOn (HS.singleton bl) BlockedOnJ es0
+          return $ BlockedOn (HS.singleton (opndKey bl)) BlockedOnJ es0
         BlockedOn mvs _ _ ->
           return $ BlockedOn mvs BlockedOnJ es0
         NotBlocked refl''' -> do
@@ -96,40 +97,30 @@ genericWhnf t = do
       fallback
 
 eliminateInst
-  :: (IsTerm t, MonadTerm t m) => DefKey -> Inst t -> [Elim t] -> m (Blocked Meta t)
-eliminateInst (DKMeta mv) Open es = do
-  return $ BlockingHead mv es
-eliminateInst (DKName f) Open es = do
-  NotBlocked <$> defName f es
-eliminateInst dkey (Inst n inv) es | clauses <- ignoreInvertible inv = do
-    -- This is a special case, we know that all meta-variable bodies will be
-    -- stored in this form, and we want to optimize for that.  If some
-    -- functions fall under this pattern too, it doesn't matter.
-    --
-    -- Optimization: if the arguments are all lined up, don't touch
-    -- the body.
-    if length es >= n
-      then do
-        let (esl, es') = splitAt n es
-        Just args <- return $ mapM isApply esl
-        simple <- isSimple (n-1) args
-        clauses' <- if simple
-          then return clauses
-          else instantiate clauses args
-        eliminateClauses dkey clauses' es'
-      else do
-        case (dkey, clauses) of
-          -- TODO should we do this?  It seems like we need it for
-          -- meta-variables, but I'm not sure if it's good for defs.
-          --
-          -- If we can't, we can turn the thing into a lambda and
-          -- partially apply it.
-          (_, [Clause [] t]) -> do mvT <- mkBody n t
-                                   whnf =<< eliminate mvT es
-          -- Remember, Metas only ever have a no-pattern single clause.
-          (DKMeta _, _)      -> __IMPOSSIBLE__
-          -- Give up.
-          (_, _)             -> NotBlocked <$> def dkey es
+  :: (IsTerm t, MonadTerm t m)
+  => Tel t -> Opened DefKey t -> Inst t -> [Elim t]
+  -> m (Blocked Meta t)
+eliminateInst _ (Opened (DKMeta mv) args) Open es = do
+  return $ BlockingHead (Opened mv args) es
+eliminateInst _ (Opened (DKName f) args) Open es = do
+  NotBlocked <$> defName (Opened f args) es
+eliminateInst tel opnd@(Opened _ args) (Inst inv) es | clauses <- ignoreInvertible inv = do
+  -- Optimization: if the arguments are all lined up, don't touch
+  -- the body.
+  --
+  -- This is a special case, we know that all meta-variable bodies and
+  -- where clauses will be stored in this form, and we want to
+  -- optimize for that.  If some functions fall under this pattern
+  -- too, it doesn't matter.
+
+  -- The number of arguments must be the same as the length of the
+  -- context telescope.
+  _assert@True <- return $ length args == telLength tel
+  simple <- isSimple (length args - 1) args
+  clauses' <- if simple
+    then return clauses
+    else instantiate clauses args
+  eliminateClauses opnd clauses' es
   where
     isSimple _ [] = do
       return True
@@ -139,38 +130,36 @@ eliminateInst dkey (Inst n inv) es | clauses <- ignoreInvertible inv = do
         App (Var v) [] | varIndex v == n' -> isSimple (n'-1) args'
         _                                 -> return False
 
-    mkBody 0 body' = return body'
-    mkBody m body' = lam =<< mkBody (m-1) body'
-
 eliminateClauses
   :: (IsTerm t, MonadTerm t m)
-  => DefKey -> [Clause t] -> [Elim t] -> m (Blocked Meta t)
+  => Opened DefKey t -> [Clause t] -> [Elim t] -> m (Blocked Meta t)
 -- Again, metas only ever have one clause.  Note that all these are just
 -- assertions, things would work just fine without them, but let's
 -- program defensively.
-eliminateClauses (DKMeta _) [Clause [] t] es = do
+eliminateClauses (Opened (DKMeta _) _) [Clause [] t] es = do
   whnf =<< eliminate t es
-eliminateClauses (DKMeta _) _ _  = do
+eliminateClauses (Opened (DKMeta _) _) _ _  = do
   __IMPOSSIBLE__
-eliminateClauses (DKName f) clauses es = do
-  mbT <- whnfFun f es clauses
+eliminateClauses (Opened (DKName f) args) clauses es = do
+  let opnd = Opened f args
+  mbT <- whnfFun opnd es clauses
   case mbT of
-    Nothing -> NotBlocked <$> defName f es
+    Nothing -> NotBlocked <$> defName opnd es
     Just t  -> return t
 
 whnfFun
   :: (IsTerm t, MonadTerm t m)
-  => Name -> [Elim t] -> [Closed (Clause t)]
+  => Opened Name t -> [Elim t] -> [Clause t]
   -> m (Maybe (Blocked Meta t))
 whnfFun _ _ [] = do
   return Nothing
-whnfFun funName es (Clause patterns body : clauses) = runMaybeT $ do
+whnfFun fun es (Clause patterns body : clauses) = runMaybeT $ do
   matched <- lift $ matchClause es patterns
   case matched of
     Failure (CCollect mvs) ->
-      return $ BlockedOn mvs (BlockedOnFunction funName) es
+      return $ BlockedOn mvs (BlockedOnFunction fun) es
     Failure (CFail ()) ->
-      MaybeT $ whnfFun funName es clauses
+      MaybeT $ whnfFun fun es clauses
     Success (args, leftoverEs) -> lift $ do
       body' <- instantiateClauseBody body args
       whnf =<< eliminate body' leftoverEs
@@ -189,7 +178,7 @@ matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
   case blockedArg of
     BlockingHead bl _ -> do
       matched <- matchClause es patterns
-      return $ Failure (CCollect (HS.singleton bl)) <*> matched
+      return $ Failure (CCollect (HS.singleton (opndKey bl))) <*> matched
     BlockedOn mvs _ _ -> do
       matched <- matchClause es patterns
       return $ Failure (CCollect mvs) <*> matched
@@ -268,7 +257,7 @@ genericTermViewEq tView1 tView2 = do
       (&&) <$> ((&&) <$> synEq type1 type2 <*> synEq x1 x2)
            <*> synEq y1 y2
     (App h1 els1, App h2 els2) ->
-      (h1 == h2 &&) <$> synEq els1 els2
+      synEq (h1, els1) (h2, els2)
     (Set, Set) ->
       return True
     (Con dataCon1 args1, Con dataCon2 args2) | dataCon1 == dataCon2 ->
@@ -313,15 +302,19 @@ internalToTerm t0 = do
     Set ->
       return $ SA.Set SA.noSrcLoc
     App h args -> do
-      let h' = case h of
-            Var v -> SA.Var (SA.name (PP.render v))
-            Def (DKName f) -> SA.Def f
-            Def (DKMeta mv) -> SA.Var (SA.Name (SA.srcLoc mv) (PP.render mv))
-            J -> SA.J SA.noSrcLoc
-      args' <- forM args $ \arg -> case arg of
+      (h', args1) <- case h of
+        Var v ->
+          return (SA.Var (SA.name (PP.render v)), [])
+        Def (Opened (DKName f) args') ->
+          (SA.Def f,) <$> mapM internalToTerm args'
+        Def (Opened (DKMeta mv) args') ->
+          (SA.Var (SA.Name (SA.srcLoc mv) (PP.render mv)),) <$> mapM internalToTerm args'
+        J ->
+          return (SA.J SA.noSrcLoc, [])
+      args2 <- forM args $ \arg -> case arg of
         Apply t -> SA.Apply <$> internalToTerm t
         Proj p  -> return $ SA.Proj $ pName p
-      return $ SA.App h' args'
+      return $ SA.App h' (map SA.Apply args1 ++ args2)
 
 genericMetas :: (IsTerm t, MonadTerm t m) => Term t -> m MetaSet
 genericMetas t = do
@@ -335,5 +328,11 @@ genericMetas t = do
     Refl               -> return mempty
     Con _ elims        -> metas elims
   where
-    metasHead (Def (DKMeta mv)) = return $ HS.singleton mv
-    metasHead _                 = return mempty
+    metasHead (Def (Opened k args)) = do
+      mvs <- metas args
+      let mv = case k of
+            DKName _   -> mempty
+            DKMeta mv' -> HS.singleton mv'
+      return $ mv <> mvs
+    metasHead _ = do
+      return mempty

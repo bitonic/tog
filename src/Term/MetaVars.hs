@@ -26,8 +26,8 @@ instance IsTerm t => Metas t (Constant t) where
   metas (Instantiable inst) = metas inst
 
 instance (IsTerm t) => Metas t (Inst t) where
-  metas Open       = return mempty
-  metas (Inst _ t) = metas t
+  metas Open     = return mempty
+  metas (Inst t) = metas t
 
 instance Metas t a => Metas t (Maybe a) where
   metas Nothing  = return mempty
@@ -41,5 +41,6 @@ instance Metas t (Tel t) where
   metas T0                  = return mempty
   metas ((_, type_) :> tel) = metas (type_, tel)
 
-instance Metas t (MetaInst t) where
-  metas (MetaInst _ t) = metas t
+instance Metas t (Contextual t) where
+  metas = metas . ctxtDefinition
+
