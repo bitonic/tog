@@ -1,13 +1,4 @@
 -- | Terms and a lot of facilities.
---
--- 'Tel', 'Ctx', and 'Subst' operations should be imported in a
--- qualified fashion:
---
--- @
--- import qualified Term.Context                     as Ctx
--- import qualified Term.Subst                as Sub
--- import qualified Term.Telescope                   as Tel
--- @
 module Term
   ( module Term.Types
   , module Term.Synonyms
@@ -23,4 +14,3 @@ import Term.Pretty ()
 import Term.MetaVars ()
 import Term.FreeVars
 import Term.Impl
-

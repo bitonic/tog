@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Pretty () where
 
@@ -26,11 +27,11 @@ instance PrettyM t (Definition t) where
              "constructor" <+> PP.pretty dataCon $$
              "field" $$>
              PP.vcat (map (PP.pretty . pName) fields)
-  prettyM (DataCon tyCon _ pars type_) = do
+  prettyM (DataCon tyCon _ (Contextual pars type_)) = do
     typeDoc <- prettyM =<< telPi pars type_
     return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
-  prettyM (Projection _ tyCon pars type_) = do
-    typeDoc <- prettyM =<< telPi pars type_
+  prettyM (Projection _ tyCon (Contextual pars (type1, type2))) = do
+    typeDoc <- prettyM =<< telPi pars =<< pi type1 type2
     return $ "projection" <+> PP.pretty tyCon $$> typeDoc
 
 instance PrettyM t (Clause t) where

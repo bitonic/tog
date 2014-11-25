@@ -15,9 +15,9 @@ instance (Metas t a, Metas t b) => Metas t (a, b) where
   metas (x, y) = (<>) <$> metas x <*> metas y
 
 instance IsTerm t => Metas t (Definition t) where
-  metas (Constant t c)              = metas (t, c)
-  metas (DataCon _ _ pars type_)    = metas (pars, type_)
-  metas (Projection _ _ pars type_) = metas (pars, type_)
+  metas (Constant t c)         = metas (t, c)
+  metas (DataCon _ _ type_)    = metas type_
+  metas (Projection _ _ type_) = metas type_
 
 instance IsTerm t => Metas t (Constant t) where
   metas Postulate           = return mempty
@@ -41,6 +41,7 @@ instance Metas t (Tel t) where
   metas T0                  = return mempty
   metas ((_, type_) :> tel) = metas (type_, tel)
 
-instance Metas t (Contextual t) where
-  metas = metas . ctxtDefinition
+instance (IsTerm t, Metas t a) => Metas t (Contextual t a) where
+  -- TODO can't we just ignore `x'?
+  metas (Contextual x y) = metas (x, y)
 

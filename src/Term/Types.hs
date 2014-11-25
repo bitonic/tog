@@ -292,12 +292,12 @@ instance PP.Pretty Projection where
 -- implementation of terms might be different, but we must be able to
 -- get a 'TermView' out of it.  See 'View'.
 data TermView t
-    = Pi !t !(Abs t)
+    = Pi !(Type t) !(Abs (Type t))
     | Lam !(Abs t)
-    | Equal !(Type t) !t !t
+    | Equal !(Type t) !(Term t) !(Term t)
     | Refl
     | Set
-    | Con !Name [t]
+    | Con !Name [Term t]
     | App !(Head t) [Elim t]
     deriving (Eq, Generic, Show)
 
@@ -596,24 +596,23 @@ data DefKey
 
 instance Hashable DefKey
 
-data Contextual t = Contextual
-  { ctxtTelescope  :: !(Tel t)
-  , ctxtDefinition :: !(Definition t)
+data Contextual t a = Contextual
+  { contextualTelescope :: !(Tel t)
+  , contextualInside    :: !a
   } deriving (Eq, Show, Typeable)
+
+type ContextualDef t = Contextual t (Definition t)
 
 data Definition t
   = Constant (Type t) (Constant t)
-  | DataCon Name Natural (Tel (Type t)) (Type t)
+  | DataCon Name Natural (Contextual t (Type t))
   -- ^ Data type name, number of arguments, telescope ranging over the
   -- parameters of the type constructor ending with the type of the
   -- constructor.
-  | Projection Field Name (Tel (Type t)) (Type t)
+  | Projection Field Name (Contextual t (Type t, Abs (Type t)))
   -- ^ Field number, record type name, telescope ranging over the
   -- parameters of the type constructor ending with the type of the
-  -- projection.
-  --
-  -- Note that the type of the projection is always a pi type from a
-  -- member of the record type to the type of the projected thing.
+  -- projected thing and finally the type of the projection.
   deriving (Eq, Show, Typeable)
 
 data Constant t
@@ -633,18 +632,6 @@ data Inst t
   = Inst !(Invertible t)
   | Open
   deriving (Eq, Show, Typeable)
-
-{-
--- | All meta-variable instantiations will be 'Inst's where we have only
--- one clause and no patterns.
---
--- As said, we store all meta-vars in the same form -- not invertible
--- (it'll always reduce anyway), and one clause with no patterns.
-instToMetaBody :: Inst t -> Maybe (Term t)
-instToMetaBody Open                                 = Nothing
-instToMetaBody (Inst (NotInvertible [Clause [] t])) = Just t
-instToMetaBody _                                    = __IMPOSSIBLE__
--}
 
 -- | A function is invertible if each of its clauses is headed by a
 -- different 'TermHead'.
@@ -675,14 +662,16 @@ ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
 
 definitionToNameInfo :: Name -> Definition t -> NameInfo
-definitionToNameInfo n (Constant _ _)       = SA.DefName n 0
-definitionToNameInfo n (DataCon _ args _ _) = SA.ConName n 0 $ fromIntegral args
-definitionToNameInfo n (Projection _ _ _ _) = SA.ProjName n 0
+definitionToNameInfo n (Constant _ _)     = SA.DefName n 0
+definitionToNameInfo n (DataCon _ args _) = SA.ConName n 0 $ fromIntegral args
+definitionToNameInfo n (Projection _ _ _) = SA.ProjName n 0
 
 definitionType :: (IsTerm t, MonadTerm t m) => Closed (Definition t) -> m (Closed (Type t))
-definitionType (Constant type_ _)         = return type_
-definitionType (DataCon _ _ tel type_)    = telPi tel type_
-definitionType (Projection _ _ tel type_) = telPi tel type_
+definitionType (Constant type_ _)        = return type_
+definitionType (DataCon _ _ (Contextual tel type_)) =
+  telPi tel type_
+definitionType (Projection _ _ (Contextual tel (type1, type2))) =
+  telPi tel =<< pi type1 type2
 
 -- 'Meta'iables
 ------------------------------------------------------------------------
@@ -743,31 +732,31 @@ runTermM sig (TermM m) = runReaderT m sig
 
 -- | A 'Signature' stores every globally scoped thing.
 data Signature t = Signature
-    { sigDefinitions    :: HMS.HashMap DefKey (Contextual t)
+    { sigDefinitions    :: HMS.HashMap DefKey (ContextualDef t)
     , sigMetasCount     :: Int
     }
 
 sigEmpty :: Signature t
 sigEmpty = Signature HMS.empty 0
 
-sigLookupDefinition :: Signature t -> DefKey -> Maybe (Contextual t)
+sigLookupDefinition :: Signature t -> DefKey -> Maybe (ContextualDef t)
 sigLookupDefinition sig key = HMS.lookup key (sigDefinitions sig)
 
 -- | Gets a definition for the given 'DefKey'.
-sigGetDefinition' :: Signature t -> DefKey -> Closed (Contextual t)
+sigGetDefinition' :: Signature t -> DefKey -> Closed (ContextualDef t)
 sigGetDefinition' sig key = case HMS.lookup key (sigDefinitions sig) of
   Nothing   -> __IMPOSSIBLE__
   Just def' -> def'
 
-sigGetDefinition :: Signature t -> Name -> Closed (Contextual t)
+sigGetDefinition :: Signature t -> Name -> Closed (ContextualDef t)
 sigGetDefinition sig name = sigGetDefinition' sig $ DKName name
 
-sigAddDefinition :: Signature t -> DefKey -> Contextual t -> Signature t
+sigAddDefinition :: Signature t -> DefKey -> ContextualDef t -> Signature t
 sigAddDefinition sig key def' = case sigLookupDefinition sig key of
   Nothing -> sigInsertDefinition sig key def'
   Just _  -> __IMPOSSIBLE__
 
-sigInsertDefinition :: Signature t -> DefKey -> Contextual t -> Signature t
+sigInsertDefinition :: Signature t -> DefKey -> ContextualDef t -> Signature t
 sigInsertDefinition sig key def' =
   sig{sigDefinitions = HMS.insert key def' (sigDefinitions sig)}
 
@@ -801,11 +790,11 @@ sigAddClauses sig name clauses =
   in sigInsertDefinition sig (DKName name) def'
 
 sigAddProjection
-  :: Signature t -> Name -> Field -> Name -> Tel (Type t) -> Type t -> Signature t
-sigAddProjection sig0 projName projIx tyCon tel type_ =
+  :: Signature t -> Name -> Field -> Name -> Contextual t (Type t, Abs (Type t)) -> Signature t
+sigAddProjection sig0 projName projIx tyCon ctxtType =
   case sigGetDefinition sig0 tyCon of
-    Contextual tel' (Constant tyConType (Record dataCon projs)) ->
-      let def' = Contextual tel' $ Projection projIx tyCon tel type_
+    Contextual tel (Constant tyConType (Record dataCon projs)) ->
+      let def' = Contextual tel $ Projection projIx tyCon ctxtType
           sig  = sigAddDefinition sig0 key def'
           projs' = projs ++ [Projection' projName projIx]
       in sigInsertDefinition sig (DKName tyCon) $
@@ -816,11 +805,11 @@ sigAddProjection sig0 projName projIx tyCon tel type_ =
     key      = DKName projName
 
 sigAddDataCon
-  :: Signature t -> Name -> Name -> Natural -> Tel (Type t) -> Type t -> Signature t
-sigAddDataCon sig0 dataConName tyCon numArgs tel type_ =
+  :: Signature t -> Name -> Name -> Natural -> Contextual t (Type t) -> Signature t
+sigAddDataCon sig0 dataConName tyCon numArgs ctxtType =
   case sigGetDefinition sig0 tyCon of
-    Contextual tel' (Constant tyConType (Data dataCons)) ->
-      let sig = mkSig tel'
+    Contextual tel (Constant tyConType (Data dataCons)) ->
+      let sig = mkSig tel
           dataCons' = dataCons ++ [dataConName]
       in sigInsertDefinition sig (DKName tyCon) $
          Contextual tel $ Constant tyConType (Data dataCons')
@@ -832,8 +821,8 @@ sigAddDataCon sig0 dataConName tyCon numArgs tel type_ =
       __IMPOSSIBLE__
   where
     key = DKName dataConName
-    def' tel' = Contextual tel' $ DataCon tyCon numArgs tel type_
-    mkSig tel' = sigAddDefinition sig0 key $ def' tel'
+    def' tel = Contextual tel $ DataCon tyCon numArgs ctxtType
+    mkSig tel = sigAddDefinition sig0 key $ def' tel
 
 -- | Gets the type of a 'Meta'.  Fails if the 'Meta' if not
 -- present.
@@ -881,7 +870,7 @@ sigDefinedMetas sig = [mv | DKMeta mv <- HMS.keys $ sigDefinitions sig]
 sigToScope :: Signature t -> Scope
 sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
   where
-    f n = (nameString n, definitionToNameInfo n (ctxtDefinition (sigGetDefinition sig n)))
+    f n = (nameString n, definitionToNameInfo n (contextualInside (sigGetDefinition sig n)))
 
 -- Context
 ------------------------------------------------------------------------
