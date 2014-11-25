@@ -203,7 +203,7 @@ addMeta type_ = do
           "type:" //> typeDoc
   debugBracket "addMeta" msg $ return mv
 
-uncheckedInstantiateMeta :: Meta -> MetaInst t -> TC t s ()
+uncheckedInstantiateMeta :: Meta -> MetaBody t -> TC t s ()
 uncheckedInstantiateMeta mv mvb =
   modifySignature $ \sig -> sigInstantiateMeta sig mv mvb
 

@@ -26,8 +26,6 @@ import           Term.Types                       (unview, view)
 import qualified Term.Subst                       as Sub
 import           Data.Collect
 
-#include "impossible.h"
-
 genericSafeApplySubst
   :: (IsTerm t, MonadTerm t m) => t -> Subst t -> ApplySubstM m t
 genericSafeApplySubst t Sub.Id = do
@@ -69,17 +67,22 @@ genericWhnf
   :: (IsTerm t, MonadTerm t m) => t -> m (Blocked Meta t)
 genericWhnf t = do
   tView <- view t
+  sig <- askSignature
   -- Note that here we don't want to crash if the definition is not
   -- set, since I want to be able to test non-typechecked terms.
   let fallback = return $ NotBlocked t
   case tView of
-    App (Def dkey) es -> do
-      mbDef <- lookupDefinition dkey
-      case mbDef of
-        Just (Constant _ (Instantiable inst)) -> do
-          eliminateInst dkey inst es
-        _ -> do
-          fallback
+    App (Def (DKMeta mv)) es -> case sigLookupMetaBody sig mv of
+      Just mi -> eliminateMeta mi es
+      Nothing -> return $ BlockingHead mv es
+    App (Def (DKName f)) es -> case sigLookupDefinition sig f of
+      Just (Constant _ (Instantiable (InstFun cs))) -> do
+        mbT <- whnfFun f es $ ignoreInvertible cs
+        case mbT of
+          Just t' -> return t'
+          Nothing -> fallback
+      _ -> do
+        fallback
     App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
       refl'' <- whnf refl'
       case refl'' of
@@ -95,36 +98,63 @@ genericWhnf t = do
     _ ->
       fallback
 
-eliminateInst
-  :: (IsTerm t, MonadTerm t m) => DefKey -> Inst t -> [Elim t] -> m (Blocked Meta t)
-eliminateInst (DKMeta mv) Open es = do
-  return $ BlockingHead mv es
-eliminateInst (DKName f) Open es = do
-  NotBlocked <$> defName f es
--- This is a special case, we know that all meta-variable bodies will be
--- stored in this form, and we want to optimize for that.  If some
--- functions fall under this pattern too, it doesn't matter.
-eliminateInst _ (Inst n inv) es | [Clause [] t] <- ignoreInvertible inv =
-  whnf =<< do
-    -- Optimization: if the arguments are all lined up, don't touch
-    -- the body.
-    if length es >= n
-      then do
-        let (esl, es') = splitAt n es
-        Just args <- return $ mapM isApply esl
-        simple <- isSimple (n-1) args
-        if simple
-          then eliminate t es'
-          else (`eliminate` es') =<< instantiate t args
-      else do
-        -- TODO should we do this?  It seems like we need it for
-        -- meta-variables, but I'm not sure if it's good for defs.
-        --
-        -- If we
-        -- can't, we can turn the thing into a lambda and partially apply
-        -- it.
-        mvT <- mkBody n t
-        eliminate mvT es
+{-
+genericWhnf
+  :: (IsTerm t, MonadTerm t m) => t -> m (Blocked Meta t)
+genericWhnf t = do
+  tView <- view t
+  sig <- askSignature
+  -- Note that here we don't want to crash if the definition is not
+  -- set, since I want to be able to test non-typechecked terms.
+  let fallback = return $ NotBlocked t
+  case tView of
+    App (Def (DKMeta mv)) es -> case sigLookupMetaBody sig mv of
+      Just mi -> eliminateMeta mi es
+      Nothing -> return $ BlockingHead (DKMeta mv) es
+    App (Def (DKName defName)) es -> case sigLookupDefinition sig defName of
+      Just (Constant _ (Instantiable (InstFun cs))) -> do
+        mbT <- whnfFun defName es $ ignoreInvertible cs
+        case mbT of
+          Just t' -> return t'
+          Nothing -> fallback
+      Just (Constant _ (Instantiable OpenFun)) -> do
+        return $ BlockingHead (DKName defName) es
+      _ -> do
+        fallback
+    App (Def dk) elims ->
+      return $ BlockingHead dk elims
+    App J es0@(_ : x : _ : _ : Apply p : Apply refl' : es) -> do
+      refl'' <- whnf refl'
+      case refl'' of
+        BlockingHead bl _ ->
+          return $ BlockedOn (HS.singleton bl) BlockedOnJ es0
+        BlockedOn mvs _ _ ->
+          return $ BlockedOn mvs BlockedOnJ es0
+        NotBlocked refl''' -> do
+          reflView <- view refl'''
+          case reflView of
+            Refl -> whnf =<< eliminate p (x : es)
+            _    -> fallback
+    _ ->
+      fallback
+-}
+
+eliminateMeta
+  :: (IsTerm t, MonadTerm t m) => MetaBody t -> [Elim t] -> m (Blocked Meta t)
+eliminateMeta mvb@(MetaBody n body) es = whnf =<< do
+  if length es >= n
+    then do
+      let (esl, es') = splitAt n es
+      Just args <- return $ mapM isApply esl
+      -- Optimization: if the arguments are all lined up, don't touch
+      -- the body.
+      simple <- isSimple (n-1) args
+      if simple
+        then eliminate body es'
+        else (`eliminate` es') =<< instantiate body args
+    else do
+      mvT <- metaBodyToTerm mvb
+      eliminate mvT es
   where
     isSimple _ [] = do
       return True
@@ -133,20 +163,6 @@ eliminateInst _ (Inst n inv) es | [Clause [] t] <- ignoreInvertible inv =
       case argView of
         App (Var v) [] | varIndex v == n' -> isSimple (n'-1) args'
         _                                 -> return False
-
-    mkBody 0 body' = return body'
-    mkBody m body' = lam =<< mkBody (m-1) body'
--- Currently we only support top-level functions, and metas can't have clauses.
-eliminateInst (DKName f) (Inst 0 inv) es = do
-  let clauses = ignoreInvertible inv
-  mbT <- whnfFun f es clauses
-  case mbT of
-    Nothing -> NotBlocked <$> defName f es
-    Just t  -> return t
-eliminateInst (DKName _) (Inst _ _) _ = do
-  __IMPOSSIBLE__
-eliminateInst (DKMeta _) (Inst _ _) _ = do
-  __IMPOSSIBLE__
 
 whnfFun
   :: (IsTerm t, MonadTerm t m)

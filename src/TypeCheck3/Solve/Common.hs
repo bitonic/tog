@@ -43,11 +43,11 @@ curryMeta t = do
       args <- toArgs args0
       newMv <- addMeta newMvType
       mvT <- meta newMv $ map Apply args
-      let mi = MetaInst abstractions mvT
+      let mi = MetaBody abstractions mvT
       debug "unrolled" $ do
         mvTypeDoc <- prettyM =<< telPi tel mvType
         newMvTypeDoc <- prettyM newMvType
-        mvTDoc <- prettyM mi
+        mvTDoc <- prettyM =<< metaBodyToTerm mi
         return $
           "old type:" //> mvTypeDoc $$
           "new type:" //> newMvTypeDoc $$
@@ -224,7 +224,7 @@ prune allowedVs oldMv elims = do
       newMv <- lift $ addMeta newMvType
       mi <- lift $ killArgs newMv kills1
       lift $ instantiateMeta oldMv mi
-      lift $ metaInstToTerm mi
+      lift $ metaBodyToTerm mi
   where
     -- We build a pi-type with the non-killed types in.  This way, we
     -- can analyze the dependency between arguments and avoid killing
@@ -292,10 +292,10 @@ shouldKill vs t = runMaybeT $ do
     isNeutral f = do
       def' <- getDefinition f
       case def' of
-        Constant _ (Instantiable _) -> return True
-        Constant _ _                -> return False
-        DataCon{}                   -> __IMPOSSIBLE__
-        Projection{}                -> __IMPOSSIBLE__
+        Constant _ (Instantiable (InstFun _)) -> return True
+        Constant _ _                          -> return False
+        DataCon{}                             -> __IMPOSSIBLE__
+        Projection{}                          -> __IMPOSSIBLE__
         -- TODO: more precise analysis
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
@@ -638,10 +638,10 @@ applyInvertMeta
   :: forall t s.
      (IsTerm t)
   => Ctx t -> InvertMeta t -> Term t
-  -> TC t s (Validation (Collect Var MetaSet) (MetaInst t))
+  -> TC t s (Validation (Collect Var MetaSet) (MetaBody t))
 applyInvertMeta ctx (InvertMeta sub vsNum) t = do
-  let fallback = fmap (MetaInst vsNum) <$> applyInvertMetaSubst sub t
-  let dontTouch = return $ Success $ MetaInst vsNum t
+  let fallback = fmap (MetaBody vsNum) <$> applyInvertMetaSubst sub t
+  let dontTouch = return $ Success $ MetaBody vsNum t
   -- Optimization: if the substitution is the identity, and if the free
   -- variables in the term are a subset of the variables that the
   -- substitution covers, don't touch the term.
@@ -742,13 +742,13 @@ applyInvertMetaSubst sub t0 =
 
 -- | @killArgs α kills@ instantiates @α@ so that it discards the
 --   arguments indicated by @kills@.
-killArgs :: (IsTerm t) => Meta -> [Named Bool] -> TC t s (MetaInst t)
+killArgs :: (IsTerm t) => Meta -> [Named Bool] -> TC t s (MetaBody t)
 killArgs newMv kills = do
   let vs = reverse [ mkVar n ix
                    | (ix, Named n kill) <- zip [0..] (reverse kills), not kill
                    ]
   body <- meta newMv . map Apply =<< mapM var vs
-  return $ MetaInst (length kills) body
+  return $ MetaBody (length kills) body
 
 -- | If @t = α ts@ and @α : Δ -> D us@ where @D@ is some record type, it
 -- will instantiate @α@ accordingly.
@@ -859,11 +859,11 @@ instantiateDataCon mv dataCon = do
   (dataConArgsTel, _) <- unrollPi appliedDataConType
   dataConArgs <- createMvsPars (telToCtx telMvArgs) dataConArgsTel
   mvT <- con dataCon dataConArgs
-  let mi = MetaInst (telLength telMvArgs) mvT
+  let mi = MetaBody (telLength telMvArgs) mvT
   -- given the usage, here we know that the body is going to be well typed.
   -- TODO make sure that the above holds.
   instantiateMeta mv mi
-  metaInstToTerm mi
+  metaBodyToTerm mi
 
 -- | @createMvsPars Γ Δ@ unrolls @Δ@ and creates a metavariable for
 --   each of the elements.

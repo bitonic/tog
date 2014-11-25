@@ -12,10 +12,19 @@ instance PrettyM t (Definition t) where
   prettyM (Constant type_ Postulate) = do
     typeDoc <- prettyM type_
     return $ "postulate" //> typeDoc
-  prettyM (Constant type_ (Instantiable instk)) = do
-    typeDoc <- prettyM type_
-    instDoc <- prettyM instk
-    return $ typeDoc $$ instDoc
+  prettyM (Constant type_ (Instantiable inst)) = case inst of
+    OpenFun -> do
+      prettyM type_
+    InstFun clauses -> do
+      typeDoc <- prettyM type_
+      clausesDoc <- mapM prettyM $ ignoreInvertible clauses
+      return $ typeDoc $$ PP.vcat clausesDoc
+    OpenMeta -> do
+      prettyM type_
+    InstMeta mvb -> do
+      typeDoc <- prettyM type_
+      mvbDoc <- prettyM mvb
+      return $ typeDoc $$ mvbDoc
   prettyM (Constant type_ (Data dataCons)) = do
     typeDoc <- prettyM type_
     return $ "data" <+> typeDoc <+> "where" $$>
@@ -91,17 +100,5 @@ instance PrettyM t (Sub.Subst t) where
       subDoc <- prettyM sub
       return $ "Lift" <+> PP.pretty i //> subDoc
 
-instance (IsTerm t) => PrettyM t (Inst t) where
-  prettyM Open =
-    return "Open"
-  prettyM (Inst vars t) = do
-    tDoc <- prettyM t
-    return $
-      "Inst" <+> PP.pretty vars $$
-      PP.indent 2 tDoc
-
-instance (IsTerm t) => PrettyM t (MetaInst t) where
-  prettyM = prettyM . metaInstToInst
-
-instance (IsTerm t) => PrettyM t (Invertible t) where
-  prettyM = prettyM . ignoreInvertible
+instance PrettyM t (MetaBody t) where
+  prettyM mvb = prettyM =<< metaBodyToTerm mvb

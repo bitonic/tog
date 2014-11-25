@@ -75,7 +75,7 @@ solve c = do
       then go False [] constrs
       else return constrs
     go progress newConstrs ((mvs, constr) : constrs) = do
-      attempt <- do mvsBodies <- forM (HS.toList mvs) lookupMetaInst
+      attempt <- do mvsBodies <- forM (HS.toList mvs) lookupMetaBody
                     return $ null mvsBodies || any isJust mvsBodies
       if attempt
         then do
@@ -261,8 +261,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
         debug_ "head is J, couldn't invert." ""
         fallback t1
       BlockedOnFunction fun1 -> do
-        -- TODO change the 0 when we support more
-        Constant _ (Instantiable (Inst 0 clauses)) <- getDefinition_ fun1
+        Constant _ (Instantiable (InstFun clauses)) <- getDefinition_ fun1
         case clauses of
           NotInvertible _ -> do
             debug_ "couldn't invert." ""
@@ -466,9 +465,9 @@ metaAssign ctx0 type0 mv elims t0 = do
         t2 <- applyInvertMeta ctx inv t1
         case t2 of
           Success mvb -> do
-            mvs <- metas mvb
+            mvs <- metas $ mbBody mvb
             when (mv `HS.member` mvs) $
-              checkError $ OccursCheckFailed mv $ metaInstBody mvb
+              checkError $ OccursCheckFailed mv $ mbBody mvb
             instantiateMeta mv mvb
             return []
           Failure (CCollect mvs) -> do

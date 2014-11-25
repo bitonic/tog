@@ -296,9 +296,9 @@ checkEqualSpine _ type_ _ elims1 elims2 = do
 
 instantiateMeta
   :: (IsTerm t)
-  => Meta -> MetaInst t -> TC t s ()
+  => Meta -> MetaBody t -> TC t s ()
 instantiateMeta mv mi = do
-  t <- metaInstToTerm mi
+  t <- metaBodyToTerm mi
   let msg = do
         tDoc <- prettyM t
         return $
