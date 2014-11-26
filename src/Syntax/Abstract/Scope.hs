@@ -34,6 +34,9 @@ data Scope = Scope
   { inScope :: Map String NameInfo
   }
 
+updateScope :: (Map String NameInfo -> Map String NameInfo) -> Scope -> Scope
+updateScope f s = s { inScope = f (inScope s) }
+
 initScope :: Scope
 initScope = Scope $ Map.fromList []
 
@@ -74,11 +77,12 @@ newtype Check a = Check { unCheck :: ReaderT Scope (Either ScopeError) a }
 type CCheck a = forall b. (a -> Check b) -> Check b
 
 mapC :: (a -> CCheck b) -> [a] -> CCheck [b]
-mapC _ [] ret = ret []
-mapC f (x : xs) ret = f x $ \y -> mapC f xs $ \ys -> ret (y : ys)
+mapC _ []       ret = ret []
+mapC f (x : xs) ret = f x $ \ y -> mapC f xs $ \ ys -> ret (y : ys)
+  -- cf. f x >>= \ y -> mapM f xs >>= \ ys -> return (y : ys)
 
 concatMapC :: (a -> CCheck [b]) -> [a] -> CCheck [b]
-concatMapC f xs ret = mapC f xs $ ret . concat
+concatMapC f xs ret = mapC f xs $ \ ys -> ret (concat ys)
 
 scopeError :: HasSrcLoc i => i -> String -> Check a
 scopeError p err = throwError $ ScopeError (srcLoc p) err
@@ -97,13 +101,13 @@ fromCName (C.Name ((l, c), s)) = mkName l c s
 
 
 mkVarInfo :: C.Name -> NameInfo
-mkVarInfo = VarName . fromCName 
+mkVarInfo = VarName . fromCName
 
 mkDefInfo :: C.Name -> Hiding -> NameInfo
 mkDefInfo = DefName . fromCName
 
 mkConInfo :: C.Name -> Hiding -> NumberOfArguments -> NameInfo
-mkConInfo = ConName . fromCName 
+mkConInfo = ConName . fromCName
 
 mkProjInfo :: C.Name -> Hiding -> NameInfo
 mkProjInfo = ProjName . fromCName
@@ -112,7 +116,7 @@ mkProjInfo = ProjName . fromCName
 resolveName'' :: C.Name -> Check (Maybe NameInfo)
 resolveName'' (C.Name (_, s))
   | s `elem` reservedNames = impossible "reserved names should not end up in resolveName"
-  | otherwise = asks $ Map.lookup s . inScope
+  | otherwise = Map.lookup s <$> asks inScope
 
 resolveName' :: C.Name -> Check NameInfo
 resolveName' x@(C.Name ((l, c), s)) = do
@@ -135,28 +139,47 @@ checkShadowing i (Just j)  =
 
 bindName :: NameInfo -> CCheck Name
 bindName i ret = do
-  checkShadowing i =<< asks (Map.lookup s . inScope) 
-  flip local (ret x) $ \e -> e { inScope = Map.insert s i $ inScope e }
+  checkShadowing i =<< Map.lookup s <$> asks inScope
+  local (updateScope $ Map.insert s i) $ ret x
   where
     s = infoStringName i
     x = infoName i
 
+-- checkHiding :: C.Expr -> Check (Hiding, C.Expr)
+-- checkHiding e = case e of
+--   C.Fun a b  -> second (C.Fun a) <$> checkHiding b
+--   C.Pi (C.Tel tel) b -> do
+--     (n, tel, stop) <- telHiding tel
+--     if stop then return (n, C.Pi (C.Tel tel) b)
+--             else do
+--       (m, b) <- checkHiding b
+--       return (n + m, C.Pi (C.Tel tel) b)
+--   _ -> return (0, e)
+--   where
+--     telHiding [] = return (0, [], False)
+--     telHiding bs@(C.Bind{} : _) = return (0, bs, True)
+--     telHiding (C.HBind xs e : bs) = do
+--       (n, bs, stop) <- telHiding bs
+--       return (n + length xs, C.Bind xs e : bs, stop)
+
 checkHiding :: C.Expr -> Check (Hiding, C.Expr)
-checkHiding e = case e of
-  C.Fun a b  -> second (C.Fun a) <$> checkHiding b
-  C.Pi (C.Tel tel) b -> do
-    (n, tel, stop) <- telHiding tel
-    if stop then return (n, C.Pi (C.Tel tel) b)
-            else do
-      (m, b) <- checkHiding b
-      return (n + m, C.Pi (C.Tel tel) b)
-  _ -> return (0, e)
+checkHiding e = return $ loop e
   where
-    telHiding [] = return (0, [], False)
-    telHiding bs@(C.Bind{} : _) = return (0, bs, True)
-    telHiding (C.HBind xs e : bs) = do
-      (n, bs, stop) <- telHiding bs
-      return (n + length xs, C.Bind xs e : bs, stop)
+    loop e = case e of
+      C.Fun a b          -> second (C.Fun a) $ checkHiding b
+      C.Pi (C.Tel tel) b ->
+        if stop then (n,     C.Pi (C.Tel tel') b )
+                else (n + m, C.Pi (C.Tel tel') b')
+        where
+          (n, tel', stop) = telHiding tel
+          (m, b')         = checkHiding b
+      _ -> (0, e)
+
+    telHiding []                  = (0, [], False)
+    telHiding bs@(C.Bind{} : _)   = (0, bs, True)
+    telHiding (C.HBind xs e : bs) = (n + length xs, C.Bind xs e : bs', stop)
+      where (n, bs', stop) = telHiding bs
+
 
 scopeCheckProgram :: C.Program -> Either PP.Doc Program
 scopeCheckProgram (C.Prog _ ds) =
@@ -229,7 +252,7 @@ checkDecls ds0 ret = case ds0 of
     xs <- checkHiddenNames n xs
     let is = map mkVarInfo xs
     xs <- mapC bindName is $ return
-    let t = App (Def x) (map (\x -> Apply (Top (srcLoc x)) (App (Var x) [])) xs)
+    let t = App (Def x) $ map (eapply . var) xs
     mapC (checkConstructor t is) cs $ \cs -> checkDecls ds $ \ds' ->
       ret (DataDef x xs cs : ds')
   C.Record x pars (C.RecordBody con fs) : ds | Just xs <- isParamDef pars -> do
@@ -423,47 +446,44 @@ checkExpr e = case e of
               C.HArg _ : _ -> scopeError e $ "Unexpected implicit argument to projection function: " ++ C.printTree e
               C.Arg e : es -> do
                 e <- checkExpr e
-                doProj x e . map (Apply (Top (srcLoc e))) =<< checkArgs e n es (\ _ -> return ())
-            IsRefl p | [] <- es ->
-              return $ Refl p
-            IsRefl p ->
-              scopeError p $ "refl applied to arguments " ++ show es
-            IsCon c args -> do
-              Con c <$> checkArgs z n es
-                        (\es -> checkNumberOfConstructorArguments e c es args)
-            Other h    -> App h . map (Apply (error "Unsure if Top or not")) <$> checkArgs z n es (\ _ -> return ())
-            HeadSet p  -> return $ Set p
-            HeadMeta p -> return $ Meta p
+                doProj x e . map eapply =<< checkArgs e n es
+            IsRefl p     -> Refl p <$ noArguments "refl"          p es
+            HeadSet p    -> Set  p <$ noArguments "Set"           p es
+            HeadMeta p   -> Meta p <$ noArguments "meta variable" p es
+            IsCon c args -> Con c <$> do
+              checkNumberOfConstructorArguments e c args =<< checkArgs z n es
+            Other h      -> App h . map eapply <$> checkArgs z n es
     doProj x (App h es1) es2 = return $ App h (es1 ++ [Proj x] ++ es2)
     doProj x e _ = scopeError x $ "Cannot project " ++ show x ++ " from " ++ show e
+    noArguments x p [] = return ()
+    noArguments x p es = scopeError p $ "unexpected arguments to " ++ x + ": " ++ show es
 
 checkArgs :: HasSrcLoc a =>
-             a -> Hiding -> [C.Arg] -> (forall b. [b] -> Check ()) ->
+             a -> Hiding -> [C.Arg] ->
              Check [Expr]
-checkArgs x n es extraCheck = do
-  es <- insertImplicit (srcLoc x) n es
-  extraCheck es
-  mapM checkExpr es
+checkArgs x n es = mapM checkExpr =<< insertImplicit (srcLoc x) n es
 
 checkNumberOfConstructorArguments ::
-  HasSrcLoc e => e -> Name -> [a] -> NumberOfArguments -> Check ()
-checkNumberOfConstructorArguments loc c as args = do
+  HasSrcLoc e => e -> Name -> NumberOfArguments -> [a] -> Check [a]
+checkNumberOfConstructorArguments loc c args as = do
   when (nas < args) $
     scopeError loc $ "The constructor " ++ show c ++
                      " is applied to too few arguments."
   when (nas > args) $
     scopeError loc $ "The constructor " ++ show c ++
                      " is applied to too many arguments."
+  return as
   where nas = length as
 
 
 -- | The possible shapes of heads of an application
-data AppHead = IsProj Name
-             | IsCon Name NumberOfArguments
-             | IsRefl SrcLoc
-             | Other Head
-             | HeadSet SrcLoc
-             | HeadMeta SrcLoc
+data AppHead
+  = IsProj Name                   -- ^ Prefix projection.
+  | IsCon Name NumberOfArguments  -- ^ Constructor.
+  | IsRefl SrcLoc                 -- ^ @refl@.
+  | HeadSet SrcLoc                -- ^ @Set@.
+  | HeadMeta SrcLoc               -- ^ @_@.
+  | Other Head                    -- ^ Variable, function, data, record, @J@.
 
 instance HasSrcLoc AppHead where
   srcLoc h = case h of
@@ -496,10 +516,10 @@ appView e = case e of
     applyTo es  (NotApp e)   = scopeError e $ C.printTree e ++ " cannot be applied to arguments"
 
 checkAppHead :: C.Name -> Check (AppHead, Hiding)
-checkAppHead (C.Name ((l, c), "_"))    = return (HeadMeta $ SrcLoc l c, 0)
-checkAppHead (C.Name ((l, c), "Set"))  = return (HeadSet $ SrcLoc l c, 0)
-checkAppHead (C.Name ((l, c), "J"))    = return (Other (J (SrcLoc l c)), 3)
-checkAppHead (C.Name ((l, c), "refl")) = return (IsRefl (SrcLoc l c), 0)
+checkAppHead (C.Name ((l, c), "_"))    = return (HeadMeta  $ SrcLoc l c, 0)
+checkAppHead (C.Name ((l, c), "Set"))  = return (HeadSet   $ SrcLoc l c, 0)
+checkAppHead (C.Name ((l, c), "J"))    = return (Other $ J $ SrcLoc l c, 3)
+checkAppHead (C.Name ((l, c), "refl")) = return (IsRefl    $ SrcLoc l c, 0)
 checkAppHead x = do
   i <- resolveName' x
   case i of
