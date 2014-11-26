@@ -17,7 +17,7 @@ executable tog
                      , base >= 4.6
                      , boxes >= 0.1
                      , containers >= 0.5
-                     , either >= 4
+                     , either >= 4.3.2
                      , hashable >= 1.2
                      , hashtables >= 1.1
                      , haskeline >= 0.7
