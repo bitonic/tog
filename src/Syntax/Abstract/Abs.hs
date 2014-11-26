@@ -165,7 +165,9 @@ instance HasSrcLoc Elim where
 instance Eq Expr where
   Lam x e     == Lam x' e'      = x == x' && e == e'
   Pi x a b    == Pi x' a' b'    = x == x' && a == a' && b == b'
-  PiImpl _ _ _ _ _ == PiImpl _ _ _ _ _ = error "TODO: Implement pointwise equality" 
+  (==) (PiImpl lin lie ldn lde lcd) 
+       (PiImpl rin rie rdn rde rcd)  = 
+         lin == rin && lie == rie && ldn == rdn && lde == rde && lcd == rcd
   Fun a b     == Fun a' b'      = a == a' && b == b'
   Equal a x y == Equal a' x' y' = a == a' && x == x' && y == y'
   App h es    == App h' es'     = h == h' && es == es'
