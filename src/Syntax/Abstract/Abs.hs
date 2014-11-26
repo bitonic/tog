@@ -64,34 +64,52 @@ data TypeSig = Sig
 
 data Clause = Clause [Pattern] Expr
 
+-- | Expressions @t@ (for "term") and @A,B,C@ (for types).
 data Expr
   = Lam Name Expr
+    -- ^ @\ x -> t@.
   | Pi Name Expr Expr
+    -- ^ @(x : A) -> B)@, abbreviation for @{_ : ⊤} (x : A) -> B@.
   | PiImpl Name Expr Name Expr Expr
+    -- ^ @{x : A} (y : B) -> C@.
   | Fun Expr Expr
+    -- ^ @A -> B@, abbreviation for @(_ : A) -> B@.
   | Equal Expr Expr Expr
+    -- ^ @Id A t t'@, concretely: @t == t'@.
   | App Head [Elim]
+    -- ^ @h es@, application.
   | Set SrcLoc
+    -- ^ @Set@, universe.
   | Meta SrcLoc
+    -- ^ @_@, meta variable.
   | Refl SrcLoc
+    -- ^ @refl@, proof of reflexive equality @t == t@.
   | Con Name [Expr]
+    -- ^ @c ts@, constructor (fully applied).
   | Top SrcLoc
+    -- ^ @⊤@, empty record.
   | Tt SrcLoc
+    -- ^ @tt@, empty tuple.
 
+-- | Application heads @h@.
 data Head
-  = Var Name
-  | Def Name
-  | J SrcLoc
+  = Var Name  -- ^ @x@, locally bound variable.
+  | Def Name  -- ^ @f@, globally defined function or data/record type.
+  | J SrcLoc  -- ^ @J@, eliminator for equality.
 
+-- | Eliminations @e@.
 data Elim
   = Apply Expr Expr
+    -- ^ @_ {t} t'@, a hidden argument and an explicit argument.
   | Proj Name
+    -- ^ @_ π@, projection.
   deriving Eq
 
+-- | Patterns @p@.
 data Pattern
-  = VarP Name
-  | WildP SrcLoc
-  | ConP Name [Pattern]
+  = VarP Name            -- ^ @x@, variable pattern.
+  | WildP SrcLoc         -- ^ @_@, unused variable.
+  | ConP Name [Pattern]  -- ^ @c ps@, constructor pattern (fully applied).
 
 -- | Number of variables bound by a list of pattern.
 patternsBindings :: [Pattern] -> Int
@@ -165,7 +183,7 @@ instance HasSrcLoc Elim where
 instance Eq Expr where
   Lam x e     == Lam x' e'      = x == x' && e == e'
   Pi x a b    == Pi x' a' b'    = x == x' && a == a' && b == b'
-  PiImpl _ _ _ _ _ == PiImpl _ _ _ _ _ = error "TODO: Implement pointwise equality" 
+  PiImpl _ _ _ _ _ == PiImpl _ _ _ _ _ = error "TODO: Implement pointwise equality"
   Fun a b     == Fun a' b'      = a == a' && b == b'
   Equal a x y == Equal a' x' y' = a == a' && x == x' && y == y'
   App h es    == App h' es'     = h == h' && es == es'
@@ -238,6 +256,7 @@ instance Pretty Pattern where
 ------------------------------------------------------------------------
 
 instance Pretty Elim where
+  prettyPrec p (Apply Tt{} e) = condParens (p > 0) $ "$" <+> prettyPrec p e
   prettyPrec p (Apply ei e) = condParens (p > 0) $ "$" <+> ("{" <> prettyPrec p ei) <+> "}" <> prettyPrec p e
   prettyPrec _ (Proj x)  = "." <> pretty x
 
