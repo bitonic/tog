@@ -121,6 +121,17 @@ patternBindings (VarP _)      = 1
 patternBindings (WildP _)     = 1
 patternBindings (ConP _ pats) = patternsBindings pats
 
+-- * Smart constructors
+------------------------------------------------------------------------
+
+-- | Variable (applied to no arguments).
+var :: Name -> Expr
+var x = App (Var x) []
+
+-- | Explicit argument application.
+eapply :: Expr -> Elim
+eapply e = Apply (Tt $ srcLoc e) e
+
 -- * Instances
 ------------------------------------------------------------------------
 
