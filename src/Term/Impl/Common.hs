@@ -22,7 +22,7 @@ import           Syntax
 import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           Term
-import           Term.Types                       (unview, view)
+import           Term.Types                       (unview, view,pi_)
 import qualified Term.Subst                       as Sub
 import           Data.Collect
 
@@ -38,11 +38,11 @@ genericSafeApplySubst t rho = do
   tView <- lift $ if reduce then whnfView t else view t
   case tView of
     Lam body ->
-      lift . lam =<< safeApplySubst body (sublift 1 rho)
+      lift . lam =<< safeApplySubst body (subLift 1 rho)
     Pi impl dom cod -> do
       imp' <- safeApplySubst impl rho
       dom' <- safeApplySubst dom rho
-      cod' <- safeApplySubst cod $ sublift 1 rho
+      cod' <- safeApplySubst cod $ subLift 1 rho
       lift $ pi imp' dom' cod'
     Equal type_ x y  -> do
       type' <- safeApplySubst type_ rho
@@ -254,7 +254,7 @@ genericTypeOfJ =
 
     infixr 9 -->
     (-->) :: (Name, m t) -> m t -> m t
-    (_, type_) --> t = join $ Sub.pi_ <$> type_ <*> t
+    (_, type_) --> t = join $ pi_ <$> type_ <*> t
 
 genericSynEq
   :: (IsTerm t, MonadTerm t m)

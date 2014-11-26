@@ -25,7 +25,7 @@ tm nms e0 = case e0 of
   SA.Pi n dom cod -> do
     dom' <- tm nms dom
     cod' <- tm (n : nms) cod
-    Term.pi dom' cod'
+    Term.pi_ dom' cod'
   SA.Fun dom cod -> do
     join $ Term.pi_ <$> tm nms dom
                     <*> (weaken_ 1 =<< tm nms cod)
@@ -67,7 +67,7 @@ equal :: SA.Expr -> SA.Expr -> SA.Expr -> SA.Expr
 equal = SA.Equal
 
 app :: SA.Head -> [SA.Expr] -> SA.Expr
-app h = SA.App h . map SA.Apply
+app h = SA.App h . map (SA.Apply (SA.Top $ srcLoc h))
 
 set :: SA.Expr
 set = SA.Set SA.noSrcLoc

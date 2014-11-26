@@ -52,6 +52,7 @@ module Term.Types
   , var
   , lam
   , pi
+  , pi_
   , equal
   , app
   , meta
@@ -310,9 +311,9 @@ type MetaSet = HS.HashSet Meta
 class Metas t a where
   metas :: (IsTerm t, MonadTerm t m) => a -> m (HS.HashSet Meta)
 
-instance MetaVars t (Elim t) where
-  metaVars (Apply impl t) = (<>) <$> (metas impl) <*> (metas t)
-  metaVars (Proj _)  = return mempty
+instance Metas t (Elim t) where
+  metas (Apply impl t) = (<>) <$> (metas impl) <*> (metas t)
+  metas (Proj _)  = return mempty
 
 instance Metas t a => Metas t [a] where
   metas xs = mconcat <$> mapM metas xs
@@ -492,6 +493,9 @@ lam body = unview $ Lam body
 
 pi :: (IsTerm t, MonadTerm t m) => t -> (Abs t) -> (Abs (Abs t)) -> m t
 pi impl domain codomain = unview $ Pi impl domain codomain
+
+pi_ :: (IsTerm t, MonadTerm t m) => t -> (Abs t) -> m t
+pi_ dom cod = join $ pi top <$> weaken_ 1 dom <*> weaken 1 1 cod 
 
 equal :: (IsTerm t, MonadTerm t m) => t -> t -> t -> m t
 equal type_ x y = unview $ Equal type_ x y
@@ -888,7 +892,7 @@ ctxPi :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Type t -> m (Type t)
 ctxPi ctx0 = go ctx0
   where
     go C0                   t = return t
-    go (ctx :< (_n, type_)) t = go ctx =<< pi type_ t
+    go (ctx :< _) t = go ctx =<< lam t
 
 -- | Creates a 'Lam' term with as many arguments there are in the
 -- 'Ctx'.
@@ -901,7 +905,7 @@ ctxLam ctx0 = go ctx0
 ctxApp :: (IsTerm t, MonadTerm t m) => m (Term t) -> Ctx (Type t) -> m (Term t)
 ctxApp t ctx0 = do
   t' <- t
-  eliminate t' . map Apply =<< mapM var (ctxVars ctx0)
+  eliminate t' . map (Apply top) =<< mapM var (ctxVars ctx0)
 
 -- Telescope
 ------------------------------------------------------------------------
@@ -1154,7 +1158,7 @@ eliminate t elims = do
         if unField (pField proj) >= length args
         then badElimination
         else eliminate (args !! unField (pField proj)) es
-    (Lam body, Apply argument : es) -> do
+    (Lam body, Apply impl argument : es) -> do
         body' <- instantiate_ body argument
         eliminate body' es
     (App h es1, es2) ->
