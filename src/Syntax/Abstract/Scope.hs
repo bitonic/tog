@@ -163,22 +163,22 @@ bindName i ret = do
 --       return (n + length xs, C.Bind xs e : bs, stop)
 
 checkHiding :: C.Expr -> Check (Hiding, C.Expr)
-checkHiding e = return $ loop e
-  where
-    loop e = case e of
-      C.Fun a b          -> second (C.Fun a) $ checkHiding b
-      C.Pi (C.Tel tel) b ->
-        if stop then (n,     C.Pi (C.Tel tel') b )
-                else (n + m, C.Pi (C.Tel tel') b')
-        where
-          (n, tel', stop) = telHiding tel
-          (m, b')         = checkHiding b
-      _ -> (0, e)
+checkHiding = return . loop
+    where
+      loop e = case e of
+        C.Fun a b          -> second (C.Fun a) $ loop b
+        C.Pi (C.Tel tel) b ->
+          if stop then (n,     C.Pi (C.Tel tel') b )
+                  else (n + m, C.Pi (C.Tel tel') b')
+          where
+            (n, tel', stop) = telHiding tel
+            (m, b')         = loop b
+        _ -> (0, e)
 
-    telHiding []                  = (0, [], False)
-    telHiding bs@(C.Bind{} : _)   = (0, bs, True)
-    telHiding (C.HBind xs e : bs) = (n + length xs, C.Bind xs e : bs', stop)
-      where (n, bs', stop) = telHiding bs
+      telHiding []                  = (0, [], False)
+      telHiding bs@(C.Bind{} : _)   = (0, bs, True)
+      telHiding (C.HBind xs e : bs) = (n + length xs, C.Bind xs e : bs', stop)
+        where (n, bs', stop) = telHiding bs
 
 
 scopeCheckProgram :: C.Program -> Either PP.Doc Program
@@ -412,10 +412,10 @@ checkPattern p ret = do
     (c, ps) -> checkCon c ps ret
   where
     checkCon c ps ret = do
-      (c, n, args) <- resolveCon c
-      ps <- insertImplicitPatterns (srcLoc c) n ps
-      checkNumberOfConstructorArguments p c ps args
-      mapC checkPattern ps $ \ps -> ret (ConP c ps)
+      (name, hiding, numargs) <- resolveCon c
+      ps <- insertImplicitPatterns (srcLoc c) hiding ps
+      checkNumberOfConstructorArguments p name numargs ps
+      mapC checkPattern ps $ \ps -> ret (ConP name ps)
 
 checkExpr :: C.Expr -> Check Expr
 checkExpr e = case e of
@@ -456,7 +456,7 @@ checkExpr e = case e of
     doProj x (App h es1) es2 = return $ App h (es1 ++ [Proj x] ++ es2)
     doProj x e _ = scopeError x $ "Cannot project " ++ show x ++ " from " ++ show e
     noArguments x p [] = return ()
-    noArguments x p es = scopeError p $ "unexpected arguments to " ++ x + ": " ++ show es
+    noArguments x p es = scopeError p $ "unexpected arguments to " ++ x ++ ": " ++ show es
 
 checkArgs :: HasSrcLoc a =>
              a -> Hiding -> [C.Arg] ->
