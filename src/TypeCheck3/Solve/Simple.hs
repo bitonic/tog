@@ -77,7 +77,7 @@ solve c = do
       then go False [] constrs
       else return constrs
     go progress newConstrs ((mvs, constr) : constrs) = do
-      attempt <- do mvsBodies <- forM (HS.toList mvs) lookupMetaInst
+      attempt <- do mvsBodies <- mapM lookupMetaBody (HS.toList mvs)
                     return $ null mvsBodies || any isJust mvsBodies
       if attempt
         then do
@@ -250,64 +250,62 @@ checkEqualBlockedOn
   :: forall t s.
      (IsTerm t)
   => Ctx t -> Type t
-  -> HS.HashSet Meta -> BlockedHead -> [Elim t]
+  -> HS.HashSet Meta -> BlockedHead t -> [Elim t]
   -> Term t
   -> TC t s (Constraints t)
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
-  let msg = "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) <>
-            ", trying to invert definition" <+> PP.pretty bh
+  let msg = do
+        bhDoc <- prettyM bh
+        return $ "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) <>
+                  ", trying to invert definition" <+> bhDoc
   t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
-  debugBracket_ "checkEqualBlockedOn" msg $ do
+  debugBracket "checkEqualBlockedOn" msg $ do
     case bh of
       BlockedOnJ -> do
         debug_ "head is J, couldn't invert." ""
         fallback t1
       BlockedOnFunction fun1 -> do
-        Constant _ (Instantiable (Inst vars clauses)) <- getDefinition_ fun1
+        Constant _ (Function (Inst clauses)) <- getDefinition fun1
         case clauses of
           NotInvertible _ -> do
             debug_ "couldn't invert." ""
             fallback t1
           Invertible injClauses -> do
             t2View <- whnfView t2
+            let notInvertible = do
+                  t2Head <- termHead t2
+                  case t2Head of
+                    Nothing -> do
+                      debug_ "definition invertible but we don't have a clause head." ""
+                      fallback t1
+                    Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
+                      debug_ ("inverting on" <+> PP.pretty tHead) ""
+                      -- Make the eliminators match the patterns
+                      matched <- matchPats pats elims1
+                      -- And restart, if we matched something.
+                      if matched
+                        then do
+                          debug_ "matched constructor, restarting" ""
+                          checkEqual (ctx, type_, t1, t2)
+                        else do
+                          debug_ "couldn't match constructor" ""
+                          fallback t1
+                    Just _ -> do
+                      checkError $ TermsNotEqual type_ t1 type_ t2
             case t2View of
-              App (Def (DKName fun2)) elims2 | fun1 == fun2 -> do
-                debug_ "could invert, and same heads, checking spines." ""
-                equalSpine (Def (DKName fun1)) ctx elims1 elims2
+              App (Def fun2) elims2 -> do
+                sameFun <- synEq fun1 fun2
+                if sameFun
+                  then do
+                    debug_ "could invert, and same heads, checking spines." ""
+                    equalSpine (Def fun1) ctx elims1 elims2
+                  else notInvertible
               _ -> do
-                t2Head <- termHead t2
-                case t2Head of
-                  Nothing -> do
-                    debug_ "definition invertible but we don't have a clause head." ""
-                    fallback t1
-                  Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
-                    debug_ ("inverting on" <+> PP.pretty tHead) ""
-                    -- Make the eliminators match the patterns
-                    matched <- matchHeads vars pats elims1
-                    -- And restart, if we matched something.
-                    if matched
-                      then do
-                        debug_ "matched constructor, restarting" ""
-                        checkEqual (ctx, type_, t1, t2)
-                      else do
-                        debug_ "couldn't match constructor" ""
-                        fallback t1
-                  Just _ -> do
-                    checkError $ TermsNotEqual type_ t1 type_ t2
+                notInvertible
   where
     fallback t1 = return $ [(mvs, Unify ctx type_ t1 t2)]
 
-    -- To remove the context variables of the given clauses, we simply
-    -- need to drop enough eliminators -- it is an invariant that if a
-    -- function definition has context variables, it is always applied
-    -- to at least as many eliminators as context variables.
-    matchHeads :: Natural -> [Pattern] -> [Elim t] -> TC t s Bool
-    matchHeads vars _ es | length es < vars = do
-      __IMPOSSIBLE__
-    matchHeads vars pats es = do
-      matchPats pats $ strictDrop vars es
-
-    matchPats :: [Pattern] -> [Elim t] -> TC t s Bool
+    matchPats :: [Pattern t] -> [Elim t] -> TC t s Bool
     matchPats (VarP : pats) (_ : elims) = do
       matchPats pats elims
     matchPats (ConP dataCon pats' : pats) (elim : elims) = do
@@ -320,16 +318,17 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
       -- are waiting on some metavar which doesn't head an eliminator.
       return False
 
-    matchPat :: Name -> [Pattern] -> Elim t -> TC t s Bool
+    matchPat :: Opened Name t -> [Pattern t] -> Elim t -> TC t s Bool
     matchPat dataCon pats (Apply t) = do
       tView <- whnfView t
       case tView of
-        App (Def (DKMeta mv)) mvArgs -> do
+        App (Meta mv) mvArgs -> do
           mvT <- instantiateDataCon mv dataCon
           void $ matchPat dataCon pats . Apply =<< eliminate mvT mvArgs
           return True
-        Con dataCon' dataConArgs | dataCon == dataCon' ->
-          matchPats pats (map Apply dataConArgs)
+        Con dataCon' dataConArgs -> do
+          sameDataCon <- synEq dataCon' dataCon
+          if sameDataCon then matchPats pats (map Apply dataConArgs) else return False
         _ -> do
           -- This can happen -- when we are blocked on metavariables
           -- that are impeding other definitions.
@@ -340,7 +339,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
 
 equalSpine
   :: (IsTerm t)
-  => Head -> Ctx t -> [Elim t] -> [Elim t] -> TC t s (Constraints t)
+  => Head t -> Ctx t -> [Elim t] -> [Elim t] -> TC t s (Constraints t)
 equalSpine h ctx elims1 elims2 = do
   hType <- headType ctx h
   checkEqualSpine ctx hType h elims1 elims2
@@ -354,7 +353,7 @@ checkEqualApplySpine ctx type_ args1 args2 =
 
 checkEqualSpine
   :: (IsTerm t)
-  => Ctx t -> Type t -> Head -> [Elim (Term t)] -> [Elim (Term t)]
+  => Ctx t -> Type t -> Head t -> [Elim (Term t)] -> [Elim (Term t)]
   -> TC t s (Constraints t)
 checkEqualSpine ctx type_ h elims1 elims2  = do
   h' <- app h []
@@ -390,6 +389,8 @@ checkEqualSpine''
 checkEqualSpine'' _ _ _ [] [] = do
   return []
 checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+    let fallback =
+          checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
     case (elim1, elim2) of
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
@@ -404,12 +405,17 @@ checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
           Nothing -> do
             cod' <- instantiate_ cod arg1
             return $ sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
-      (Proj proj, Proj proj') | proj == proj' -> do
-          let Just h = mbH
-          (h', type') <- applyProjection proj h type_
-          checkEqualSpine'' ctx type' (Just h') elims1 elims2
+      (Proj proj, Proj proj') -> do
+          sameProj <- synEq proj proj'
+          if sameProj
+            then do
+              let Just h = mbH
+              (h', type') <- applyProjection proj h type_
+              checkEqualSpine'' ctx type' (Just h') elims1 elims2
+            else do
+              fallback
       _ ->
-        checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
+        fallback
 checkEqualSpine'' _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 type_ elims2
 
@@ -479,7 +485,7 @@ metaAssign ctx0 type0 mv elims t0 = do
           Success mvb -> do
             mvs <- metas mvb
             when (mv `HS.member` mvs) $
-              checkError $ OccursCheckFailed mv $ metaInstBody mvb
+              checkError $ OccursCheckFailed mv $ mbBody mvb
             instantiateMeta mv mvb
             return []
           Failure (CCollect mvs) -> do
@@ -493,6 +499,8 @@ compareTerms (ctx, type_, t1, t2) = do
   typeView <- whnfView type_
   t1View <- whnfView t1
   t2View <- whnfView t2
+  let fallback =
+        checkError $ TermsNotEqual type_ t1 type_ t2
   case (typeView, t1View, t2View) of
     -- Note that here we rely on canonical terms to have canonical
     -- types, and on the terms to be eta-expanded.
@@ -519,17 +527,23 @@ compareTerms (ctx, type_, t1, t2) = do
       checkEqualApplySpine ctx equalType_ [type1', l1, r1] [type2', l2, r2]
     (Equal _ _ _, Refl, Refl) -> do
       return []
-    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
-       let Just tyConPars = mapM isApply tyConPars0
-       DataCon _ _ dataConTypeTel dataConType <- getDefinition_ dataCon
-       appliedDataConType <- telDischarge dataConTypeTel dataConType tyConPars
-       checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) -> do
+       sameDataCon <- synEq dataCon dataCon'
+       if sameDataCon
+         then do
+           let Just tyConPars = mapM isApply tyConPars0
+           DataCon _ _ dataConType <- getDefinition dataCon
+           appliedDataConType <- openContextual dataConType tyConPars
+           checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+         else do
+           fallback
     (Set, Set, Set) -> do
       return []
-    (_, App h elims1, App h' elims2) | h == h' -> do
-      equalSpine h ctx elims1 elims2
+    (_, App h elims1, App h' elims2) -> do
+      sameH <- synEq h h'
+      if sameH then equalSpine h ctx elims1 elims2 else fallback
     (_, _, _) -> do
-     checkError $ TermsNotEqual type_ t1 type_ t2
+      fallback
 
 
 -- Pretty printing Constraints

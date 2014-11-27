@@ -1,7 +1,9 @@
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.MetaVars where
 
 import           Prelude.Extended
+import           Syntax
 import           Term.Types
 
 instance IsTerm t => Metas t (Clause t) where
@@ -14,18 +16,18 @@ instance IsTerm t => Metas t (Invertible t) where
 instance (Metas t a, Metas t b) => Metas t (a, b) where
   metas (x, y) = (<>) <$> metas x <*> metas y
 
-instance IsTerm t => Metas t (Definition t) where
-  metas (Constant t c)         = metas (t, c)
-  metas (DataCon _ _ type_)    = metas type_
-  metas (Projection _ _ type_) = metas type_
+instance (Metas t (f Name t), Metas t (f Projection t)) => Metas t (Definition f t) where
+  metas (Constant t c)             = metas (t, c)
+  metas (DataCon dataCon _ type_)  = metas (dataCon, type_)
+  metas (Projection _ tyCon type_) = metas (tyCon, type_)
 
-instance IsTerm t => Metas t (Constant t) where
-  metas Postulate           = return mempty
-  metas (Data _)            = return mempty
-  metas (Record _ _)        = return mempty
-  metas (Instantiable inst) = metas inst
+instance (Metas t (f Name t), Metas t (f Projection t)) => Metas t (Constant f t) where
+  metas Postulate               = return mempty
+  metas (Data dataCon)          = metas dataCon
+  metas (Record dataCon fields) = metas (dataCon, fields)
+  metas (Function inst)         = metas inst
 
-instance (IsTerm t) => Metas t (Inst t) where
+instance (IsTerm t) => Metas t (FunInst t) where
   metas Open     = return mempty
   metas (Inst t) = metas t
 
@@ -41,7 +43,18 @@ instance Metas t (Tel t) where
   metas T0                  = return mempty
   metas ((_, type_) :> tel) = metas (type_, tel)
 
-instance (IsTerm t, Metas t a) => Metas t (Contextual t a) where
+instance (Metas t a) => Metas t (Contextual t a) where
   -- TODO can't we just ignore `x'?
   metas (Contextual x y) = metas (x, y)
 
+instance Metas t Name where
+  metas _ = return mempty
+
+instance Metas t Projection where
+  metas _ = return mempty
+
+instance (Metas t a) => Metas t (Const a b) where
+  metas (Const x) = metas x
+
+instance Metas t (MetaBody t) where
+  metas = metas . mbBody

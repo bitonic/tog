@@ -1,11 +1,11 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Testing where
 
+{-
 import           Prelude                          hiding (pi)
 
 import           Prelude.Extended
 import           Term                             hiding (lam, pi, equal, set, refl, con, app)
-import           Term.Impl
 import qualified Term                             as Term
 import           Syntax
 import qualified Syntax.Abstract                  as SA
@@ -89,3 +89,4 @@ instance IsString SA.Expr where
 
 instance IsString SA.Head where
   fromString s = SA.Var (fromString s)
+-}

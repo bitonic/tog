@@ -18,6 +18,7 @@ module PrettyPrint
   , prettyApp
   , hang
   , indent
+  , tupled
   ) where
 
 import           Prelude.Extended

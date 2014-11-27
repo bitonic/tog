@@ -16,6 +16,10 @@ module TypeCheck3.Monad
   , assert_
     -- ** Source location
   , atSrcLoc
+    -- ** Queries
+  , getDefinition
+  , getOpenedDefinition
+  , getMetaType
     -- ** Signature update
   , addPostulate
   , addData
@@ -106,7 +110,7 @@ initEnv =
 
 data TCState t s = TCState
     { tsSignature        :: !(Signature t)
-    , tsOpened           :: !(Opened t)
+    -- , tsOpened           :: !(Opened t)
     , tsState            :: !s
     } deriving (Functor)
 
@@ -115,7 +119,7 @@ initTCState
   :: s -> TCState t s
 initTCState s = TCState
   { tsSignature        = sigEmpty
-  , tsOpened           = mempty
+  -- , tsOpened           = mempty
   , tsState            = s
   }
 
@@ -163,34 +167,48 @@ atSrcLoc x (TC m) = TC $ \(te, ts) -> m (te{teCurrentSrcLoc = srcLoc x}, ts)
 -- Signature
 ------------------------------------------------------------------------
 
-addPostulate :: Name -> Type t -> TC t s ()
-addPostulate f type_ = do
-  modifySignature $ \sig -> sigAddPostulate sig f type_
+-- Queries
+------------------------------------------------------------------------
 
-addData :: Name -> Type t -> TC t s ()
-addData f type_ = do
-  modifySignature $ \sig -> sigAddData sig f type_
+getOpenedDefinition
+  :: (IsTerm t) => Name -> TC t s (Opened Name t, Definition Opened t)
+getOpenedDefinition n0 = do
+  -- TODO change when we have actual contextual definition
+  let n = Opened n0 []
+  def' <- getDefinition n
+  return (n, def')
+
+-- Updates
+------------------------------------------------------------------------
+
+addPostulate :: Name -> Tel t -> Type t -> TC t s ()
+addPostulate f tel type_ = do
+  modifySignature $ \sig -> sigAddPostulate sig f tel type_
+
+addData :: Name -> Tel t -> Type t -> TC t s ()
+addData f tel type_ = do
+  modifySignature $ \sig -> sigAddData sig f tel type_
 
 addRecordCon :: Name -> Name -> TC t s ()
 addRecordCon tyCon dataCon = do
   modifySignature $ \sig -> sigAddRecordCon sig tyCon dataCon
 
-addTypeSig :: Name -> Type t -> TC t s ()
-addTypeSig f type_ = do
-  modifySignature $ \sig -> sigAddTypeSig sig f type_
+addTypeSig :: Name -> Tel t -> Type t -> TC t s ()
+addTypeSig f tel type_ = do
+  modifySignature $ \sig -> sigAddTypeSig sig f tel type_
 
-addClauses :: Name -> Natural -> Invertible t -> TC t s ()
-addClauses f vars cs = modifySignature $ \sig -> sigAddClauses sig f vars cs
+addClauses :: Name -> Invertible t -> TC t s ()
+addClauses f cs = modifySignature $ \sig -> sigAddClauses sig f cs
 
 addProjection
-  :: Projection -> Name -> Tel (Type t) -> Type t -> TC t s ()
-addProjection proj tyCon tel type_ =
-  modifySignature $ \sig -> sigAddProjection sig (pName proj) (pField proj) tyCon tel type_
+  :: Projection -> Name -> Contextual t (Type t) -> TC t s ()
+addProjection proj tyCon ctxtType =
+  modifySignature $ \sig -> sigAddProjection sig (pName proj) (pField proj) tyCon ctxtType
 
 addDataCon
-  :: Name -> Name -> Natural -> Tel (Type t) -> Type t -> TC t s ()
-addDataCon dataCon tyCon numArgs tel type_ =
-  modifySignature $ \sig -> sigAddDataCon sig dataCon tyCon numArgs tel type_
+  :: Name -> Name -> Natural -> Contextual t (Type t) -> TC t s ()
+addDataCon dataCon tyCon numArgs ctxtType =
+  modifySignature $ \sig -> sigAddDataCon sig dataCon tyCon numArgs ctxtType
 
 addMeta :: (IsTerm t) => Type t -> TC t s Meta
 addMeta type_ = do
@@ -205,7 +223,7 @@ addMeta type_ = do
           "type:" //> typeDoc
   debugBracket "addMeta" msg $ return mv
 
-uncheckedInstantiateMeta :: Meta -> MetaInst t -> TC t s ()
+uncheckedInstantiateMeta :: Meta -> MetaBody t -> TC t s ()
 uncheckedInstantiateMeta mv mvb =
   modifySignature $ \sig -> sigInstantiateMeta sig mv mvb
 

@@ -25,7 +25,6 @@ import           Prelude.Extended
 import           Syntax
 import qualified Syntax.Abstract                  as SA
 import           Term
-import           Term.Impl
 import           PrettyPrint                      ((<+>), render, (//>), ($$))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
@@ -87,24 +86,24 @@ checkExpr ctx synT type_ = do
 checkTypeSig :: (IsTerm t) => SA.TypeSig -> CheckM t ()
 checkTypeSig (SA.Sig name absType) = do
     type_ <- checkExpr C0 absType set
-    addTypeSig name type_
+    addTypeSig name T0 type_
 
 checkPostulate :: (IsTerm t) => SA.TypeSig -> CheckM t ()
 checkPostulate (SA.Sig name absType) = do
     type_ <- checkExpr C0 absType set
-    addPostulate name type_
+    addPostulate name T0 type_
 
 checkData :: (IsTerm t) => SA.TypeSig -> CheckM t ()
 checkData (SA.Sig name absType) = do
     type_ <- checkExpr C0 absType set
-    addData name type_
+    addData name T0 type_
 
 checkRecord :: (IsTerm t) => SA.TypeSig -> CheckM t ()
 checkRecord (SA.Sig name absType) = do
     type_ <- checkExpr C0 absType set
     -- We add it as a postulate first, because we don't know what the
     -- datacon is yet.
-    addPostulate name type_
+    addPostulate name T0 type_
 
 checkDataDef
     :: (IsTerm t)
@@ -116,11 +115,12 @@ checkDataDef
     -- ^ Types for the data constructors.
     -> CheckM t ()
 checkDataDef tyCon tyConPars dataCons = do
-    tyConType <- definitionType =<< getDefinition_ tyCon
+    -- TODO change this when we actually have modules.
+    tyConType <- definitionType =<< getDefinition (Opened tyCon [])
     (tyConPars0, endType) <- unrollPiWithNames tyConType tyConPars
     let tyConPars' = telToCtx tyConPars0
     definitionallyEqual tyConPars' set endType set
-    appliedTyConType <- ctxApp (defName tyCon []) tyConPars'
+    appliedTyConType <- ctxApp (def (Opened tyCon []) []) tyConPars'
     mapM_ (checkConstr tyCon tyConPars' appliedTyConType) dataCons
 
 checkConstr
@@ -142,7 +142,7 @@ checkConstr tyCon tyConPars appliedTyConType (SA.Sig dataCon synDataConType) = d
     appliedTyConType' <- ctxWeaken_ vs appliedTyConType
     let ctx = tyConPars <> vs
     definitionallyEqual ctx set appliedTyConType' endType
-    addDataCon dataCon tyCon (ctxLength vs) (ctxToTel tyConPars) dataConType
+    addDataCon dataCon tyCon (ctxLength vs) $ Contextual (ctxToTel tyConPars) dataConType
 
 checkRec
     :: (IsTerm t)
@@ -156,20 +156,21 @@ checkRec
     -- ^ Fields of the record.
     -> CheckM t ()
 checkRec tyCon tyConPars dataCon fields = do
-    tyConType <- definitionType =<< getDefinition_ tyCon
+    -- TODO change this when we actually support modules
+    tyConType <- definitionType =<< getDefinition (Opened tyCon [])
     addRecordCon tyCon dataCon
     (tyConParsTel, endType) <- unrollPiWithNames tyConType tyConPars
     let tyConPars' = telToCtx tyConParsTel
     definitionallyEqual tyConPars' set endType set
     fieldsTel <- checkFields tyConPars' fields
-    appliedTyConType <- ctxApp (defName tyCon []) tyConPars'
+    appliedTyConType <- ctxApp (def (Opened tyCon []) []) tyConPars'
     fieldsTel' <- weaken_ 1 fieldsTel
     addProjections
       tyCon tyConPars' (boundVar "_") (map SA.typeSigName fields)
       fieldsTel'
     let fieldsCtx = telToCtx fieldsTel
     appliedTyConType' <- ctxWeaken_ fieldsCtx appliedTyConType
-    addDataCon dataCon tyCon (length fields) (ctxToTel tyConPars') =<< ctxPi fieldsCtx appliedTyConType'
+    addDataCon dataCon tyCon (length fields) . Contextual (ctxToTel tyConPars') =<< ctxPi fieldsCtx appliedTyConType'
 
 checkFields
     :: forall t. (IsTerm t)
@@ -209,20 +210,20 @@ addProjections tyCon tyConPars self fields0 =
       ([], T0) ->
         return ()
       (proj : fields', (_, fieldType) :> fieldTypes') -> do
-        endType <- (`pi` fieldType) =<< ctxApp (defName tyCon []) tyConPars
-        addProjection proj tyCon (ctxToTel tyConPars) endType
-        (go fields' <=< instantiate_ fieldTypes') =<< app (Var self) [Proj proj]
+        endType <- (`pi` fieldType) =<< ctxApp (def (Opened tyCon []) []) tyConPars
+        addProjection proj tyCon $ Contextual (ctxToTel tyConPars) endType
+        (go fields' <=< instantiate_ fieldTypes') =<< app (Var self) [Proj (Opened proj [])]
       (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
 
 checkFunDef :: (IsTerm t) => Name -> [SA.Clause] -> CheckM t ()
 checkFunDef fun synClauses = do
-    funDef <- getDefinition_ fun
+    funDef <- getDefinition $ Opened fun []
     case funDef of
-      Constant funType (Instantiable Open) -> do
+      Constant funType (Function Open) -> do
         clauses <- mapM (checkClause fun funType) synClauses
         inv <- checkInvertibility clauses
         -- TODO change when we support modules/wheres/etc.
-        addClauses fun 0 inv
+        addClauses fun inv
       Constant _ Postulate -> do
         typeError $ "Cannot give body to postulate" <+> PP.pretty fun
       _ -> do
@@ -248,7 +249,7 @@ checkPatterns
   -> [SA.Pattern]
   -> Type t
   -- ^ Type of the clause that has the given 'SA.Pattern's in front.
-  -> CheckM t (Ctx (Type t), [Pattern], [Term t], Type t)
+  -> CheckM t (Ctx (Type t), [Pattern t], [Term t], Type t)
   -- ^ A context into the internal variables, list of internal patterns,
   -- a list of terms produced by their bindings, and the type of the
   -- clause body (scoped over the pattern variables).
@@ -275,7 +276,7 @@ checkPattern
     -> SA.Pattern
     -> Type t
     -- ^ Type of the matched thing.
-    -> CheckM t (Ctx (Type t), Pattern, Term t)
+    -> CheckM t (Ctx (Type t), Pattern t, Term t)
     -- ^ The context, the internal 'Pattern', and a 'Term' containing
     -- the term produced by it.
 checkPattern funName synPat type_ = case synPat of
@@ -285,9 +286,9 @@ checkPattern funName synPat type_ = case synPat of
     SA.WildP _ -> do
       v <- var $ boundVar "_"
       return (ctxSingleton "_" type_, VarP, v)
-    SA.ConP dataCon synPats -> do
-      DataCon tyCon _ tyConParsTel dataConType <- getDefinition_ dataCon
-      typeConDef <- getDefinition_ tyCon
+    SA.ConP dataCon0 synPats -> do
+      (dataCon, DataCon tyCon _ dataConType) <- getOpenedDefinition dataCon0
+      typeConDef <- getDefinition tyCon
       case typeConDef of
         Constant _ (Data _)     -> return ()
         Constant _ (Record _ _) -> checkError $ PatternMatchOnRecord synPat tyCon
@@ -295,15 +296,21 @@ checkPattern funName synPat type_ = case synPat of
                                       fatalError $ "impossible.checkPattern " ++ render doc
       typeView <- whnfView type_
       -- TODO this can be a soft match, like `matchTyCon'
+      let fallback = checkError $ ExpectingTyCon tyCon type_
       case typeView of
-        App (Def (DKName tyCon')) tyConArgs0 | tyCon == tyCon' -> do
-          let Just tyConArgs = mapM isApply tyConArgs0
-          dataConTypeNoPars <- telDischarge tyConParsTel dataConType tyConArgs
-          (ctx, pats, patsVars, _) <- checkPatterns funName synPats dataConTypeNoPars
-          t <- con dataCon patsVars
-          return (ctx, ConP dataCon pats, t)
+        App (Def tyCon') tyConArgs0 -> do
+          sameTyCon <- synEq tyCon tyCon'
+          if sameTyCon
+            then do
+              let Just tyConArgs = mapM isApply tyConArgs0
+              dataConTypeNoPars <- openContextual dataConType tyConArgs
+              (ctx, pats, patsVars, _) <- checkPatterns funName synPats dataConTypeNoPars
+              t <- con dataCon patsVars
+              return (ctx, ConP dataCon pats, t)
+            else do
+              fallback
         _ -> do
-          checkError $ ExpectingTyCon tyCon type_
+          fallback
 
 -- Bringing everything together
 ------------------------------------------------------------------------
@@ -377,7 +384,7 @@ checkProgram' _ decls0 ret = do
         mvReport <- confMetasReport <$> readConf
         mvOnlyUnsolved <- confMetasOnlyUnsolved <$> readConf
         when (not mvNoSummary || mvReport) $ do
-          let solvedMvs = catMaybes $ map (sigLookupMetaInst sig) $ sigDefinedMetas sig
+          let solvedMvs = catMaybes $ map (sigLookupMetaBody sig) $ sigDefinedMetas sig
           drawLine
           putStrLn $ "-- Solved Metas: " ++ show (length solvedMvs)
           putStrLn $ "-- Unsolved Metas: " ++ show (HS.size unsolvedMvs)
@@ -385,7 +392,7 @@ checkProgram' _ decls0 ret = do
             drawLine
             let mvsTypes = map (\mv -> (mv, sigGetMetaType sig mv)) $ sigDefinedMetas sig
             forM_ (sortBy (comparing fst) $ mvsTypes) $ \(mv, mvType) -> do
-              let mbMvb = sigLookupMetaInst sig mv
+              let mbMvb = sigLookupMetaBody sig mv
               when (not (isJust mbMvb) || not mvOnlyUnsolved) $ do
                 mvTypeDoc <- runTermM sig $ prettyM mvType
                 putStrLn $ render $
@@ -442,7 +449,7 @@ parseCommand ts s0 = runReadP $
     parseMeta s =
       case readMay s of
         Just mv ->
-          Right Meta{metaId = mv, metaSrcLoc = SA.noSrcLoc}
+          Right MV{metaId = mv, metaSrcLoc = SA.noSrcLoc}
         _ ->
           Left $ "Invalid metavar id" <+> PP.text s
 
@@ -469,7 +476,7 @@ runCommand ts cmd =
       prettyM =<< L.use csSolveState
     ShowMeta mv -> runTC' $ do
       mvType <- getMetaType mv
-      mbMvBody <- lookupMetaInst mv
+      mbMvBody <- lookupMetaBody mv
       mvTypeDoc <- prettyM mvType
       mvBodyDoc <- case mbMvBody of
         Nothing -> return "?"

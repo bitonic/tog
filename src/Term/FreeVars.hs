@@ -50,14 +50,14 @@ freeVars = go Just
         App (Var v) elims -> do
           let fvs = FreeVars (maybe Set.empty Set.singleton (strengthen' v)) Set.empty
           (fvs <>) <$> (mconcat <$> mapM (go strengthen') [t | Apply t <- elims])
-        App (Def (Opened k args)) elims -> do
+        App (Def (Opened _ args)) elims -> do
           fvs1 <- mconcat <$> mapM (go strengthen') args
-          fvs2 <- mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
-          case k of
-            DKMeta _ ->
-              return FreeVars{fvRigid = Set.empty, fvFlexible = fvAll (fvs1 <> fvs2)}
-            DKName _ ->
-              mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
+          let elims' = [t | Apply t <- elims]
+          fvs2 <- mconcat <$> mapM (go strengthen') elims'
+          return $ fvs1 <> fvs2
+        App (Meta _) elims -> do
+          fvs <- mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
+          return FreeVars{fvRigid = Set.empty, fvFlexible = fvAll fvs}
         App J elims ->
           mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
         Set ->

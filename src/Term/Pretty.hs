@@ -1,49 +1,57 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Pretty () where
 
 import           Prelude.Extended
+import           Syntax
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
 import qualified PrettyPrint                      as PP
 import           Term.Types
 import qualified Term.Subst                       as Sub
 
-instance PrettyM t (Definition t) where
+instance (PrettyM t (f Name t), PrettyM t (f Projection t)) => PrettyM t (Definition f t) where
   prettyM (Constant type_ Postulate) = do
     typeDoc <- prettyM type_
     return $ "postulate" //> typeDoc
-  prettyM (Constant type_ (Instantiable instk)) = do
+  prettyM (Constant type_ (Function instk)) = do
     typeDoc <- prettyM type_
     instDoc <- prettyM instk
     return $ typeDoc $$ instDoc
   prettyM (Constant type_ (Data dataCons)) = do
     typeDoc <- prettyM type_
-    return $ "data" <+> typeDoc <+> "where" $$>
-             PP.vcat (map PP.pretty dataCons)
+    dataConsDocs <- mapM prettyM dataCons
+    return $ "data" <+> typeDoc <+> "where" $$> PP.vcat dataConsDocs
   prettyM (Constant type_ (Record dataCon fields)) = do
     typeDoc <- prettyM type_
+    dataConDoc <- prettyM dataCon
+    fieldsDoc <- mapM prettyM fields
     return $ "record" <+> typeDoc <+> "where" $$>
-             "constructor" <+> PP.pretty dataCon $$
-             "field" $$>
-             PP.vcat (map (PP.pretty . pName) fields)
+             "constructor" <+> dataConDoc $$
+             "field" $$> PP.vcat fieldsDoc
   prettyM (DataCon tyCon _ (Contextual pars type_)) = do
+    tyConDoc <- prettyM tyCon
     typeDoc <- prettyM =<< telPi pars type_
-    return $ "constructor" <+> PP.pretty tyCon $$> typeDoc
-  prettyM (Projection _ tyCon (Contextual pars (type1, type2))) = do
-    typeDoc <- prettyM =<< telPi pars =<< pi type1 type2
-    return $ "projection" <+> PP.pretty tyCon $$> typeDoc
+    return $ "constructor" <+> tyConDoc $$> typeDoc
+  prettyM (Projection _ tyCon (Contextual pars type_)) = do
+    tyConDoc <- prettyM tyCon
+    typeDoc <- prettyM =<< telPi pars type_
+    return $ "projection" <+> tyConDoc $$> typeDoc
 
 instance PrettyM t (Clause t) where
   prettyM (Clause pats body) = do
+    patsDoc <- mapM prettyM pats
     bodyDoc <- prettyM body
     return $ PP.group $
-      PP.hsep (map PP.pretty pats ++ ["="]) //> bodyDoc
+      PP.hsep (patsDoc ++ ["="]) //> bodyDoc
 
-instance PP.Pretty Pattern where
-  pretty e = case e of
-    VarP      -> PP.text "_"
-    ConP c es -> prettyApp 10 (PP.pretty c) es
+instance PrettyM t (Pattern t) where
+  prettyM e = case e of
+    VarP      -> return $ PP.text "_"
+    ConP c es -> do cDoc <- prettyM c
+                    esDoc <- mapM prettyM es
+                    return $ prettyApp 10 cDoc esDoc
 
 prettyApp :: PP.Pretty a => Int -> PP.Doc -> [a] -> PP.Doc
 prettyApp _ h []   = h
@@ -92,12 +100,28 @@ instance PrettyM t (Sub.Subst t) where
       subDoc <- prettyM sub
       return $ "Lift" <+> PP.pretty i //> subDoc
 
-instance (IsTerm t) => PrettyM t (Inst t) where
+instance (IsTerm t) => PrettyM t (FunInst t) where
   prettyM Open = do
     return "Open"
   prettyM (Inst t) = do
     tDoc <- prettyM t
     return $ "Inst" //> tDoc
 
-instance (IsTerm t) => PrettyM t (Invertible t) where
+instance PrettyM t (Invertible t) where
   prettyM = prettyM . ignoreInvertible
+
+instance PrettyM t (MetaBody t) where
+  prettyM mvb = prettyM =<< metaBodyToTerm mvb
+
+instance PrettyM t (BlockedHead t) where
+  prettyM (BlockedOnFunction n) = do
+    nDoc <- prettyM n
+    return $ "BlockedOnFunction" //> nDoc
+  prettyM BlockedOnJ = do
+    return "BlockedOnJ"
+
+instance (PrettyM t a, PrettyM t b) => PrettyM t (a, b) where
+  prettyM (x, y) = do
+    xDoc <- prettyM x
+    yDoc <- prettyM y
+    return $ PP.tupled [xDoc, yDoc]

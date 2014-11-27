@@ -13,6 +13,7 @@ module Prelude.Extended
   , Applicative
   , Bifunctor(..)
   , Collect(..)
+  , Const(..)
   , ExceptT(..)
   , Foldable
   , Generic

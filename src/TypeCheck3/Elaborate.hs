@@ -80,13 +80,13 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         t1 <- addMetaInCtx ctx eqType
         type' <- equal eqType t1 t1
         expect_ type' refl
-      SA.Con dataCon synArgs -> do
-        DataCon tyCon _ tyConParsTel dataConType <- getDefinition_ dataCon
-        tyConType <- definitionType =<< getDefinition_ tyCon
+      SA.Con dataCon0 synArgs -> do
+        (dataCon, DataCon tyCon _ dataConType) <- getOpenedDefinition dataCon0
+        tyConType <- definitionType =<< getDefinition tyCon
         tyConArgs <- fillArgsWithMetas ctx tyConType
-        appliedDataConType <-  telDischarge tyConParsTel dataConType tyConArgs
+        appliedDataConType <-  openContextual dataConType tyConArgs
         dataConArgs <- elaborateDataConArgs ctx appliedDataConType synArgs
-        type' <- defName tyCon $ map Apply tyConArgs
+        type' <- def tyCon $ map Apply tyConArgs
         t <- con dataCon dataConArgs
         expect_ type' t
       SA.App h elims -> do
@@ -130,9 +130,10 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
       Just (v, type_) -> do
         h <- app (Var v) []
         return (h, type_)
-  SA.Def name -> do
-    type_ <- definitionType =<< getDefinition_ name
-    h <- defName name []
+  SA.Def name0 -> do
+    (name, def') <- getOpenedDefinition name0
+    type_ <- definitionType def'
+    h <- def name []
     return (h, type_)
   SA.J{} -> do
     h <- app J []
@@ -169,14 +170,14 @@ elaborateApp ctx type_ h (SA.Apply arg : elims) = atSrcLoc arg $ do
   type' <- instantiate_ cod arg'
   t <- eliminate f [Apply arg']
   expect ctx type_ type' t
-elaborateApp ctx type_ h (SA.Proj projName : elims) = atSrcLoc projName $ do
-  Projection projIx tyCon projTypeTel projType <- getDefinition_ projName
-  let proj = Projection' projName projIx
-  tyConType <- definitionType =<< getDefinition_ tyCon
+elaborateApp ctx type_ h (SA.Proj projName0 : elims) = atSrcLoc projName0 $ do
+  (projName, Projection projIx tyCon projType) <- getOpenedDefinition projName0
+  let proj  = first (`Projection'` projIx) projName
+  tyConType <- definitionType =<< getDefinition tyCon
   tyConArgs <- fillArgsWithMetas ctx tyConType
-  typeRec <- defName tyCon (map Apply tyConArgs)
+  typeRec <- def tyCon (map Apply tyConArgs)
   rec_ <- elaborateApp ctx typeRec h elims
-  type0 <- telDischarge projTypeTel projType tyConArgs
+  type0 <- openContextual projType tyConArgs
   Pi _ type1 <- whnfView type0
   type' <- instantiate_ type1 rec_
   t <- eliminate rec_ [Proj proj]

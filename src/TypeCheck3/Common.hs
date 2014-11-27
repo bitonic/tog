@@ -34,13 +34,13 @@ import           TypeCheck3.Monad
 data CheckError t
     = ExpectingEqual (Type t)
     | ExpectingPi (Type t)
-    | ExpectingTyCon Name (Type t)
+    | ExpectingTyCon (Opened Name t) (Type t)
     | FreeVariableInEquatedTerm Meta [Elim t] (Term t) Var
     | NameNotInScope Name
     | OccursCheckFailed Meta (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
+    | PatternMatchOnRecord SA.Pattern (Opened Name t) -- Record type constructor
 
 checkError :: (IsTerm t) => CheckError t -> TC t s a
 checkError err = typeError =<< renderError err
@@ -81,7 +81,8 @@ renderError err =
     NameNotInScope name -> do
       return $ "Name not in scope:" <+> PP.pretty name
     PatternMatchOnRecord synPat tyCon -> do
-      return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> PP.pretty tyCon
+      tyConDoc <- prettyM tyCon
+      return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> tyConDoc
     ExpectingPi type_ -> do
       typeDoc <- prettyM type_
       return $ "Expecting a pi type, not:" //> typeDoc
@@ -89,8 +90,9 @@ renderError err =
       typeDoc <- prettyM type_
       return $ "Expecting an identity type, not:" //> typeDoc
     ExpectingTyCon tyCon type_ -> do
+      tyConDoc <- prettyM tyCon
       typeDoc <- prettyM type_
-      return $ "Expecting a" <+> PP.pretty tyCon <> ", not:" //> typeDoc
+      return $ "Expecting a" <+> tyConDoc <> ", not:" //> typeDoc
   where
     prettyVar = PP.pretty
 
@@ -102,7 +104,8 @@ addMetaInCtx
   :: (IsTerm t)
   => Ctx t -> Type t -> TC t s (Term t)
 addMetaInCtx ctx type_ = do
-  mv <- addMeta =<< ctxPi ctx type_
+  type' <- ctxPi ctx type_
+  mv <- addMeta type'
   ctxApp (meta mv []) ctx
 
 -- Telescope & context utils
@@ -193,19 +196,20 @@ termHead :: (IsTerm t) => t -> TC t s (Maybe TermHead)
 termHead t = do
   tView <- whnfView t
   case tView of
-    App (Def (DKName f)) _ -> do
-      fDef <- getDefinition_ f
+    App (Def opnd) _ -> do
+      let f = opndKey opnd
+      fDef <- getDefinition opnd
       return $ case fDef of
-        Constant _ Data{}         -> Just $ DefHead f
-        Constant _ Record{}       -> Just $ DefHead f
-        Constant _ Postulate{}    -> Just $ DefHead f
-        Constant _ Instantiable{} -> Nothing
-        DataCon{}                 -> Nothing
-        Projection{}              -> Nothing
+        Constant _ Data{}      -> Just $ DefHead f
+        Constant _ Record{}    -> Just $ DefHead f
+        Constant _ Postulate{} -> Just $ DefHead f
+        Constant _ Function{}  -> Nothing
+        DataCon{}              -> Nothing
+        Projection{}           -> Nothing
     App{} -> do
       return Nothing
     Con f _ ->
-      return $ Just $ DefHead f
+      return $ Just $ DefHead $ opndKey f
     Pi{} ->
       return $ Just $ PiHead
     Lam{} ->
