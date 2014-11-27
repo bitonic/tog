@@ -162,6 +162,17 @@ bindName i ret = do
 --       (n, bs, stop) <- telHiding bs
 --       return (n + length xs, C.Bind xs e : bs, stop)
 
+{- Counts number of hidden args up until the first explicit,
+at the same time turning them into explicits. Does not assert that
+the following args are only explicits though, so no "check" is really done.
+Only searches for implicits at top-level, since they're only allowed there,
+as checked by checkBinding.
+
+Not sure if we want to retain behaviour of turning every implicit into explicit,
+and how it interplays with PiImpls.
+
+TODO: Extend and rewrite so it also creates PiImpls when that is possible.
+-}
 checkHiding :: C.Expr -> Check (Hiding, C.Expr)
 checkHiding = return . loop
     where
@@ -219,15 +230,31 @@ checkHiddenNames n (C.Hidden x : xs)    = (x :) <$> checkHiddenNames (n - 1) xs
 checkHiddenNames 0 []                   = return []
 checkHiddenNames _ []                   = impossible "checkHiddenNames _ []"
 
+
+{- Checks if parameter structure corresponds to a data/rec *declaration*, e.g.
+
+data Vec (A : Set) (n : Nat) : Set
+
+i.e., parameters should be list of bindings.
+-}
 isParamDecl :: C.Params -> Maybe [C.Binding]
 isParamDecl C.NoParams       = Just []
 isParamDecl (C.ParamDecl ps) = Just ps
 isParamDecl C.ParamDef{}     = Nothing
 
+
+{- Checks if parameter structure corresponds to a data/rec *definition*, eg.
+
+data Vec A n where
+  ...
+
+i.e., parameters should be list of (possibly hidden) names.
+-}
 isParamDef :: C.Params -> Maybe [C.HiddenName]
 isParamDef C.NoParams      = Just []
 isParamDef C.ParamDecl{}   = Nothing
 isParamDef (C.ParamDef xs) = Just xs
+
 
 checkDecls :: [C.Decl] -> CCheck [Decl]
 checkDecls ds0 ret = case ds0 of
