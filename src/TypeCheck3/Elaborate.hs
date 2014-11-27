@@ -52,19 +52,12 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
     case absT of
       SA.Set _ -> do
         expect_ set set
-<<<<<<< HEAD
       SA.PiImpl implName synImpl domName synDom synCod -> do
         impl <- elaborate' ctx set synImpl
-        let ctx' = Ctx.Snoc ctx (implName, impl)
+        let ctx' = ctx :< (implName, impl)
         dom  <- elaborate' ctx' set synDom
-        cod  <- elaborate' (Ctx.Snoc ctx' (domName, dom)) set synCod
-        t    <- pi impl dom cod 
-=======
-      SA.Pi name synDom synCod -> do
-        dom <- elaborate' ctx set synDom
-        cod <- elaborate' (ctx :< (name, dom)) set synCod
-        t <- pi dom cod
->>>>>>> master
+        cod  <- elaborate' (ctx' :< (domName, dom)) set synCod
+        t    <- pi impl dom cod
         expect_ set t
       SA.Pi name synDom synCod -> do
         elaborate' ctx type_ (SA.PiImpl "_" (SA.Top (srcLoc name)) name synDom synCod)
@@ -80,21 +73,13 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
         t <- equal type' t1 t2
         expect_ set t
       SA.Lam name synBody -> do
-<<<<<<< HEAD
-        impl <- addMetaVarInCtx ctx set
-        let ctx' = Ctx.Snoc ctx ("_", impl)
-        dom <- addMetaVarInCtx ctx' set
-        let ctx'' = Ctx.Snoc ctx' (name, dom)
-        cod <- addMetaVarInCtx ctx'' set
+        impl <- addMetaInCtx ctx set
+        let ctx' = ctx :< ("_", impl)
+        dom <- addMetaInCtx ctx' set
+        let ctx'' = ctx' :< (name, dom)
+        cod <- addMetaInCtx ctx'' set
         body <- elaborate' ctx'' cod synBody
         type' <- pi impl dom cod
-=======
-        dom <- addMetaInCtx ctx set
-        let ctx' = ctx :< (name, dom)
-        cod <- addMetaInCtx ctx' set
-        body <- elaborate' ctx' cod synBody
-        type' <- pi dom cod
->>>>>>> master
         t <- lam body
         expect_ type' t
       SA.Refl _ -> do
@@ -124,19 +109,12 @@ fillArgsWithMetas :: IsTerm t => Ctx t -> Type t -> ElabM t [Term t]
 fillArgsWithMetas ctx' type' = do
   typeView <- whnfView type'
   case typeView of
-<<<<<<< HEAD
     Pi impl dom cod -> do
-      arg   <- addMetaVarInCtx ctx' impl
+      arg   <- addMetaInCtx ctx' impl
       dom'  <- instantiate_ dom arg
-      arg'  <- addMetaVarInCtx ctx' dom'
+      arg'  <- addMetaInCtx ctx' dom'
       cod'  <- instantiate_ cod arg'
       (arg:) . (arg':) <$> fillArgsWithMetas ctx' cod'
-=======
-    Pi dom cod -> do
-      arg <- addMetaInCtx ctx' dom
-      cod' <- instantiate_ cod arg
-      (arg :) <$> fillArgsWithMetas ctx' cod'
->>>>>>> master
     Set -> do
       return []
     _ -> do
