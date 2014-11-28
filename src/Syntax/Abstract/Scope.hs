@@ -173,24 +173,21 @@ and how it interplays with PiImpls.
 
 TODO: Extend and rewrite so it also creates PiImpls when that is possible.
 -}
-checkHiding :: C.Expr -> Check (Hiding, C.Expr)
-checkHiding = return . loop
-    where
-      loop e = case e of
-        C.Fun a b          -> second (C.Fun a) $ loop b
-        C.Pi (C.Tel tel) b ->
-          if stop then (n,     C.Pi (C.Tel tel') b )
-                  else (n + m, C.Pi (C.Tel tel') b')
-          where
-            (n, tel', stop) = telHiding tel
-            (m, b')         = loop b
-        _ -> (0, e)
-
-      telHiding []                  = (0, [], False)
-      telHiding bs@(C.Bind{} : _)   = (0, bs, True)
-      telHiding (C.HBind xs e : bs) = (n + length xs, C.Bind xs e : bs', stop)
-        where (n, bs', stop) = telHiding bs
-
+countFirstHidden :: C.Expr -> (Hiding, C.Expr)
+countFirstHidden e = case e of 
+    C.Fun dom cod        -> second (C.Fun dom) $ countFirstHidden cod
+    C.Pi (C.Tel tel) cod -> let pi' = C.Pi (C.Tel tel') in
+      if stop then (n    , pi' cod)
+              else (n + m, pi' cod')
+      where
+        (n, tel', stop) = hiddenInTel tel
+        (m, cod')       = countFirstHidden cod
+    _                    -> (0,e)
+  where
+    hiddenInTel []                  = (0, [], False)
+    hiddenInTel bs@(C.Bind{} : _)   = (0, bs, True)
+    hiddenInTel (C.HBind xs e : bs) = let (n, bs', stop) = hiddenInTel bs in
+      (length xs + n, C.Bind xs e : bs', stop)
 
 scopeCheckProgram :: C.Program -> Either PP.Doc Program
 scopeCheckProgram (C.Prog _ ds) =
@@ -369,8 +366,8 @@ checkConstructor d xs (C.Constr c e) ret =
 
 checkScheme :: C.Expr -> Check (Hiding, Expr)
 checkScheme e = do
-  (n, e) <- checkHiding e
-  a      <- checkExpr e
+  let (n, e') = countFirstHidden e
+  a <- checkExpr e'
   return (n, a)
 
 checkConstructorType :: Expr
@@ -604,7 +601,7 @@ instance HasSrcLoc C.TypeSig where
 
 instance HasSrcLoc C.Decl where
   srcLoc d = case d of
-    C.Postulate (d:ds) -> srcLoc d
+    C.Postulate (d:_) -> srcLoc d
     C.Postulate []     -> noSrcLoc
     C.TypeSig x        -> srcLoc x
     C.Data x _ _       -> srcLoc x
