@@ -62,7 +62,6 @@ module Term.Types
   , Contextual(..)
   , openContextual
   , Definition(..)
-  , openDefinition
   , Constant(..)
   , FunInst(..)
   , ClauseBody
@@ -319,7 +318,7 @@ instance (Hashable t) => Hashable (TermView t)
 type MetaSet = HS.HashSet Meta
 
 class Metas t a where
-  metas :: (IsTerm t, MonadTerm t m) => a -> m MetaSet
+  metas :: (MonadTerm t m) => a -> m MetaSet
 
 instance Metas t (Elim t) where
   metas (Apply t) = metas t
@@ -332,7 +331,7 @@ instance Metas t a => Metas t [a] where
 ------------------------------------------------------------------------
 
 class Nf t a where
-  nf :: (IsTerm t, MonadTerm t m) => a -> m a
+  nf :: (MonadTerm t m) => a -> m a
 
 instance Nf t (Elim t) where
   nf (Proj p)  = return $ Proj p
@@ -347,10 +346,10 @@ instance Nf t a => Nf t [a] where
 class PrettyM t a where
   {-# MINIMAL prettyPrecM | prettyM #-}
 
-  prettyPrecM :: (IsTerm t, MonadTerm t m) => Int -> a -> m PP.Doc
+  prettyPrecM :: (MonadTerm t m) => Int -> a -> m PP.Doc
   prettyPrecM _ = prettyM
 
-  prettyM :: (IsTerm t, MonadTerm t m) => a -> m PP.Doc
+  prettyM :: (MonadTerm t m) => a -> m PP.Doc
   prettyM = prettyPrecM 0
 
 instance PrettyM t (Elim t) where
@@ -387,7 +386,7 @@ runApplySubst :: ApplySubstM m a -> m (Either Name a)
 runApplySubst = runExceptT
 
 class ApplySubst t a where
-  safeApplySubst :: (IsTerm t, MonadTerm t m) => a -> Subst t -> ApplySubstM m a
+  safeApplySubst :: (MonadTerm t m) => a -> Subst t -> ApplySubstM m a
 
 instance ApplySubst t (Elim t) where
   safeApplySubst (Proj p)  _   = return $ Proj p
@@ -435,7 +434,7 @@ instance (ApplySubst t a) => ApplySubst t (Contextual t a) where
     Contextual <$> safeApplySubst tel rho
                <*> safeApplySubst x (subLift (telLength tel) rho)
 
-applySubst :: (IsTerm t, MonadTerm t m, ApplySubst t a) => a -> Subst t -> m a
+applySubst :: (MonadTerm t m, ApplySubst t a) => a -> Subst t -> m a
 applySubst x rho = do
   nameOrRes <- runExceptT $ safeApplySubst x rho
   case nameOrRes of
@@ -446,7 +445,7 @@ applySubst x rho = do
 ------------------------------------------------------------------------
 
 class SynEq t a where
-  synEq :: (IsTerm t, MonadTerm t m) => a -> a -> m Bool
+  synEq :: (MonadTerm t m) => a -> a -> m Bool
 
 instance SynEq t (Elim t) where
   synEq e1 e2 = case (e1, e2) of
@@ -498,7 +497,7 @@ instance SynEq t (BlockedHead t) where
   synEq _ _ =
     return False
 
-instance (IsTerm t) => SynEq t (Head t) where
+instance SynEq t (Head t) where
   synEq (Var v1) (Var v2) =
     return $ v1 == v2
   synEq (Def dk1) (Def dk2) =
@@ -540,7 +539,7 @@ class (Typeable t, Show t, Metas t t, Nf t t, PrettyM t t, ApplySubst t t, SynEq
     refl    :: Closed (Term t)
     typeOfJ :: Closed (Type t)
 
-whnfView :: (IsTerm t, MonadTerm t m) => Term t -> m (TermView t)
+whnfView :: (MonadTerm t m) => Term t -> m (TermView t)
 whnfView t = (view <=< ignoreBlocking <=< whnf) t
 
 -- | Representation of blocked terms.  Right now we just use 'Meta', but
@@ -571,7 +570,7 @@ isBlocked (NotBlocked _)      = Nothing
 isBlocked (BlockingHead mv _) = Just $ HS.singleton mv
 isBlocked (BlockedOn mvs _ _) = Just mvs
 
-ignoreBlocking :: (IsTerm t, MonadTerm t m) => Blocked t -> m t
+ignoreBlocking :: (MonadTerm t m) => Blocked t -> m t
 ignoreBlocking (NotBlocked t) =
   return t
 ignoreBlocking (BlockingHead mv es) =
@@ -589,28 +588,28 @@ seqList :: [a] -> b -> b
 seqList []        x = x
 seqList (!_ : xs) y = seqList xs y
 
-var :: (IsTerm t, MonadTerm t m) => Var -> m t
+var :: (MonadTerm t m) => Var -> m t
 var v = app (Var v) []
 
-lam :: (IsTerm t, MonadTerm t m) => Abs t -> m t
+lam :: (MonadTerm t m) => Abs t -> m t
 lam body = unview $ Lam body
 
-pi :: (IsTerm t, MonadTerm t m) => t -> Abs t -> m t
+pi :: (MonadTerm t m) => t -> Abs t -> m t
 pi domain codomain = unview $ Pi domain codomain
 
-equal :: (IsTerm t, MonadTerm t m) => t -> t -> t -> m t
+equal :: (MonadTerm t m) => t -> t -> t -> m t
 equal type_ x y = unview $ Equal type_ x y
 
-app :: (IsTerm t, MonadTerm t m) => Head t -> [Elim t] -> m t
+app :: (MonadTerm t m) => Head t -> [Elim t] -> m t
 app h elims = seqList elims $ unview $ App h elims
 
-meta :: (IsTerm t, MonadTerm t m) => Meta -> [Elim t] -> m t
+meta :: (MonadTerm t m) => Meta -> [Elim t] -> m t
 meta mv = app (Meta mv)
 
-def :: (IsTerm t, MonadTerm t m) => Opened Name t -> [Elim t] -> m t
+def :: (MonadTerm t m) => Opened Name t -> [Elim t] -> m t
 def key = app (Def key)
 
-con :: (IsTerm t, MonadTerm t m) => Opened Name t -> [Term t] -> m t
+con :: (MonadTerm t m) => Opened Name t -> [Term t] -> m t
 con c args = seqList args $ unview $ Con c args
 
 -- Clauses
@@ -735,7 +734,7 @@ definitionToNameInfo n (Constant _ _)     = SA.DefName n 0
 definitionToNameInfo n (DataCon _ args _) = SA.ConName n 0 $ fromIntegral args
 definitionToNameInfo n (Projection _ _ _) = SA.ProjName n 0
 
-definitionType :: (IsTerm t, MonadTerm t m) => Closed (Definition n t) -> m (Closed (Type t))
+definitionType :: (MonadTerm t m) => Closed (Definition n t) -> m (Closed (Type t))
 definitionType (Constant type_ _) =
   return type_
 definitionType (DataCon _ _ (Contextual tel type_)) =
@@ -770,13 +769,13 @@ instance HasSrcLoc Meta where
 -- MonadTerm
 ------------------------------------------------------------------------
 
-class (Functor m, Applicative m, Monad m, MonadIO m) => MonadTerm t m | m -> t where
+class (Functor m, Applicative m, Monad m, MonadIO m, IsTerm t) => MonadTerm t m | m -> t where
   askSignature :: m (Signature t)
 
 newtype TermM t a = TermM (ReaderT (Signature t) IO a)
   deriving (Functor, Applicative, Monad, MonadIO)
 
-instance MonadTerm t (TermM t) where
+instance (IsTerm t) => MonadTerm t (TermM t) where
   askSignature = TermM ask
 
 runTermM :: Signature t -> TermM t a -> IO a
@@ -787,10 +786,10 @@ getDefinition n = do
   sig <- askSignature
   openDefinition (sigGetDefinition sig (opndKey n)) (opndArgs n)
 
-getMetaType :: (IsTerm t, MonadTerm t m) => Meta -> m (Type t)
+getMetaType :: (MonadTerm t m) => Meta -> m (Type t)
 getMetaType mv = (`sigGetMetaType` mv) <$> askSignature
 
-lookupMetaBody :: (IsTerm t, MonadTerm t m) => Meta -> m (Maybe (MetaBody t))
+lookupMetaBody :: (MonadTerm t m) => Meta -> m (Maybe (MetaBody t))
 lookupMetaBody mv = (`sigLookupMetaBody` mv) <$> askSignature
 
 -- Signature
@@ -802,7 +801,7 @@ data MetaBody t = MetaBody
   , mbBody      :: !(Term t)
   } deriving (Eq, Show, Typeable)
 
-metaBodyToTerm :: (IsTerm t, MonadTerm t m) => MetaBody t -> m (Term t)
+metaBodyToTerm :: (MonadTerm t m) => MetaBody t -> m (Term t)
 metaBodyToTerm (MetaBody args mvb) = go args
   where
     go 0 = return mvb
@@ -961,13 +960,13 @@ ctxLength :: Ctx t -> Natural
 ctxLength C0         = 0
 ctxLength (ctx :< _) = 1 + ctxLength ctx
 
-ctxWeaken :: (IsTerm t, MonadTerm t m) => Natural -> Ctx t -> t -> m t
+ctxWeaken :: (MonadTerm t m) => Natural -> Ctx t -> t -> m t
 ctxWeaken ix ctx t = weaken ix (ctxLength ctx) t
 
-ctxWeaken_ :: (IsTerm t, MonadTerm t m) => Ctx t -> t -> m t
+ctxWeaken_ :: (MonadTerm t m) => Ctx t -> t -> m t
 ctxWeaken_ = ctxWeaken 0
 
-ctxLookupName :: (IsTerm t, MonadTerm t m) => Name -> Ctx t -> m (Maybe (Var, t))
+ctxLookupName :: (MonadTerm t m) => Name -> Ctx t -> m (Maybe (Var, t))
 ctxLookupName n = go 0
   where
     go _ C0 =
@@ -977,7 +976,7 @@ ctxLookupName n = go 0
       then Just . (mkVar n ix, ) <$> weaken_ (ix + 1) type_
       else go (ix + 1) ctx
 
-ctxLookupVar :: (IsTerm t, MonadTerm t m) => Var -> Ctx t -> m (Maybe t)
+ctxLookupVar :: (MonadTerm t m) => Var -> Ctx t -> m (Maybe t)
 ctxLookupVar v _ | varIndex v < 0 =
   error "lookupVar: negative argument"
 ctxLookupVar v ctx0 =
@@ -992,7 +991,7 @@ ctxLookupVar v ctx0 =
         then Just type_
         else go (i - 1) ctx
 
-ctxGetVar :: (IsTerm t, MonadTerm t m) => Var -> Closed (Ctx t) -> m t
+ctxGetVar :: (MonadTerm t m) => Var -> Closed (Ctx t) -> m t
 ctxGetVar v ctx = do
   mbT <- ctxLookupVar v ctx
   case mbT of
@@ -1008,7 +1007,7 @@ ctxVars = reverse . go 0
 
 -- | Creates a 'Pi' type containing all the types in the 'Ctx' and
 -- terminating with the provided 't'.
-ctxPi :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Type t -> m (Type t)
+ctxPi :: (MonadTerm t m) => Ctx (Type t) -> Type t -> m (Type t)
 ctxPi ctx0 = go ctx0
   where
     go C0                   t = return t
@@ -1016,13 +1015,13 @@ ctxPi ctx0 = go ctx0
 
 -- | Creates a 'Lam' term with as many arguments there are in the
 -- 'Ctx'.
-ctxLam :: (IsTerm t, MonadTerm t m) => Ctx (Type t) -> Term t -> m (Term t)
+ctxLam :: (MonadTerm t m) => Ctx (Type t) -> Term t -> m (Term t)
 ctxLam ctx0 = go ctx0
   where
     go C0         t = return t
     go (ctx :< _) t = go ctx =<< lam t
 
-ctxApp :: (IsTerm t, MonadTerm t m) => m (Term t) -> Ctx (Type t) -> m (Term t)
+ctxApp :: (MonadTerm t m) => m (Term t) -> Ctx (Type t) -> m (Term t)
 ctxApp t ctx0 = do
   t' <- t
   eliminate t' . map Apply =<< mapM var (ctxVars ctx0)
@@ -1077,13 +1076,13 @@ instance ApplySubst t (Tel t) where
 -- | Instantiates an 'Tel' repeatedly until we get to the bottom of
 -- it.  Fails If the length of the 'Tel' and the provided list don't
 -- match.
-telDischarge :: (IsTerm t, MonadTerm t m) => Tel t -> Term t -> [Term t] -> m t
+telDischarge :: (MonadTerm t m) => Tel t -> Term t -> [Term t] -> m t
 telDischarge tel' t args =
   if telLength tel' == length args
   then instantiate t args
   else error "Term.Telescope.discharge"
 
-telPi :: (IsTerm t, MonadTerm t m) => Tel (Type t) -> Type t -> m (Type t)
+telPi :: (MonadTerm t m) => Tel (Type t) -> Type t -> m (Type t)
 telPi = ctxPi . telToCtx
 
 ------------------------------------------------------------------------
@@ -1150,12 +1149,12 @@ subDrop _ (Lift 0 _)          = error "drop.Lift"
 subDrop n (Lift m rho)        = subWeaken 1 $ subDrop (n - 1) $ subLift (m - 1) rho
 
 subChain
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => Subst t -> Subst t -> m (Subst t)
 subChain = flip subCompose
 
 subCompose
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => Subst t -> Subst t -> m (Subst t)
 subCompose rho Id =
   return rho
@@ -1176,14 +1175,14 @@ subCompose rho (Lift n sgm) =
                         <*> subCompose rho (subWeaken 1 (subLift (n - 1) sgm))
 
 subUnsafeLookup
-  :: (IsTerm t, MonadTerm t m) => Var -> Subst t -> m (Term t)
+  :: (MonadTerm t m) => Var -> Subst t -> m (Term t)
 subUnsafeLookup v rho = do
   mbT <- runApplySubst $ subLookup v rho
   case mbT of
     Left n  -> error $ "unsafeLookup: free name " ++ show n
     Right t -> return t
 
-subLookup :: forall t m. (IsTerm t, MonadTerm t m) => Var -> Subst t -> ApplySubstM m (Term t)
+subLookup :: forall t m. (MonadTerm t m) => Var -> Subst t -> ApplySubstM m (Term t)
 subLookup v0 rho0 = go rho0 (varIndex v0)
   where
     nm = varName v0
@@ -1219,11 +1218,11 @@ weaken from by t = applySubst t $ subLift from $ subWeaken by subId
 weaken_ :: (IsTerm t, ApplySubst t a, MonadTerm t m) => Natural -> a -> m a
 weaken_ n t = weaken 0 n t
 
-strengthen :: (IsTerm t, MonadTerm t m) => Natural -> Natural -> Abs t -> m t
+strengthen :: (MonadTerm t m) => Natural -> Natural -> Abs t -> m t
 strengthen from by t =
   applySubst t $ subLift from $ subStrengthen by subId
 
-strengthen_ :: (IsTerm t, MonadTerm t m) => Natural -> t -> m t
+strengthen_ :: (MonadTerm t m) => Natural -> t -> m t
 strengthen_ = strengthen 0
 
 instantiate_ :: (IsTerm t, ApplySubst t a, MonadTerm t m) => a -> Term t -> m a
@@ -1242,7 +1241,7 @@ safeStrengthen t = do
     Left _   -> return Nothing
     Right t' -> return $ Just t'
 
-getAbsName :: (IsTerm t, MonadTerm t m) => Abs t -> m (Maybe Name)
+getAbsName :: (MonadTerm t m) => Abs t -> m (Maybe Name)
 getAbsName t = do
   skip <- confFastGetAbsName <$> readConf
   if skip
@@ -1253,7 +1252,7 @@ getAbsName t = do
         Right _ -> return Nothing
         Left n  -> return $ Just n
 
-getAbsName_ :: (IsTerm t, MonadTerm t m) => Abs t -> m Name
+getAbsName_ :: (MonadTerm t m) => Abs t -> m Name
 getAbsName_ t = fromMaybe "_" <$> getAbsName t
 
 -- Elimination
@@ -1261,7 +1260,7 @@ getAbsName_ t = fromMaybe "_" <$> getAbsName t
 
 -- | Tries to apply the eliminators to the term.  Trows an error
 -- when the term and the eliminators don't match.
-eliminate :: (IsTerm t, MonadTerm t m) => t -> [Elim t] -> m t
+eliminate :: (MonadTerm t m) => t -> [Elim t] -> m t
 eliminate t elims = do
   reduce <- confWhnfEliminate <$> readConf
   tView <- if reduce then whnfView t else view t

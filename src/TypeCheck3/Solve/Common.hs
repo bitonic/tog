@@ -538,7 +538,7 @@ invertMeta ctx elims = do
         return (ctx', acts, inv)
 
 mvaApplyActions
-  :: (IsTerm t, MonadTerm t m) => Subst t -> MetaArg' t -> m (MetaArg' t)
+  :: (MonadTerm t m) => Subst t -> MetaArg' t -> m (MetaArg' t)
 mvaApplyActions acts (MVAVar (v, ps)) = do
   vt <- var v
   vt' <- applySubst vt acts

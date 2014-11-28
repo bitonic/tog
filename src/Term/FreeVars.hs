@@ -27,7 +27,7 @@ instance Monoid FreeVars where
     FreeVars (rigid1 `mappend` rigid2) (flex1 `mappend` flex2)
 
 freeVars
-  :: forall t m. (IsTerm t, MonadTerm t m)
+  :: forall t m. (MonadTerm t m)
   => t -> m FreeVars
 freeVars = go Just
   where

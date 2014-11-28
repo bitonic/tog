@@ -29,7 +29,7 @@ import           Data.Collect
 #include "impossible.h"
 
 genericSafeApplySubst
-  :: (IsTerm t, MonadTerm t m) => t -> Subst t -> ApplySubstM m t
+  :: (MonadTerm t m) => t -> Subst t -> ApplySubstM m t
 genericSafeApplySubst t Sub.Id = do
   return t
 genericSafeApplySubst t rho = do
@@ -67,7 +67,7 @@ genericSafeApplySubst t rho = do
         J       -> lift $ app J els'
 
 genericWhnf
-  :: (IsTerm t, MonadTerm t m) => t -> m (Blocked t)
+  :: (MonadTerm t m) => t -> m (Blocked t)
 genericWhnf t = do
   tView <- view t
   let fallback = return $ NotBlocked t
@@ -120,7 +120,7 @@ genericWhnf t = do
 -- | For convenience, here we have turned already meta-variables bodies
 -- into dummy contextual clauses.
 eliminateInst
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => Natural
   -- ^ Length of the context the 'FunInst' resides in.
   -> Opened (Either Meta Name) t -> FunInst t -> [Elim t]
@@ -156,7 +156,7 @@ eliminateInst argsNum opnd@(Opened _ args) (Inst inv) es | clauses <- ignoreInve
         _                                 -> return False
 
 eliminateClauses
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => Opened (Either Meta Name) t -> [Clause t] -> [Elim t] -> m (Blocked t)
 -- Again, metas only ever have one clause.  Note that all these are just
 -- assertions, things would work just fine without them, but let's
@@ -173,7 +173,7 @@ eliminateClauses (Opened (Right f) args) clauses es = do
     Just t  -> return t
 
 whnfFun
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => Opened Name t -> [Elim t] -> [Clause t]
   -> m (Maybe (Blocked t))
 whnfFun _ _ [] = do
@@ -190,7 +190,7 @@ whnfFun fun es (Clause patterns body : clauses) = runMaybeT $ do
       whnf =<< eliminate body' leftoverEs
 
 matchClause
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => [Elim t] -> [Pattern t]
   -> m (Validation (Collect_ MetaSet) ([t], [Elim t]))
 matchClause es [] =
@@ -221,7 +221,7 @@ matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
 matchClause _ _ =
   return $ Failure $ CFail ()
 
-genericNf :: forall t m. (IsTerm t, MonadTerm t m) => t -> m t
+genericNf :: forall t m. (MonadTerm t m) => t -> m t
 genericNf t = do
   tView <- whnfView t
   case tView of
@@ -247,7 +247,7 @@ genericNf t = do
 -- (p : (x : A) -> P x x refl) ->
 -- (eq : _==_ A x y) ->
 -- P x y eq
-genericTypeOfJ :: forall t m. (IsTerm t, MonadTerm t m) => m (Closed (Type t))
+genericTypeOfJ :: forall t m. (MonadTerm t m) => m (Closed (Type t))
 genericTypeOfJ =
     ("A", r set) -->
     ("x", v "A" 0) -->
@@ -268,13 +268,13 @@ genericTypeOfJ =
     (_, type_) --> t = join $ pi <$> type_ <*> t
 
 genericSynEq
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => t -> t -> m Bool
 genericSynEq t1 t2 = do
   join $ genericTermViewEq <$> whnfView t1 <*> whnfView t2
 
 genericTermViewEq
-  :: (IsTerm t, MonadTerm t m)
+  :: (MonadTerm t m)
   => TermView t -> TermView t -> m Bool
 genericTermViewEq tView1 tView2 = do
   case (tView1, tView2) of
@@ -297,17 +297,17 @@ genericTermViewEq tView1 tView2 = do
       return False
 
 instantiateClauseBody
-  :: (IsTerm t, MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
+  :: (MonadTerm t m) => ClauseBody t -> [Term t] -> m (Term t)
 instantiateClauseBody = instantiate
 
 genericPrettyPrecM
-  :: (IsTerm t, MonadTerm t m) => Int -> t -> m PP.Doc
+  :: (MonadTerm t m) => Int -> t -> m PP.Doc
 genericPrettyPrecM p t = do
     synT <- internalToTerm t
     return $ PP.prettyPrec p synT
 
 internalToTerm
-  :: (IsTerm t, MonadTerm t m) => t -> m SA.Expr
+  :: (MonadTerm t m) => t -> m SA.Expr
 internalToTerm t0 = do
   dontNormalize <- confDontNormalizePP <$> readConf
   tView <- view =<< if dontNormalize then return t0 else nf t0
@@ -347,7 +347,7 @@ internalToTerm t0 = do
         Proj p  -> return $ SA.Proj $ pName $ opndKey p
       return $ SA.App h' (map SA.Apply args1 ++ args2)
 
-genericMetas :: (IsTerm t, MonadTerm t m) => Term t -> m MetaSet
+genericMetas :: (MonadTerm t m) => Term t -> m MetaSet
 genericMetas t = do
   tView <- whnfView t
   case tView of
