@@ -1,29 +1,52 @@
+{- Concrete syntax for the Tog programming language.
+Tog is an "interesting" subset of the Agda programming language, and as such includes
+functions, datatypes and records, all of which may be dependently typed.
+-}
 
 entrypoints Program;
 entrypoints Expr;
 
+-- Enable Haskell-style layout syntax where needed
 layout toplevel;
 layout "where";
 layout "field";
 layout "postulate";
 
+
+-- Main entrypoint of a program, which currently is synonymous with a module 
 Prog. Program ::= "module" Name "where" "{" [Decl] "}";
 
+-- Identifiers. Just "_" corresponds to either the wildcard pattern or a metavariable.
 position token Name ((letter | '_') (letter | digit | '-' | '\'' | '_')*) ;
 
 separator Decl ";";
 
+
+-- Top-level function type signature
 TypeSig.   Decl  ::= TypeSig;
+
+-- Function definition using pattern matching and an optional where clause
 FunDef.    Decl  ::= Name [Pattern1] "=" Expr Where;
+
+-- Either a data declaration or a data definition
 Data.      Decl  ::= "data" Name Params DataBody;
+
+-- Either a record declaration or a data definition
 Record.    Decl  ::= "record" Name Params RecordBody;
+
+-- Open local module (n.b. local module creation not yet implemented)
 Open.      Decl  ::= "open" Name;
+
+-- Import and open external module
 Import.    Decl  ::= "open" "import" Name;
+
+-- Postulate that some types are inhabited.
 Postulate. Decl  ::= "postulate" "{" [TypeSig] "}";
 
 separator TypeSig ";";
 
 Sig. TypeSig ::= Name ":" Expr;
+
 
 Where.   Where ::= "where" "{" [Decl] "}";
 NoWhere. Where ::= ;
