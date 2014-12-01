@@ -34,18 +34,18 @@ import           TypeCheck3.Monad
 data CheckError t
     = ExpectingEqual (Type t)
     | ExpectingPi (Type t)
-    | ExpectingTyCon (Opened Name t) (Type t)
+    | ExpectingTyCon Name (Type t)
     | FreeVariableInEquatedTerm Meta [Elim t] (Term t) Var
     | NameNotInScope Name
     | OccursCheckFailed Meta (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord SA.Pattern (Opened Name t) -- Record type constructor
+    | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
 
-checkError :: (IsTerm t) => CheckError t -> TC t s a
+checkError :: (IsTerm t) => CheckError t -> TC_ t a
 checkError err = typeError =<< renderError err
 
-renderError :: (IsTerm t) => CheckError t -> TC t s PP.Doc
+renderError :: (IsTerm t) => CheckError t -> TC_ t PP.Doc
 renderError err =
   case err of
     TermsNotEqual type1 t1 type2 t2 -> do
@@ -102,7 +102,7 @@ renderError err =
 
 addMetaInCtx
   :: (IsTerm t)
-  => Ctx t -> Type t -> TC t s (Term t)
+  => Ctx t -> Type t -> TC_ t (Term t)
 addMetaInCtx ctx type_ = do
   type' <- ctxPi ctx type_
   mv <- addMeta type'
@@ -114,7 +114,7 @@ addMetaInCtx ctx type_ = do
 -- | Useful just for debugging.
 extendContext
   :: (IsTerm t)
-  => Ctx (Type t) -> (Name, Type t) -> TC t s (Ctx (Type t))
+  => Ctx (Type t) -> (Name, Type t) -> TC_ t (Ctx (Type t))
 extendContext ctx type_ = do
   let ctx' = ctx :< type_
   debug "extendContext" $ prettyM ctx'
@@ -131,7 +131,7 @@ unrollPiWithNames
   -- ^ Type to unroll
   -> [Name]
   -- ^ Names to give to each parameter
-  -> TC t s (Tel (Type t), Type t)
+  -> TC_ t (Tel (Type t), Type t)
   -- ^ A telescope with accumulated domains of the pis and the final
   -- codomain.
 unrollPiWithNames type_ [] =
@@ -149,7 +149,7 @@ unrollPi
   :: (IsTerm t)
   => Type t
   -- ^ Type to unroll
-  -> TC t s (Tel (Type t), Type t)
+  -> TC_ t (Tel (Type t), Type t)
 unrollPi type_ = do
   typeView <- whnfView type_
   case typeView of
@@ -192,7 +192,7 @@ instance PrettyM t (Constraint t) where
 -- Clauses invertibility
 ------------------------
 
-termHead :: (IsTerm t) => t -> TC t s (Maybe TermHead)
+termHead :: (IsTerm t) => t -> TC_ t (Maybe TermHead)
 termHead t = do
   tView <- whnfView t
   case tView of
@@ -222,7 +222,7 @@ termHead t = do
       return Nothing
 
 checkInvertibility
-  :: (IsTerm t) => [Closed (Clause t)] -> TC t s (Closed (Invertible t))
+  :: (IsTerm t) => [Closed (Clause t)] -> TC_ t (Closed (Invertible t))
 checkInvertibility = go []
   where
     go injClauses [] =

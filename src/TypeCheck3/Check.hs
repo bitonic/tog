@@ -18,7 +18,7 @@ import           TypeCheck3.Common
 -- metavariables as object variables.
 check
   :: (IsTerm t)
-  => Ctx t -> Term t -> Type t -> TC t s ()
+  => Ctx t -> Term t -> Type t -> TC t r s ()
 check ctx t type_ = do
   let msg = do
         tDoc <- prettyM t
@@ -52,7 +52,7 @@ check ctx t type_ = do
 
 checkConArgs
   :: (IsTerm t)
-  => Ctx t -> [Term t] -> Type t -> TC t s ()
+  => Ctx t -> [Term t] -> Type t -> TC t r s ()
 checkConArgs _ [] _ = do
   return ()
 checkConArgs ctx (arg : args) type_ = do
@@ -63,7 +63,7 @@ checkConArgs ctx (arg : args) type_ = do
 
 checkSpine
   :: (IsTerm t)
-  => Ctx t -> Term t -> [Elim t] -> Type t -> TC t s (Type t)
+  => Ctx t -> Term t -> [Elim t] -> Type t -> TC t r s (Type t)
 checkSpine _ _ [] type_ =
   return (type_)
 checkSpine ctx h (el : els) type_ = case el of
@@ -84,7 +84,7 @@ applyProjection
   -- ^ Head
   -> Type t
   -- ^ Type of the head
-  -> TC t s (Term t, Type t)
+  -> TC t r s (Term t, Type t)
 applyProjection proj h type_ = do
   Projection _ tyCon projType <- getDefinition $ first pName proj
   h' <- eliminate h [Proj proj]
@@ -101,7 +101,7 @@ applyProjection proj h type_ = do
 
 infer
   :: (IsTerm t)
-  => Ctx t -> Term t -> TC t s (Type t)
+  => Ctx t -> Term t -> TC t r s (Type t)
 infer ctx t = do
   debugBracket "infer" (prettyM t) $ do
     tView <- whnfView t
@@ -128,7 +128,7 @@ infer ctx t = do
 
 inferHead
   :: (IsTerm t)
-  => Ctx t -> Head t -> TC t s (Type t)
+  => Ctx t -> Head t -> TC t r s (Type t)
 inferHead ctx h = case h of
   Var v    -> ctxGetVar v ctx
   Def name -> definitionType =<< getDefinition name
@@ -136,10 +136,10 @@ inferHead ctx h = case h of
   J        -> return typeOfJ
 
 matchTyCon
-  :: (IsTerm t) => Opened Name t -> Type t -> TC t s [Term t]
+  :: (IsTerm t) => Opened Name t -> Type t -> TC t r s [Term t]
 matchTyCon tyCon type_ = do
   typeView <- whnfView type_
-  let fallback = checkError $ ExpectingTyCon tyCon type_
+  let fallback = checkError $ ExpectingTyCon (opndKey tyCon) type_
   case typeView of
     App (Def tyCon') elims -> do
       sameTyCon <- synEq tyCon tyCon'
@@ -152,7 +152,7 @@ matchTyCon tyCon type_ = do
       fallback
 
 matchPi
-  :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
+  :: (IsTerm t) => Type t -> TC t r s (Type t, Type t)
 matchPi type_ = do
   typeView <- whnfView type_
   case typeView of
@@ -165,14 +165,14 @@ matchPi type_ = do
 ------------------------------------------------------------------------
 
 -- | Type-directed definitional equality.
-definitionallyEqual :: (IsTerm t) => Ctx t -> Type t -> Term t -> Term t -> TC t s ()
+definitionallyEqual :: (IsTerm t) => Ctx t -> Type t -> Term t -> Term t -> TC t r s ()
 definitionallyEqual ctx type_ t1 t2 = checkEqual (ctx, type_, t1, t2)
 
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
 checkEqual
   :: (IsTerm t)
-  => CheckEqual t -> TC t s ()
+  => CheckEqual t -> TC t r s ()
 checkEqual x@(_, type_, t1, t2) = do
   let msg = do
         typeDoc <- prettyM type_
@@ -191,8 +191,9 @@ checkEqual x@(_, type_, t1, t2) = do
       mbX <- action x'
       forM_ mbX $ runCheckEqual actions finally
 
-checkSynEq :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
+checkSynEq :: (IsTerm t) => CheckEqual t -> TC t r s (Maybe (CheckEqual t))
 checkSynEq (ctx, type_, t1, t2) = do
+  debug_ "checkSynEq" ""
   -- Optimization: try with a simple syntactic check first.
   t1' <- ignoreBlocking =<< whnf t1
   t2' <- ignoreBlocking =<< whnf t2
@@ -202,8 +203,16 @@ checkSynEq (ctx, type_, t1, t2) = do
     then Nothing
     else Just (ctx, type_, t1', t2')
 
-etaExpand :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
+etaExpand :: (IsTerm t) => CheckEqual t -> TC t r s (Maybe (CheckEqual t))
 etaExpand (ctx, type_, t1, t2) = do
+  debug "etaExpand" $ do
+    typeDoc <- prettyM type_
+    t1Doc <- prettyM t1
+    t2Doc <- prettyM t2
+    return $
+      "type:" //> typeDoc $$
+      "t1:" //> t1Doc $$
+      "t2:" //> t2Doc
   f <- expand
   t1' <- f t1
   t2' <- f t2
@@ -236,8 +245,9 @@ etaExpand (ctx, type_, t1, t2) = do
         _ ->
           return return
 
-compareTerms :: (IsTerm t) => CheckEqual t -> TC t s ()
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t r s ()
 compareTerms (ctx, type_, t1, t2) = do
+  debug_ "compareTerms" ""
   typeView <- whnfView type_
   t1View <- whnfView t1
   t2View <- whnfView t2
@@ -288,7 +298,7 @@ compareTerms (ctx, type_, t1, t2) = do
 
 checkEqualSpine
   :: (IsTerm t)
-  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC t s ()
+  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC t r s ()
 checkEqualSpine _ _ _ [] [] = do
   return ()
 checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
@@ -320,7 +330,7 @@ checkEqualSpine _ type_ _ elims1 elims2 = do
 
 instantiateMeta
   :: (IsTerm t)
-  => Meta -> MetaBody t -> TC t s ()
+  => Meta -> MetaBody t -> TC t r s ()
 instantiateMeta mv mvb = do
   let msg = do
         tDoc <- prettyM mvb

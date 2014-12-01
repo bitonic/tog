@@ -26,6 +26,7 @@ executable tog
                      , mtl >= 2.1
                      , nats >= 0.2
                      , optparse-applicative >= 0.11
+                     , profunctors >= 4.3
                      , safe >= 0.3.8
                      , semigroups >= 0.15
                      , split >= 0.2
@@ -38,7 +39,7 @@ executable tog
   hs-source-dirs:      src, bnfc
   include-dirs:        src
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -O
   ghc-prof-options:    -auto-all
 
   if os(darwin)

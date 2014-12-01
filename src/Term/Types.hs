@@ -61,7 +61,9 @@ module Term.Types
     -- * Definition
   , Contextual(..)
   , openContextual
+  , ignoreContextual
   , Definition(..)
+  , openDefinition
   , Constant(..)
   , FunInst(..)
   , ClauseBody
@@ -126,6 +128,8 @@ module Term.Types
   , telAppend
   , telDischarge
   , telPi
+  , telVars
+  , telApp
     -- * Substitution
   , Subst
     -- ** Smart constructors
@@ -434,6 +438,9 @@ instance (ApplySubst t a) => ApplySubst t (Contextual t a) where
     Contextual <$> safeApplySubst tel rho
                <*> safeApplySubst x (subLift (telLength tel) rho)
 
+instance (ApplySubst t a) => ApplySubst t (Opened key a) where
+  safeApplySubst (Opened n args) rho = Opened n <$> safeApplySubst args rho
+
 applySubst :: (MonadTerm t m, ApplySubst t a) => a -> Subst t -> m a
 applySubst x rho = do
   nameOrRes <- runExceptT $ safeApplySubst x rho
@@ -626,7 +633,7 @@ data Clause t = Clause [Pattern t] (ClauseBody t)
 
 data Pattern t
     = VarP
-    | ConP (Opened Name t) [Pattern t]
+    | ConP Name [Pattern t]
     deriving (Eq, Show, Read, Typeable, Functor)
 
 patternBindings :: Pattern t -> Natural
@@ -654,6 +661,9 @@ openContextual (Contextual tel t) args = do
   if telLength tel /= length args
     then __IMPOSSIBLE__
     else instantiate t args
+
+ignoreContextual :: Contextual t a -> a
+ignoreContextual (Contextual _ x) = x
 
 type ContextualDef t = Contextual t (Definition Const t)
 
@@ -697,7 +707,9 @@ data Constant f t
   -- ^ A record, with its constructor and projections.
   | Function !(FunInst t)
   -- ^ A function, which might be waiting for instantiation
+#if __GLASGOW_HASKELL__ >= 708
   deriving (Typeable)
+#endif
 
 deriving instance (Eq (f Name t), Eq (f Projection t), Eq t) => Eq (Constant f t)
 deriving instance (Show (f Name t), Show (f Projection t), Show t) => Show (Constant f t)
@@ -846,21 +858,26 @@ sigAddData :: Signature t -> Name -> Tel t -> Type t -> Signature t
 sigAddData sig name tel type_ =
   sigAddDefinition sig name $ Contextual tel $ Constant type_ $ Data []
 
-sigAddRecordCon :: Signature t -> Name -> Name -> Signature t
-sigAddRecordCon sig name dataCon =
+sigAddRecordCon :: Signature t -> Opened Name t -> Name -> Signature t
+sigAddRecordCon sig name0 dataCon =
   case sigGetDefinition sig name of
     Contextual tel (Constant type_ Postulate) -> do
       sigInsertDefinition sig name $ Contextual tel $ Constant type_ $ Record (Const dataCon) []
     _ -> do
       __IMPOSSIBLE__
+  where
+    name = opndKey name0
 
 sigAddTypeSig :: Signature t -> Name -> Tel t -> Type t -> Signature t
 sigAddTypeSig sig name tel type_ =
   sigAddDefinition sig name $ Contextual tel $ Constant type_ $ Function Open
 
-sigAddClauses :: Signature t -> Name -> Invertible t -> Signature t
-sigAddClauses sig name clauses =
-  let def' = case sigGetDefinition sig name of
+-- | We take an 'Opened Name t' because if we're adding clauses the
+-- function declaration must already be opened.
+sigAddClauses :: Signature t -> Opened Name t -> Invertible t -> Signature t
+sigAddClauses sig name0 clauses =
+  let name = opndKey name0
+      def' = case sigGetDefinition sig name of
         Contextual tel (Constant type_ (Function Open)) ->
           Contextual tel $ Constant type_ $ Function $ Inst clauses
         _ ->
@@ -868,8 +885,8 @@ sigAddClauses sig name clauses =
   in sigInsertDefinition sig name def'
 
 sigAddProjection
-  :: Signature t -> Name -> Field -> Name -> Contextual t (Type t) -> Signature t
-sigAddProjection sig0 projName projIx tyCon ctxtType =
+  :: Signature t -> Name -> Field -> Opened Name t -> Contextual t (Type t) -> Signature t
+sigAddProjection sig0 projName projIx tyCon0 ctxtType =
   case sigGetDefinition sig0 tyCon of
     Contextual tel (Constant tyConType (Record dataCon projs)) ->
       let def' = Contextual tel $ Projection projIx (Const tyCon) ctxtType
@@ -879,10 +896,12 @@ sigAddProjection sig0 projName projIx tyCon ctxtType =
          Contextual tel $ Constant tyConType (Record dataCon projs')
     _ ->
       __IMPOSSIBLE__
+  where
+    tyCon = opndKey tyCon0
 
 sigAddDataCon
-  :: Signature t -> Name -> Name -> Natural -> Contextual t (Type t) -> Signature t
-sigAddDataCon sig0 dataConName tyCon numArgs ctxtType =
+  :: Signature t -> Name -> Opened Name t -> Natural -> Contextual t (Type t) -> Signature t
+sigAddDataCon sig0 dataConName tyCon0 numArgs ctxtType =
   case sigGetDefinition sig0 tyCon of
     Contextual tel (Constant tyConType (Data dataCons)) ->
       let sig = mkSig tel
@@ -896,6 +915,7 @@ sigAddDataCon sig0 dataConName tyCon numArgs ctxtType =
     _ ->
       __IMPOSSIBLE__
   where
+    tyCon = opndKey tyCon0
     def' tel = Contextual tel $ DataCon (Const tyCon) numArgs ctxtType
     mkSig tel = sigAddDefinition sig0 dataConName $ def' tel
 
@@ -1037,6 +1057,12 @@ data Tel t
   | (Name, Term t) :> Tel t
   deriving (Show, Read, Eq, Functor)
 
+instance Monoid (Tel t) where
+  mempty = T0
+
+  T0 `mappend` tel2 = tel2
+  (type_ :> tel1) `mappend` tel2 = type_ :> (tel1 `mappend` tel2)
+
 telLength :: Tel t -> Natural
 telLength T0         = 0
 telLength (_ :> tel) = 1 + telLength tel
@@ -1085,6 +1111,15 @@ telDischarge tel' t args =
 telPi :: (MonadTerm t m) => Tel (Type t) -> Type t -> m (Type t)
 telPi = ctxPi . telToCtx
 
+-- TODO make more efficient, we reverse twice!
+telVars :: forall t. (IsTerm t) => Tel (Type t) -> [Var]
+telVars = ctxVars . telToCtx
+
+telApp :: (MonadTerm t m) => m (Term t) -> Tel (Type t) -> m (Term t)
+telApp t tel = do
+  t' <- t
+  eliminate t' . map Apply =<< mapM var (telVars tel)
+
 ------------------------------------------------------------------------
 -- Substitution
 ------------------------------------------------------------------------
@@ -1105,7 +1140,7 @@ subWeaken n (Strengthen m rho) = case n - m of
                                    0         -> rho
                                    k | k > 0 -> Weaken k rho
                                    k         -> Strengthen k rho
-subWeaken n rho                  = Weaken n rho
+subWeaken n rho                = Weaken n rho
 
 subStrengthen :: Natural -> Subst t -> Subst t
 subStrengthen 0 rho                = rho
@@ -1267,7 +1302,7 @@ eliminate t elims = do
   let badElimination = do
         tDoc <- prettyM t
         elimsDoc <- prettyM elims
-        error $ PP.render $
+        fatalError $ PP.render $
           "Bad elimination" $$
           "term:" //> tDoc $$
           "elims:" //> elimsDoc

@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Solve.Simple
@@ -6,11 +7,9 @@ module TypeCheck3.Solve.Simple
   , solve
   ) where
 
-import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
-import           Syntax
 
 import           Instrumentation
 import           Prelude.Extended
@@ -28,15 +27,23 @@ import           TypeCheck3.Solve.Common
 -- These definitions should be in every Solve module
 ----------------------------------------------------
 
-newtype SolveState t = SolveState (Constraints t)
+type ConstraintId = Natural
 
-type Constraints t = [(MetaSet, Constraint t)]
+type Constraints t = [([ConstraintId], MetaSet, Constraint t)]
+type Constraints_ t = [(MetaSet, Constraint t)]
 
 data Constraint t
   = Unify (Ctx t) (Type t) (Term t) (Term t)
   | UnifySpine (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)] [Elim (Term t)]
   | Conj [Constraint t]
   | (:>>:) (Constraint t) (Constraint t)
+
+data SolveState t = SolveState
+  { _ssConstraintCount :: !ConstraintId
+  , _ssConstraints     :: !(Constraints t)
+  }
+
+makeLenses ''SolveState
 
 simplify :: Constraint t -> Maybe (Constraint t)
 simplify (Conj [])    = Nothing
@@ -63,71 +70,109 @@ constraint (Common.JmEq ctx type1 t1 type2 t2) =
   Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
 
 initSolveState :: SolveState t
-initSolveState = SolveState []
+initSolveState = SolveState 0 []
 
-solve :: forall t. (IsTerm t) => Common.Constraint t -> TC t (SolveState t) ()
+solve :: forall t r. (IsTerm t) => Common.Constraint t -> TC t r (SolveState t) ()
 solve c = do
-  SolveState constrs0 <- get
-  constrs <- go False [] ((mempty, constraint c) : constrs0)
-  put $ SolveState constrs
+  debugBracket_ "solve" "" $ do
+    count <- bumpCount
+    let constr = ([count], mempty, constraint c)
+    ssConstraints %= (constr :)
+    go False []
   where
-    go :: Bool -> Constraints t -> Constraints t -> TC t s (Constraints t)
-    go progress constrs [] = do
-      if progress
-      then go False [] constrs
-      else return constrs
-    go progress newConstrs ((mvs, constr) : constrs) = do
-      attempt <- do mvsBodies <- mapM lookupMetaBody (HS.toList mvs)
-                    return $ null mvsBodies || any isJust mvsBodies
-      if attempt
-        then do
-          constrs' <- solveConstraint constr
-          go True (constrs' ++ newConstrs) constrs
-        else do
-          go progress ((mvs, constr) : newConstrs) constrs
+    bumpCount = do
+      ssConstraintCount %= (+1)
+      use ssConstraintCount
 
-solveConstraint :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
-solveConstraint constr0 = do
+    popConstr = do
+      constrs <- use ssConstraints
+      case constrs of
+        [] -> do
+          return Nothing
+        (c' : cs) -> do
+          ssConstraints .= cs
+          return $ Just c'
+
+    newConstraint (constrId, mvs, constr) =
+      debug "newConstraint" $ do
+        constrDoc <- prettyM constr
+        return $
+          "constrId:" //> PP.pretty constrId $$
+          "mvs:" //> PP.pretty (HS.toList mvs) $$
+          "constr:" //> constrDoc
+
+    go :: Bool -> Constraints t -> TC t r (SolveState t) ()
+    go progress newConstrs = do
+      mbConstr <- popConstr
+      case mbConstr of
+        Nothing -> do
+          ssConstraints .= newConstrs
+          if progress
+            then go False []
+            else return ()
+        Just (constrIds, mvs, constr) -> do
+          attempt <- do mvsBodies <- mapM lookupMetaBody (HS.toList mvs)
+                        return $ null mvsBodies || any isJust mvsBodies
+          if attempt
+            then do
+              untaggedConstrs <- solveConstraint constrIds constr
+              constrs <- forM untaggedConstrs $ \(mvs', constr') -> do
+                constrId' <- bumpCount
+                let taggedConstr = (constrId' : constrIds, mvs', constr')
+                newConstraint taggedConstr
+                return taggedConstr
+              go True (constrs ++ newConstrs)
+            else do
+              go progress ((constrIds, mvs, constr) : newConstrs)
+
+solveConstraint :: (IsTerm t) => [ConstraintId] -> Constraint t -> TC t r s (Constraints_ t)
+solveConstraint constrId constr0 = do
   let msg = do
         constrDoc <- prettyM constr0
         return $
-          "constraint:" //> constrDoc
-  debugBracket "solveConstraint" msg $ do
-    case constr0 of
-      Conj constrs -> do
-        mconcat <$> forM constrs solveConstraint
-      Unify ctx type_ t1 t2 -> do
-        checkEqual (ctx, type_, t1, t2)
-      UnifySpine ctx type_ mbH elims1 elims2 -> do
-        checkEqualSpine' ctx type_ mbH elims1 elims2
-      constr1 :>>: constr2 -> do
-        constrs1_0 <- solveConstraint constr1
-        let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
-                                 | (mvs, constr) <- constrs1_0 ]
-        case mbConstrs1 of
-          Nothing -> do
-            solveConstraint constr2
-          Just constrs1 -> do
-            let (mvs, constr1') = mconcat constrs1
-            return [(mvs, constr1' :>>: constr2)]
+          "constrId:" //> PP.pretty constrId $$
+          "constr:" //> constrDoc
+  debug "solveConstraint" msg
+  execConstraint constr0
+
+execConstraint :: (IsTerm t) => Constraint t -> TC t r s (Constraints_ t)
+execConstraint constr0 = case constr0 of
+  Conj constrs -> do
+    mconcat <$> forM constrs execConstraint
+  Unify ctx type_ t1 t2 -> do
+    checkEqual (ctx, type_, t1, t2)
+  UnifySpine ctx type_ mbH elims1 elims2 -> do
+    checkEqualSpine' ctx type_ mbH elims1 elims2
+  constr1 :>>: constr2 -> do
+    constrs1_0 <- execConstraint constr1
+    let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
+                             | (mvs, constr) <- constrs1_0 ]
+    case mbConstrs1 of
+      Nothing -> do
+        execConstraint constr2
+      Just constrs1 -> do
+        let (mvs, constr1') = mconcat constrs1
+        return [(mvs, constr1' :>>: constr2)]
 
 instance PrettyM t (SolveState t) where
-  prettyM (SolveState cs0) = do
+  prettyM (SolveState _ cs0) = do
      detailed <- confProblemsReport <$> readConf
      let go cs = do
            tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
-           when detailed $ forM_ cs $ \(mvs, c) -> do
+           when detailed $ forM_ cs $ \(cId, mvs, c) -> do
              tell $ PP.line <> "------------------------------------------------------------------------"
              cDoc <- lift $ prettyM c
-             tell $ PP.line <> "** Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
+             tell $ PP.line <> "** Waiting on" <+> PP.pretty cId <+>
+                    "[" <> PP.pretty (HS.toList mvs) <> "]" $$ cDoc
      execWriterT $ go cs0
 
 -- This is local stuff
 ----------------------
 
-sequenceConstraints :: Constraints t -> Constraint t -> Constraints t
+sequenceConstraints :: (IsTerm t) => Constraints_ t -> Constraint t -> TC_ t (Constraints_ t)
+sequenceConstraints [] c2 = execConstraint c2
 sequenceConstraints scs1 c2 =
-  let (css, cs1) = unzip scs1 in [(mconcat css, Conj cs1 :>>: c2)]
+  let (css, cs1) = unzip scs1 in return [(mconcat css, Conj cs1 :>>: c2)]
 
 -- Equality
 ------------------------------------------------------------------------
@@ -135,17 +180,17 @@ sequenceConstraints scs1 c2 =
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
 data CheckEqualProgress t
-  = Done (Constraints t)
+  = Done (Constraints_ t)
   | KeepGoing (CheckEqual t)
 
-done :: Constraints t -> TC t s (CheckEqualProgress t)
+done :: Constraints_ t -> TC t r s (CheckEqualProgress t)
 done = return . Done
 
-keepGoing :: CheckEqual t -> TC t s (CheckEqualProgress t)
+keepGoing :: CheckEqual t -> TC t r s (CheckEqualProgress t)
 keepGoing = return . KeepGoing
 
 checkEqual
-  :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
+  :: (IsTerm t) => CheckEqual t -> TC t r s (Constraints_ t)
 checkEqual (ctx0, type0, t1_0, t2_0) = do
   let msg = do
         ctxDoc <- prettyM ctx0
@@ -177,7 +222,7 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
 
 checkSynEq
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
+  => CheckEqual t -> TC t r s (CheckEqualProgress t)
 checkSynEq args@(ctx, type_, t1, t2) = do
   disabled <- confDisableSynEquality <$> readConf
   if disabled
@@ -196,16 +241,15 @@ checkSynEq args@(ctx, type_, t1, t2) = do
 
 etaExpand'
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
+  => CheckEqual t -> TC t r s (CheckEqualProgress t)
 etaExpand' (ctx, type0, t1, t2) = do
-  debugBracket_ "etaExpand" "" $ do
-    t1' <- etaExpand type0 t1
-    t2' <- etaExpand type0 t2
-    keepGoing (ctx, type0, t1', t2')
+  t1' <- etaExpand type0 t1
+  t2' <- etaExpand type0 t2
+  keepGoing (ctx, type0, t1', t2')
 
 checkMetas
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
+  => CheckEqual t -> TC t r s (CheckEqualProgress t)
 checkMetas (ctx, type_, t1, t2) = do
   blockedT1 <- whnf t1
   t1' <- ignoreBlocking blockedT1
@@ -247,12 +291,16 @@ checkMetas (ctx, type_, t1, t2) = do
       keepGoing (ctx, type_, t1', t2')
 
 checkEqualBlockedOn
-  :: forall t s.
+  :: forall t r s.
      (IsTerm t)
   => Ctx t -> Type t
   -> HS.HashSet Meta -> BlockedHead t -> [Elim t]
   -> Term t
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
+checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
+  t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
+  return $ [(mvs, Unify ctx type_ t1 t2)]
+{-
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
   let msg = do
         bhDoc <- prettyM bh
@@ -305,7 +353,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
   where
     fallback t1 = return $ [(mvs, Unify ctx type_ t1 t2)]
 
-    matchPats :: [Pattern t] -> [Elim t] -> TC t s Bool
+    matchPats :: [Pattern t] -> [Elim t] -> TC t r s Bool
     matchPats (VarP : pats) (_ : elims) = do
       matchPats pats elims
     matchPats (ConP dataCon pats' : pats) (elim : elims) = do
@@ -318,7 +366,7 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
       -- are waiting on some metavar which doesn't head an eliminator.
       return False
 
-    matchPat :: Opened Name t -> [Pattern t] -> Elim t -> TC t s Bool
+    matchPat :: Name -> [Pattern t] -> Elim t -> TC t r s Bool
     matchPat dataCon pats (Apply t) = do
       tView <- whnfView t
       case tView of
@@ -326,9 +374,8 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
           mvT <- instantiateDataCon mv dataCon
           void $ matchPat dataCon pats . Apply =<< eliminate mvT mvArgs
           return True
-        Con dataCon' dataConArgs -> do
-          sameDataCon <- synEq dataCon' dataCon
-          if sameDataCon then matchPats pats (map Apply dataConArgs) else return False
+        Con dataCon' dataConArgs | dataCon == opndKey dataCon' -> do
+          matchPats pats (map Apply dataConArgs)
         _ -> do
           -- This can happen -- when we are blocked on metavariables
           -- that are impeding other definitions.
@@ -336,10 +383,11 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
     matchPat _ _ _ = do
       -- Same as above.
       return False
+-}
 
 equalSpine
   :: (IsTerm t)
-  => Head t -> Ctx t -> [Elim t] -> [Elim t] -> TC t s (Constraints t)
+  => Head t -> Ctx t -> [Elim t] -> [Elim t] -> TC t r s (Constraints_ t)
 equalSpine h ctx elims1 elims2 = do
   hType <- headType ctx h
   checkEqualSpine ctx hType h elims1 elims2
@@ -347,14 +395,14 @@ equalSpine h ctx elims1 elims2 = do
 checkEqualApplySpine
   :: (IsTerm t)
   => Ctx t -> Type t -> [Term t] -> [Term t]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualApplySpine ctx type_ args1 args2 =
   checkEqualSpine' ctx type_ Nothing (map Apply args1) (map Apply args2)
 
 checkEqualSpine
   :: (IsTerm t)
   => Ctx t -> Type t -> Head t -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualSpine ctx type_ h elims1 elims2  = do
   h' <- app h []
   checkEqualSpine' ctx type_ (Just h') elims1 elims2
@@ -363,7 +411,7 @@ checkEqualSpine'
   :: (IsTerm t)
   => Ctx t -> Type t -> Maybe (Term t)
   -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualSpine' ctx type_ mbH elims1 elims2 = do
   let msg = do
         typeDoc <- prettyM type_
@@ -385,7 +433,7 @@ checkEqualSpine''
   :: (IsTerm t)
   => Ctx t -> Type t -> Maybe (Term t)
   -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualSpine'' _ _ _ [] [] = do
   return []
 checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
@@ -404,7 +452,7 @@ checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
             return (res1 <> res2)
           Nothing -> do
             cod' <- instantiate_ cod arg1
-            return $ sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
+            sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
       (Proj proj, Proj proj') -> do
           sameProj <- synEq proj proj'
           if sameProj
@@ -422,7 +470,7 @@ checkEqualSpine'' _ type_ _ elims1 elims2 = do
 metaAssign
   :: (IsTerm t)
   => Ctx t -> Type t -> Meta -> [Elim (Term t)] -> Term t
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 metaAssign ctx0 type0 mv elims t0 = do
   mvType <- getMetaType mv
   let msg = do
@@ -494,7 +542,7 @@ metaAssign ctx0 type0 mv elims t0 = do
           Failure (CFail v) ->
             checkError $ FreeVariableInEquatedTerm mv elims t v
 
-compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t r s (Constraints_ t)
 compareTerms (ctx, type_, t1, t2) = do
   typeView <- whnfView type_
   t1View <- whnfView t1

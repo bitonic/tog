@@ -46,6 +46,9 @@ instance PrettyM t (Clause t) where
     return $ PP.group $
       PP.hsep (patsDoc ++ ["="]) //> bodyDoc
 
+instance PrettyM t Name where
+  prettyM = return . PP.pretty
+
 instance PrettyM t (Pattern t) where
   prettyM e = case e of
     VarP      -> return $ PP.text "_"
@@ -91,8 +94,8 @@ instance PrettyM t (Sub.Subst t) where
       tDoc <- prettyM t
       return $
         "Instantiate" $$
-        "sub:" //> subDoc $$
-        "term:" //> tDoc
+        "term:" //> tDoc $$
+        "sub:" //> subDoc
     Sub.Strengthen i sub -> do
       subDoc <- prettyM sub
       return $ "Strengthen" <+> PP.pretty i //> subDoc
@@ -125,3 +128,11 @@ instance (PrettyM t a, PrettyM t b) => PrettyM t (a, b) where
     xDoc <- prettyM x
     yDoc <- prettyM y
     return $ PP.tupled [xDoc, yDoc]
+
+instance (PrettyM t a) => PrettyM t (Contextual t a) where
+  prettyM (Contextual tel x) = do
+    telDoc <- prettyM tel
+    xDoc <- prettyM x
+    return $
+      "tel:" //> telDoc $$
+      "inside:" //> xDoc

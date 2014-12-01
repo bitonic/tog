@@ -62,7 +62,8 @@ genericSafeApplySubst t rho = do
       case h of
         Var v   -> do u <- subLookup v rho
                       lift $ eliminate u els'
-        Def n   -> lift $ def n els'
+        Def n   -> do n' <- safeApplySubst n rho
+                      lift $ def n' els'
         Meta mv -> lift $ meta mv els'
         J       -> lift $ app J els'
 
@@ -211,11 +212,10 @@ matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
       tView <- view t
       let fallback = return $ Failure $ CFail ()
       case tView of
-        Con dataCon' dataConArgs -> do
-          sameDataCon <- synEq dataCon dataCon'
-          if sameDataCon
-            then matchClause (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
-            else fallback
+        -- Here we can compare just the key, since the assumption is
+        -- that we only reduce well-typed terms.
+        Con dataCon' dataConArgs | dataCon == opndKey dataCon' -> do
+          matchClause (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
         _ ->
           fallback
 matchClause _ _ =

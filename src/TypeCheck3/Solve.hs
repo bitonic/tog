@@ -5,8 +5,6 @@ module TypeCheck3.Solve
   , solve
   ) where
 
-import           Control.Monad.State              (get, put)
-
 import           Instrumentation
 import           Prelude.Extended
 import           Term
@@ -18,7 +16,7 @@ import qualified TypeCheck3.Solve.Simple          as Simple
 
 data SolveState t = forall solveState. (PrettyM t (solveState t)) => SolveState
   { sState :: solveState t
-  , sSolve :: Constraint t -> TC t (solveState t) ()
+  , sSolve :: forall r. Constraint t -> TC t r (solveState t) ()
   }
 
 initSolveState :: (IsTerm t) => IO (SolveState t)
@@ -40,10 +38,10 @@ initSolveState = do
     _ ->
       error $ "Unsupported solver " ++ solver
 
-solve :: (IsTerm t) => Constraint t -> TC t (SolveState t) ()
+solve :: (IsTerm t) => Constraint t -> TC t r (SolveState t) ()
 solve c = do
   SolveState ss solve' <- get
-  ((), ss') <- nestTC ss $ solve' c
+  ss' <- magnifyStateTC (const ss) $ solve' c >> get
   put $ SolveState ss' solve'
 
 instance PrettyM t (SolveState t) where

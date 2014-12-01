@@ -76,6 +76,14 @@ module Prelude.Extended
   , validationToEither
   , void
   , when
+  , makeLenses
+  , use
+  , (%=)
+  , (.=)
+  , (^.)
+  , zoom
+  , Lens'
+  , Getter
   ) where
 
 import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)

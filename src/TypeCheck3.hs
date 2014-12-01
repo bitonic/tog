@@ -2,23 +2,20 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3
-  ( -- * Global state
-    TCState'
-  , emptyTCState'
-    -- * Program checking
-  , checkProgram
-    -- * Interactive mode
-  , Command
-  , parseCommand
-  , runCommand
+  ( -- * Program checking
+    checkProgram
   ) where
+  --   -- * Interactive mode
+  -- , Command
+  -- , parseCommand
+  -- , runCommand
+  -- ) where
 
-import           Control.Lens                     ((^.))
 import qualified Control.Lens                     as L
 import           Data.Proxy                       (Proxy(Proxy))
 import qualified Data.HashSet                     as HS
-import           Safe                             (readMay)
-import qualified Text.ParserCombinators.ReadP     as ReadP
+-- import           Safe                             (readMay)
+-- import qualified Text.ParserCombinators.ReadP     as ReadP
 
 import           Instrumentation
 import           Prelude.Extended
@@ -47,115 +44,140 @@ L.makeLenses ''CheckState
 initCheckState :: (IsTerm t) => IO (CheckState t)
 initCheckState = CheckState <$> initSolveState
 
-type CheckM t = TC t (CheckState t)
+type CheckM t = TC t (ElabEnv t) (CheckState t)
+type CCheckM t = forall b. CheckM t b -> CheckM t b
 
 -- Decls
 ------------------------------------------------------------------------
 
 checkDecl
   :: (IsTerm t)
-  => Ctx t
-  -- ^ The context under which the current module operates
-  -> SA.Decl -> CheckM t ()
-checkDecl ctx decl = do
-  debugBracket_ "checkDecl" (PP.pretty decl) $ atSrcLoc decl $ do
-    case decl of
-      SA.TypeSig sig      -> checkTypeSig ctx sig
-      SA.Postulate sig    -> checkPostulate ctx sig
-      SA.Data sig         -> checkData ctx sig
-      SA.Record sig       -> checkRecord ctx sig
-      SA.DataDef d xs cs  -> checkDataDef ctx d xs cs
-      SA.RecDef d xs c fs -> checkRecDef ctx d xs c fs
-      SA.FunDef f clauses -> checkFunDef ctx f clauses
+  => ElabEnv t
+  -> SA.Decl
+  -> TC t r (CheckState t) (ElabEnv t)
+checkDecl env decl = do
+  let cont = ask
+  magnifyTC (const env) $ do
+    debugBracket_ "checkDecl" (PP.pretty decl) $ atSrcLoc decl $ do
+      case decl of
+        SA.TypeSig sig      -> checkTypeSig sig cont
+        SA.Postulate sig    -> checkPostulate sig cont
+        SA.Data sig         -> checkData sig cont
+        SA.Record sig       -> checkRecord sig cont
+        SA.DataDef d xs cs  -> checkDataDef d xs cs cont
+        SA.RecDef d xs c fs -> checkRecDef d xs c fs cont
+        SA.FunDef f clauses -> checkFunDef f clauses cont
 
-inferExpr
+addConstantAndOpen
   :: (IsTerm t)
-  => Ctx t -> SA.Expr -> CheckM t (Term t, Type t)
-inferExpr ctx synT = do
-  type_ <- addMetaInCtx ctx set
-  t <- checkExpr ctx synT type_
-  return (t, type_)
+  => (Name -> Tel t -> Type t -> CheckM t ())
+  -> Name
+  -> Type t
+  -> CCheckM t
+addConstantAndOpen f name type_ cont = do
+  tel <- asks elabEnvTel
+  f name tel type_
+  openDefinitionInEnv_ name $ \_ -> cont
 
 checkExpr
   :: (IsTerm t)
-  => Ctx t -> SA.Expr -> Type t -> CheckM t (Term t)
-checkExpr ctx synT type_ = do
-  debugBracket_ "checkExpr" "" $ do
-    (t, constrs) <- elaborate ctx type_ synT
-    debug "constraints" $ PP.list <$> mapM prettyM constrs
-    mapTC csSolveState $ mapM_ solve constrs
+  => SA.Expr -> Type t -> CheckM t (Term t)
+checkExpr synT type_ = do
+  let msg = do
+        typeDoc <- prettyM type_
+        return $
+          "type:" //> typeDoc $$
+          "term:" //> PP.pretty synT
+  debugBracket "checkExpr" msg $ do
+    (t, constrs) <- elaborate type_ synT
+    zoomTC csSolveState $ mapM_ solve constrs
+    ctx <- asks elabEnvCtx
     check ctx t type_
     return t
 
-checkTypeSig :: (IsTerm t) => Ctx t -> SA.TypeSig -> CheckM t ()
-checkTypeSig ctx (SA.Sig name absType) = do
-    type_ <- checkExpr ctx absType set
-    addTypeSig name (ctxToTel ctx) type_
+checkTypeSig :: (IsTerm t) => SA.TypeSig -> CCheckM t
+checkTypeSig (SA.Sig name absType) cont = do
+    type_ <- checkExpr absType set
+    addConstantAndOpen addTypeSig name type_ cont
 
-checkPostulate :: (IsTerm t) => Ctx t -> SA.TypeSig -> CheckM t ()
-checkPostulate ctx (SA.Sig name absType) = do
-    type_ <- checkExpr ctx absType set
-    addPostulate name (ctxToTel ctx) type_
+checkPostulate :: (IsTerm t) => SA.TypeSig -> CCheckM t
+checkPostulate (SA.Sig name absType) cont = do
+    type_ <- checkExpr absType set
+    addConstantAndOpen addPostulate name type_ cont
 
-checkData :: (IsTerm t) => Ctx t -> SA.TypeSig -> CheckM t ()
-checkData ctx (SA.Sig name absType) = do
-    type_ <- checkExpr ctx absType set
-    addData name (ctxToTel ctx) type_
+checkData :: (IsTerm t) => SA.TypeSig -> CCheckM t
+checkData (SA.Sig name absType) cont = do
+    type_ <- checkExpr absType set
+    -- Check that at the end of the type there is a 'Set'
+    (tel, endType) <- unrollPi type_
+    extendEnv (telToCtx tel) $ do
+      ctx <- asks elabEnvCtx
+      definitionallyEqual ctx set endType set
+    addConstantAndOpen addData name type_ cont
 
-checkRecord :: (IsTerm t) => Ctx t -> SA.TypeSig -> CheckM t ()
-checkRecord ctx (SA.Sig name absType) = do
-    type_ <- checkExpr ctx absType set
+checkRecord :: (IsTerm t) => SA.TypeSig -> CCheckM t
+checkRecord (SA.Sig name absType) cont = do
+    type_ <- checkExpr absType set
+    -- Check that at the end of the type there is a 'Set'
+    (tel, endType) <- unrollPi type_
+    extendEnv (telToCtx tel) $ do
+      ctx <- asks elabEnvCtx
+      definitionallyEqual ctx set endType set
     -- We add it as a postulate first, because we don't know what the
     -- datacon is yet.
-    addPostulate name (ctxToTel ctx) type_
+    addConstantAndOpen addPostulate name type_ cont
 
 checkDataDef
     :: (IsTerm t)
-    => Ctx t
-    -> Name
+    => Name
     -- ^ Name of the tycon.
     -> [Name]
     -- ^ Names of parameters to the tycon.
     -> [SA.TypeSig]
     -- ^ Types for the data constructors.
-    -> CheckM t ()
-checkDataDef ctx tyCon0 tyConPars dataCons = do
-    -- A data constructor must be declared in the same module as the
-    -- data declaration.
-    tyCon <- Opened tyCon0 <$> mapM var (ctxVars ctx)
-    tyConType <- definitionType =<< getDefinition tyCon
-    (tyConPars0, endType) <- unrollPiWithNames tyConType tyConPars
-    let tyConPars' = telToCtx tyConPars0
-    definitionallyEqual tyConPars' set endType set
-    appliedTyConType <- ctxApp (def tyCon []) tyConPars'
-    mapM_ (checkDataCon tyCon tyConPars' appliedTyConType) dataCons
+    -> CCheckM t
+checkDataDef tyCon0 tyConParsNames dataCons cont = do
+  -- The type constructor must already be defined, and opened
+  (tyCon, _) <- getOpenedDefinition tyCon0
+  tyConType <- definitionType =<< getDefinition tyCon
+  (tyConPars, _) <- unrollPiWithNames tyConType tyConParsNames
+  -- We check the data constructor types under the type parameters of
+  -- the type constructor
+  dataConsTypes <- extendEnv (telToCtx tyConPars) $ do
+    -- We need to weaken the opened tyCon name -- to weaken its arguments.
+    tyCon' <- applySubst tyCon $ subWeaken (telLength tyConPars) subId
+    appliedTyConType <- telApp (def tyCon' []) tyConPars
+    mapM (checkDataCon appliedTyConType) dataCons
+  -- Now we repeatedly add the data constructors.
+  let go [] cont' = do
+        cont'
+      go ((dataCon, dataConArgs, dataConType) : dataConsTypes') cont' = do
+        addDataCon dataCon tyCon dataConArgs $ Contextual tyConPars dataConType
+        openDefinitionInEnv_ dataCon $ \_ -> go dataConsTypes' cont'
+  go dataConsTypes cont
 
 checkDataCon
     :: (IsTerm t)
-    => Opened Name t
-    -- ^ Name of the tycon.
-    -> Ctx (Type t)
-    -- ^ Ctx with the parameters of the tycon.
-    -> Type t
+    => Type t
     -- ^ Tycon applied to the parameters.
     -> SA.TypeSig
-    -- ^ Data constructor.
-    -> CheckM t ()
-checkDataCon tyCon tyConPars appliedTyConType (SA.Sig dataCon synDataConType) = do
+    -- ^ Data constructor type
+    -> CheckM t (Name, Natural, Type t)
+    -- ^ Name of the datacon, number of arguments and type of the data
+    -- constructor, scoped over the parameters of the data type.
+checkDataCon appliedTyConType (SA.Sig dataCon synDataConType) = do
   atSrcLoc dataCon $ do
-    dataConType <- checkExpr tyConPars synDataConType set
+    dataConType <- checkExpr synDataConType set
     (vsTel, endType) <- unrollPi dataConType
-    let vs = telToCtx vsTel
-    appliedTyConType' <- ctxWeaken_ vs appliedTyConType
-    let ctx = tyConPars <> vs
-    definitionallyEqual ctx set appliedTyConType' endType
-    addDataCon dataCon (opndKey tyCon) (ctxLength vs) $ Contextual (ctxToTel tyConPars) dataConType
+    extendEnv (telToCtx vsTel) $ do
+      appliedTyConType' <- weaken_ (telLength vsTel) appliedTyConType
+      ctx <- asks elabEnvCtx
+      definitionallyEqual ctx set appliedTyConType' endType
+    return (dataCon, telLength vsTel, dataConType)
 
 checkRecDef
     :: (IsTerm t)
-    => Ctx t
-    -- ^ Context of the module we're in
-    -> Name
+    => Name
     -- ^ Name of the tycon.
     -> [Name]
     -- ^ Name of the parameters to the tycon.
@@ -163,46 +185,43 @@ checkRecDef
     -- ^ Name of the data constructor.
     -> [SA.TypeSig]
     -- ^ Fields of the record.
-    -> CheckM t ()
-checkRecDef ctx tyCon0 tyConPars dataCon fields = do
-    -- The definition of the record must be in the same module as the
-    -- tycon declaration
-    tyCon <- Opened tyCon0 <$> mapM var (ctxVars ctx)
-    tyConType <- definitionType =<< getDefinition tyCon
-    addRecordCon (opndKey tyCon) dataCon
-    (tyConParsTel, endType) <- unrollPiWithNames tyConType tyConPars
-    let tyConPars' = telToCtx tyConParsTel
-    definitionallyEqual tyConPars' set endType set
-    fieldsTel <- checkFields tyConPars' fields
-    appliedTyConType <- ctxApp (def tyCon []) tyConPars'
-    fieldsTel' <- weaken_ 1 fieldsTel
-    addProjections
-      (opndKey tyCon) tyConPars' (boundVar "_") (map SA.typeSigName fields)
-      fieldsTel'
-    let fieldsCtx = telToCtx fieldsTel
-    appliedTyConType' <- ctxWeaken_ fieldsCtx appliedTyConType
-    addDataCon dataCon (opndKey tyCon) (length fields) . Contextual (ctxToTel tyConPars') =<< ctxPi fieldsCtx appliedTyConType'
+    -> CCheckM t
+checkRecDef tyCon0 tyConPars dataCon fields cont = do
+  -- The tyCon must already be opened (and in the same module)
+  (tyCon, _) <- getOpenedDefinition tyCon0
+  tyConType <- definitionType =<< getDefinition tyCon
+  -- Add the constructor name to the tyCon
+  addRecordCon tyCon dataCon
+  -- Enter a context with the arguments to the tyCon in scope
+  (tyConParsTel, _) <- unrollPiWithNames tyConType tyConPars
+  fieldsTel <- extendEnv (telToCtx tyConParsTel) $ checkFields fields
+  fieldsTel' <- weaken_ 1 fieldsTel
+  tyCon' <- weaken_ (telLength tyConParsTel) tyCon
+  appliedTyConType <- telApp (def tyCon' []) tyConParsTel
+  addProjections tyCon tyConParsTel (boundVar "_") (map SA.typeSigName fields) fieldsTel' $ do
+    dataConType <- telPi fieldsTel =<< weaken_ (telLength fieldsTel) appliedTyConType
+    addDataCon dataCon tyCon (length fields) $ Contextual tyConParsTel dataConType
+    openDefinitionInEnv_ dataCon $ \_ ->  cont
 
 checkFields
     :: forall t. (IsTerm t)
-    => Ctx t -> [SA.TypeSig] -> CheckM t (Tel (Type t))
-checkFields ctx0 = go C0
+    => [SA.TypeSig] -> CheckM t (Tel (Type t))
+checkFields = go C0
   where
     go :: Ctx (Type t) -> [SA.TypeSig] -> CheckM t (Tel (Type t))
     go ctx [] =
         return $ ctxToTel ctx
     go ctx (SA.Sig field synFieldType : fields) = do
-        fieldType <- checkExpr (ctx0 <> ctx) synFieldType set
-        ctx' <- extendContext ctx (field, fieldType)
-        go ctx' fields
+        fieldType <- extendEnv ctx $ checkExpr synFieldType set
+        go (ctx :< (field, fieldType)) fields
 
 addProjections
     :: forall t.
        (IsTerm t)
-    => Name
+    => Opened Name t
     -- ^ Type constructor.
-    -> Ctx (Type t)
-    -- ^ A context with the parameters to the type constructor.
+    -> Tel (Type t)
+    -- ^ Arguments to the type constructors
     -> Var
     -- ^ Variable referring to the value of type record type itself,
     -- which is the last argument of each projection ("self").  Note
@@ -212,33 +231,35 @@ addProjections
     -> Tel (Type t)
     -- ^ Telescope holding the types of the next fields, scoped
     -- over the types of the previous fields and the self variable.
-    -> CheckM t ()
-addProjections tyCon tyConPars self fields0 =
-    go $ zipWith Projection' fields0 $ map Field [0,1..]
-  where
-    go :: [Projection] -> Tel (Type t) -> CheckM t ()
-    go fields fieldTypes = case (fields, fieldTypes) of
-      ([], T0) ->
-        return ()
-      (proj : fields', (_, fieldType) :> fieldTypes') -> do
-        endType <- (`pi` fieldType) =<< ctxApp (def (Opened tyCon []) []) tyConPars
-        addProjection proj tyCon $ Contextual (ctxToTel tyConPars) endType
-        (go fields' <=< instantiate_ fieldTypes') =<< app (Var self) [Proj (Opened proj [])]
-      (_, _) -> fatalError "impossible.addProjections: impossible: lengths do not match"
+    -> CCheckM t
+addProjections tyCon tyConPars self fields0 fieldTypes0 cont = do
+    appliedTyCon <- telApp (def tyCon []) tyConPars
+
+    let go [] T0 = do
+          cont
+        go (proj : fields') ((_, fieldType) :> fieldTypes') = do
+          endType <- pi appliedTyCon fieldType
+          addProjection proj tyCon $ Contextual tyConPars endType
+          openDefinitionInEnv_ (pName proj) $ \openedProj -> do
+            projected <- app (Var self) [Proj (first (const proj) openedProj)]
+            go fields' =<< instantiate_ fieldTypes' projected
+        go _ _ = do
+          __IMPOSSIBLE__
+
+    go (zipWith Projection' fields0 $ map Field [0,1..]) fieldTypes0
 
 checkFunDef
-  :: (IsTerm t) => Ctx t -> Name -> [SA.Clause] -> CheckM t ()
-checkFunDef ctx fun0 synClauses = do
-    -- The body of the function must be in the same module as its type
-    -- signature.
-    fun <- Opened fun0 <$> mapM var (ctxVars ctx)
-    funDef <- getDefinition fun
+  :: (IsTerm t) => Name -> [SA.Clause] -> CCheckM t
+checkFunDef fun0 synClauses cont = do
+    (fun, funDef) <- getOpenedDefinition fun0
     case funDef of
       Constant funType (Function Open) -> do
         clauses <- mapM (checkClause funType) synClauses
         inv <- checkInvertibility clauses
-        -- TODO change when we support modules/wheres/etc.
-        addClauses (opndKey fun) inv
+        -- We don't need to extend the environment, because the function
+        -- definition is already open
+        addClauses fun inv
+        cont
       Constant _ Postulate -> do
         funDoc <- prettyM fun
         typeError $ "Cannot give body to postulate" <+> funDoc
@@ -251,80 +272,104 @@ checkClause
   -> SA.Clause
   -> CheckM t (Closed (Clause t))
 checkClause funType (SA.Clause synPats synClauseBody) = do
-  (ctx, pats, _, clauseType) <- checkPatterns synPats funType
-  let msg = do
-        ctxDoc <- prettyM ctx
-        return $ "context:" //> ctxDoc
-  debugBracket "checkClause" msg $ do
-    clauseBody <- checkExpr ctx synClauseBody clauseType
-    return $ Clause pats clauseBody
+  -- We check the patterns, and start a new block with the context that
+  -- the patterns have left us with.
+  checkPatterns synPats funType $ \pats clauseType -> startBlock $ do
+    let msg = do
+          ctxDoc <- prettyM =<< asks elabEnvCtx
+          return $
+            "context:" //> ctxDoc $$
+            "clause:" //> PP.pretty synClauseBody
+    debugBracket "checkClause" msg $ do
+      clauseBody <- checkExpr synClauseBody clauseType
+      return $ Clause pats clauseBody
 
 checkPatterns
   :: (IsTerm t)
   => [SA.Pattern]
   -> Type t
   -- ^ Type of the clause that has the given 'SA.Pattern's in front.
-  -> CheckM t (Ctx (Type t), [Pattern t], [Term t], Type t)
-  -- ^ A context into the internal variables, list of internal patterns,
-  -- a list of terms produced by their bindings, and the type of the
-  -- clause body (scoped over the pattern variables).
-checkPatterns [] type_ =
-    return (C0, [], [], type_)
-checkPatterns (synPat : synPats) type0 = atSrcLoc synPat $ do
-  -- TODO this can be a soft match, like `matchPi'.  I just need to
-  -- carry the context around.
+  -> ([Pattern t] -> Type t -> CheckM t a)
+  -- ^ Continuation taking the elaborated patterns, a list of terms
+  -- corresponding to terms produced by the patterns, and the type of
+  -- the body of the clause.
+  -> CheckM t a
+checkPatterns [] type_ cont = do
+  cont [] type_
+checkPatterns (synPat : synPats) type0 cont = do
   typeView <- whnfView type0
   case typeView of
-    Pi dom cod -> do
-      (ctx, pat, patVar) <- checkPattern synPat dom
-      cod'  <- ctxWeaken 1 ctx cod
-      cod'' <- instantiate_ cod' patVar
-      (ctx', pats, patsVars, bodyType) <- checkPatterns synPats cod''
-      patVar' <- ctxWeaken_ ctx' patVar
-      return (ctx <> ctx', pat : pats, patVar' : patsVars, bodyType)
+    Pi dom cod0 ->
+      checkPattern synPat dom cod0 $ \pat cod ->
+      checkPatterns synPats cod $ \pats type_ ->
+      cont (pat : pats) type_
     _ -> do
       checkError $ ExpectingPi type0
 
 checkPattern
-    :: (IsTerm t)
-    => SA.Pattern
-    -> Type t
-    -- ^ Type of the matched thing.
-    -> CheckM t (Ctx (Type t), Pattern t, Term t)
-    -- ^ The context, the internal 'Pattern', and a 'Term' containing
-    -- the term produced by it.
-checkPattern synPat type_ = case synPat of
-    SA.VarP name -> do
-      v <- var $ boundVar name
-      return (ctxSingleton name type_, VarP, v)
-    SA.WildP _ -> do
-      v <- var $ boundVar "_"
-      return (ctxSingleton "_" type_, VarP, v)
-    SA.ConP dataCon0 synPats -> do
-      (dataCon, DataCon tyCon _ dataConType) <- getOpenedDefinition dataCon0
-      typeConDef <- getDefinition tyCon
-      case typeConDef of
-        Constant _ (Data _)     -> return ()
-        Constant _ (Record _ _) -> checkError $ PatternMatchOnRecord synPat tyCon
-        _                       -> do doc <- prettyM typeConDef
-                                      fatalError $ "impossible.checkPattern " ++ render doc
-      typeView <- whnfView type_
-      -- TODO this can be a soft match, like `matchTyCon'
-      let fallback = checkError $ ExpectingTyCon tyCon type_
-      case typeView of
-        App (Def tyCon') tyConArgs0 -> do
-          sameTyCon <- synEq tyCon tyCon'
-          if sameTyCon
-            then do
-              let Just tyConArgs = mapM isApply tyConArgs0
-              dataConTypeNoPars <- openContextual dataConType tyConArgs
-              (ctx, pats, patsVars, _) <- checkPatterns synPats dataConTypeNoPars
-              t <- con dataCon patsVars
-              return (ctx, ConP dataCon pats, t)
-            else do
-              fallback
-        _ -> do
-          fallback
+  :: (IsTerm t)
+  => SA.Pattern
+  -> Type t
+  -- ^ Type of the matched thing.
+  -> Type t
+  -- ^ Type of what's past the matched thing.
+  -> (Pattern t -> Term t -> CheckM t a)
+  -- ^ The elaborated pattern, the term produced by the pattern.
+  -> CheckM t a
+checkPattern synPat patType type_ cont = case synPat of
+  SA.VarP name -> do
+    -- The type is already scoped over a single variable, so we're fine.
+    extendEnv_ (name, patType) $ cont VarP type_
+  SA.WildP _ -> do
+    -- Same as above
+    extendEnv_ ("_", patType) $ cont VarP type_
+  SA.ConP dataCon synPats -> do
+    -- Check that the 'dataCon' is a constructor for the 'patType' we
+    -- have been given.
+    sig <- askSignature
+    let dataConDef = sigGetDefinition sig dataCon
+        DataCon (Const tyCon) _ _ = ignoreContextual dataConDef
+    case ignoreContextual (sigGetDefinition sig tyCon) of
+      Constant _ Data{}   -> return ()
+      Constant _ Record{} -> checkError $ PatternMatchOnRecord synPat tyCon
+      _                   -> __IMPOSSIBLE__
+    patTypeView <- whnfView patType
+    case patTypeView of
+      -- Here we don't care about the argument in 'Opened', because the
+      -- match refers to whatever arguments the tyCon has in the type
+      -- signature.
+      App (Def tyCon') tyConArgs0 | tyCon == opndKey tyCon' -> do
+        let Just tyConArgs = mapM isApply tyConArgs0
+        -- Here we use the arguments of the 'tyCon' to open the
+        -- definition of the 'dataCon'.
+        let openDataCon = Opened dataCon $ opndArgs tyCon'
+        DataCon _ _ dataConType <- openDefinition dataConDef (opndArgs tyCon')
+        -- We unroll the type of the data constructor, and then we
+        -- continue examining the patterns using the type of the data
+        -- constructor chained to the rest of the type we were given.
+        appliedDataConType <- openContextual dataConType tyConArgs
+        (appliedDataConTypeTel, _) <- unrollPi appliedDataConType
+        -- Here we form the term made up of the new variables we're
+        -- bringing in scope by taking the type of the dataCon...
+        t <- con openDataCon =<< mapM var (telVars appliedDataConTypeTel)
+        -- ...which we then instantiate in the old type, taking care of
+        -- weakening the rest.
+        let numDataConArgs = telLength appliedDataConTypeTel
+        rho <- subChain (subLift 1 (subWeaken numDataConArgs subId)) =<< subSingleton t
+        type' <- telPi appliedDataConTypeTel =<< applySubst type_ rho
+        debug "checkPattern" $ do
+         typeDoc <- prettyM type_
+         rhoDoc <- prettyM rho
+         type'Doc <- prettyM type'
+         return $
+          "type:" //> typeDoc $$
+          "rho:" //> rhoDoc $$
+          "type':" //> type'Doc
+        -- GO GO GO
+        checkPatterns synPats type' $ \pats type'' -> do
+          cont (ConP dataCon pats) type''
+      _ -> do
+        checkError $ ExpectingTyCon tyCon patType
 
 -- Bringing everything together
 ------------------------------------------------------------------------
@@ -332,16 +377,9 @@ checkPattern synPat type_ = case synPat of
 -- Checking programs
 --------------------
 
-type TCState' t = TCState t (CheckState t)
-
-emptyTCState' :: (forall t. (IsTerm t) => TCState' t -> IO a) -> IO a
-emptyTCState' ret = do
-  dummyS :: CheckState Simple <- initCheckState
-  ret $ initTCState dummyS
-
 checkProgram
   :: [SA.Decl]
-  -> (forall t. (IsTerm t) => (TCState' t, Maybe PP.Doc) -> IO a) -> IO a
+  -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a) -> IO a
 checkProgram decls ret = do
   tt <- confTermType <$> readConf
   case tt of
@@ -350,12 +388,11 @@ checkProgram decls ret = do
     -- "GRS" -> checkProgram' (Proxy :: Proxy GraphReduceSub) decls ret
     "GRU" -> checkProgram' (Proxy :: Proxy GraphReduceUnpack) decls ret
     "H"   -> checkProgram' (Proxy :: Proxy Hashed) decls ret
-    type_ -> emptyTCState' $ \dummyS -> do
-      ret (dummyS, Just ("Invalid term type" <+> PP.text type_))
+    type_ -> ret (sigEmpty :: Signature Simple) (Just ("Invalid term type" <+> PP.text type_))
 
 checkProgram'
     :: forall t a. (IsTerm t)
-    => Proxy t -> [SA.Decl] -> ((TCState' t, Maybe PP.Doc) -> IO a) -> IO a
+    => Proxy t -> [SA.Decl] -> (Signature t -> Maybe PP.Doc -> IO a) -> IO a
 checkProgram' _ decls0 ret = do
     quiet <- confQuiet <$> readConf
     unless quiet $ do
@@ -363,35 +400,41 @@ checkProgram' _ decls0 ret = do
       putStrLn "-- Checking declarations"
       drawLine
     s <- initCheckState
-    ret =<< goDecls (initTCState s) decls0
+    -- For the time being we always start a dummy block here
+    (mbErr, sig, _) <- runTC sigEmpty () s $ goDecls (initElabEnv C0) decls0
+    ret sig $ either Just id mbErr
   where
-    goDecls :: TCState' t -> [SA.Decl] -> IO (TCState' t, Maybe PP.Doc)
-    goDecls ts [] = do
-      (ts,) <$> checkState ts
-    goDecls ts (decl : decls) = do
+
+    goDecls :: ElabEnv t -> [SA.Decl] -> TC t r (CheckState t) (Maybe PP.Doc)
+    goDecls _ [] = do
+      checkSignature
+    goDecls env (decl : decls) = do
       quiet <- confQuiet <$> readConf
       unless quiet $ do
-        putStrLn $ render decl
+        putStrLn' $ render decl
         let separate = case decl of
               SA.TypeSig (SA.Sig n _) -> case decls of
                 SA.FunDef n' _     : _  -> not $ n == n'
+                []                     -> False
+                _                      -> True
+              SA.Data (SA.Sig n _) -> case decls of
                 SA.DataDef n' _ _  : _  -> not $ n == n'
+                []                     -> False
+                _                      -> True
+              SA.Record (SA.Sig n _) -> case decls of
                 SA.RecDef n' _ _ _ : _  -> not $ n == n'
                 []                     -> False
                 _                      -> True
               _ ->
                 not $ null decls
-        when separate $ putStrLn ""
-      (mbErr, ts') <- runTC ts $ checkDecl C0 decl
-      case mbErr of
-        Left err -> return (ts', Just err)
-        Right () -> goDecls ts' decls
+        when separate $ putStrLn' ""
+      env' <- checkDecl env decl
+      goDecls env' decls
 
-    -- TODO change for this to work in TC
-    checkState :: TCState' t -> IO (Maybe PP.Doc)
-    checkState ts = do
-      let sig = tsSignature ts
-      unsolvedMvs <- runTermM sig $ metas sig
+    checkSignature :: TC t r (CheckState t) (Maybe PP.Doc)
+    checkSignature = do
+      sig <- askSignature
+      unsolvedMvs <- metas sig
       quiet <- confQuiet <$> readConf
       unless quiet $ do
         mvNoSummary <- confNoMetasSummary <$> readConf
@@ -400,36 +443,42 @@ checkProgram' _ decls0 ret = do
         when (not mvNoSummary || mvReport) $ do
           let solvedMvs = catMaybes $ map (sigLookupMetaBody sig) $ sigDefinedMetas sig
           drawLine
-          putStrLn $ "-- Solved Metas: " ++ show (length solvedMvs)
-          putStrLn $ "-- Unsolved Metas: " ++ show (HS.size unsolvedMvs)
+          putStrLn' $ "-- Solved Metas: " ++ show (length solvedMvs)
+          putStrLn' $ "-- Unsolved Metas: " ++ show (HS.size unsolvedMvs)
           when mvReport $ do
             drawLine
             let mvsTypes = map (\mv -> (mv, sigGetMetaType sig mv)) $ sigDefinedMetas sig
             forM_ (sortBy (comparing fst) $ mvsTypes) $ \(mv, mvType) -> do
               let mbMvb = sigLookupMetaBody sig mv
               when (not (isJust mbMvb) || not mvOnlyUnsolved) $ do
-                mvTypeDoc <- runTermM sig $ prettyM mvType
-                putStrLn $ render $
+                mvTypeDoc <- prettyM mvType
+                putStrLn' $ render $
                   PP.pretty mv <+> PP.parens (PP.pretty (srcLoc mv)) <+> ":" //> mvTypeDoc
                 when (not mvOnlyUnsolved) $ do
                   mvBody <- case mbMvb of
                     Nothing -> return "?"
-                    Just mi -> runTermM sig $ prettyM mi
-                  putStrLn $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
-                putStrLn ""
+                    Just mi -> prettyM mi
+                  putStrLn' $ render $ PP.pretty mv <+> "=" <+> PP.nest 2 mvBody
+                putStrLn' ""
         noProblemsSummary <- confNoProblemsSummary <$> readConf
         problemsReport <- confProblemsReport <$> readConf
         when (not noProblemsSummary || problemsReport) $  do
           drawLine
-          putStrLn . render =<< runTermM sig (prettyM (tsState ts ^. csSolveState))
+          ss <- use csSolveState
+          putStrLn' . render =<< prettyM ss
         drawLine
       return $ if HS.null unsolvedMvs
                then Nothing
                else Just $ "Unsolved metas: " <+> PP.pretty (HS.toList unsolvedMvs)
 
-    drawLine =
-      putStrLn "------------------------------------------------------------------------"
+    putStrLn' :: MonadIO m => String -> m ()
+    putStrLn' = liftIO . putStrLn
 
+    drawLine :: MonadIO m => m ()
+    drawLine =
+      putStrLn' "------------------------------------------------------------------------"
+
+{-
 -- Commands
 ------------------------------------------------------------------------
 
@@ -441,7 +490,7 @@ data Command
   | Help
   deriving (Eq, Show)
 
-parseCommand :: TCState' t -> String -> Either PP.Doc Command
+parseCommand :: Signature t -> String -> Either PP.Doc Command
 parseCommand ts s0 = runReadP $
   (do void $ ReadP.string ":t " <|> ReadP.string ":type "
       return (\s -> TypeOf <$> parseAndScopeCheck s)) <|>
@@ -456,7 +505,7 @@ parseCommand ts s0 = runReadP $
       ReadP.eof
       return (\_ -> Right Help))
   where
-    scope = sigToScope $ tsSignature ts
+    scope = sigToScope ts
 
     parseAndScopeCheck = parseExpr >=> SA.scopeCheckExpr scope
 
@@ -472,7 +521,7 @@ parseCommand ts s0 = runReadP $
       []            -> Left "Unrecognised command"
       ((f, s') : _) -> f s'
 
-runCommand :: (IsTerm t) => TCState' t -> Command -> IO (PP.Doc, TCState' t)
+runCommand :: (IsTerm t) => Signature t -> Command -> IO (PP.Doc, Signature t)
 runCommand ts cmd =
   case cmd of
     TypeOf synT -> runTC' $ do
@@ -498,7 +547,7 @@ runCommand ts cmd =
       return $
         PP.pretty mv <+> ":" <+> mvTypeDoc $$
         PP.pretty mv <+> "=" <+> mvBodyDoc
-    Help -> runTC' $ do
+    Help -> do
       return $
         ":t [EXPR], :type [EXPR]\t\tTypecheck an expression" $$
         ":n [EXPR], :normalize [EXPR]\tTypecheck and normalize an expression" $$
@@ -512,3 +561,12 @@ runCommand ts cmd =
                   Left err   -> "Error:" //> err
                   Right doc0 -> doc0
       return (doc, ts)
+
+inferExpr
+  :: (IsTerm t)
+  => Ctx t -> SA.Expr -> CheckM t (Term t, Type t)
+inferExpr ctx synT = do
+  type_ <- addMetaInCtx ctx set
+  t <- checkExpr ctx synT type_
+  return (t, type_)
+-}

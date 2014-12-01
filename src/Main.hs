@@ -15,9 +15,6 @@ import           Term
 import           TypeCheck3
 import           Syntax
 
--- Modules that we don't need, but should compile
-import           Term.Testing                     ()
-
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
   <$> strOption
@@ -116,7 +113,7 @@ parseMain =
           return $ confDisableDebug conf0
         else return conf0
       instrument conf $ do
-        checkFile file $ \(ts, mbErr) -> do
+        checkFile file $ \ts mbErr -> do
           forM_ mbErr $ \err -> do
             putStrLn (PP.render err)
             unless interactive exitFailure
@@ -128,6 +125,8 @@ parseMain =
       , Haskeline.autoAddHistory = True
       }
 
+    interact' = error "TODO"
+{-
     interact' :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
     interact' ts = do
       mbS <- Haskeline.getInputLine "> "
@@ -140,10 +139,11 @@ parseMain =
             (doc, ts') <- lift $ runCommand ts cmd
             lift $ putStrLn $ PP.render doc
             interact' ts'
+-}
 
 checkFile
   :: FilePath
-  -> (forall t. (IsTerm t) => (TCState' t, Maybe PP.Doc) -> IO a)
+  -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a)
   -> IO a
 checkFile file ret = do
   mbErr <- runExceptT $ do
@@ -151,9 +151,9 @@ checkFile file ret = do
     raw <- exceptShowErr "Parse" $ parseProgram s
     exceptShowErr "Scope" $ scopeCheckProgram raw
   case mbErr of
-    Left err  -> emptyTCState' $ \s -> ret (s, Just err)
-    Right int -> checkProgram int $ \(ts, mbErr') ->
-                 ret (ts, showError "Type" <$> mbErr')
+    Left err  -> ret (sigEmpty :: Signature Simple) (Just err)
+    Right int -> checkProgram int $ \sig mbErr' ->
+                 ret sig (showError "Type" <$> mbErr')
   where
     showError errType err =
       PP.text errType <+> "error: " $$ PP.nest 2 err
