@@ -136,3 +136,9 @@ instance (PrettyM t a) => PrettyM t (Contextual t a) where
     return $
       "tel:" //> telDoc $$
       "inside:" //> xDoc
+
+instance (PrettyM t a) => PrettyM t (Const a b) where
+  prettyM (Const x) = prettyM x
+
+instance PrettyM t Projection where
+  prettyM = return . PP.pretty

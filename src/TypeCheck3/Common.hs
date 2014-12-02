@@ -18,6 +18,7 @@ module TypeCheck3.Common
   ) where
 
 import           Prelude                          hiding (abs, pi)
+import qualified Data.HashSet                     as HS
 
 import           Instrumentation
 import           Prelude.Extended
@@ -41,6 +42,7 @@ data CheckError t
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
     | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
+    | UnsolvedMetas MetaSet
 
 checkError :: (IsTerm t) => CheckError t -> TC_ t a
 checkError err = typeError =<< renderError err
@@ -93,6 +95,8 @@ renderError err =
       tyConDoc <- prettyM tyCon
       typeDoc <- prettyM type_
       return $ "Expecting a" <+> tyConDoc <> ", not:" //> typeDoc
+    UnsolvedMetas mvs -> do
+      return $ "UnsolvedMetas" <+> PP.pretty (HS.toList mvs)
   where
     prettyVar = PP.pretty
 

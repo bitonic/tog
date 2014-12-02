@@ -62,7 +62,7 @@ data TypeSig = Sig
   , typeSigType :: Expr
   }
 
-data Clause = Clause [Pattern] Expr
+data Clause = Clause [Pattern] Expr [Decl]
 
 data Expr
   = Lam Name Expr
@@ -210,8 +210,11 @@ instance Pretty Decl where
       text "field" $$>
       vcat (map pretty fs)
     where
-      prettyClause f (Clause ps e) =
+      prettyClause f (Clause ps e []) =
         group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e)
+      prettyClause f (Clause ps e wheres) =
+        group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e) $$
+        nest 2 (vcat (map pretty wheres))
 
 instance Pretty Head where
   pretty h = case h of

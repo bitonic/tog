@@ -86,10 +86,9 @@ getOpenedDefinition name = do
   where
     go _ [] = do
       __IMPOSSIBLE__
-    go n0 (block : blocks) = do
-      let n = n0 + ctxLength (block^.blockCtx)
+    go n (block : blocks) = do
       case HMS.lookup name (block^.blockOpened) of
-        Nothing   -> go n blocks
+        Nothing   -> go (n + ctxLength (block^.blockCtx)) blocks
         Just args -> do
           args' <- weaken_ n args
           sig <- askSignature
@@ -147,7 +146,11 @@ lookupName n = do
 elaborate
   :: (IsTerm t) => Type t -> SA.Expr -> TC t (ElabEnv t) s (Term t, Constraints t)
 elaborate type_ absT = do
-  debugBracket_ "elaborate" "" $ do
+  env <- ask
+  let msg = do
+        envDoc <- prettyM env
+        return $ "env:" //> envDoc
+  debugBracket "elaborate" msg $ do
     (t, constrs) <- magnifyStateTC (const []) $ (,) <$> elaborate' type_ absT <*> get
     debug "constraints" $ PP.list <$> mapM prettyM constrs
     return (t, constrs)

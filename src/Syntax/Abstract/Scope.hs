@@ -244,15 +244,15 @@ checkDecls ds0 ret = case ds0 of
   C.FunDef f _ _ _ : _ -> do
     let (clauses, ds) = takeFunDefs f ds0
     (f, n) <- resolveDef f
-    clauses <- forM clauses $ \(ps, b, wheres) -> do
-      case wheres of
-        C.Where _ ->
-          error "checkScope: TODO where clauses"
-        C.NoWhere -> do
-          ps <- insertImplicitPatterns (srcLoc f) n ps
-          mapC checkPattern ps $ \ps -> do
-            b <- checkExpr b
-            return $ Clause ps b
+    clauses <- forM clauses $ \(ps, b, wheres0) -> do
+      let wheres = case wheres0 of
+            C.Where ds -> ds
+            C.NoWhere -> []
+      ps <- insertImplicitPatterns (srcLoc f) n ps
+      mapC checkPattern ps $ \ps -> do
+        checkDecls wheres $ \wheres -> do
+          b <- checkExpr b
+          return $ Clause ps b wheres
     checkDecls ds $ \ds' -> ret (FunDef f clauses : ds')
   C.Open x : ds -> do
     resolveDef x

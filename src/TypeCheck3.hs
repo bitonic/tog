@@ -68,6 +68,13 @@ checkDecl env decl = do
         SA.RecDef d xs c fs -> checkRecDef d xs c fs cont
         SA.FunDef f clauses -> checkFunDef f clauses cont
 
+checkDecls :: (IsTerm t) => ElabEnv t -> [SA.Decl] -> TC t r (CheckState t) (ElabEnv t)
+checkDecls env [] = do
+  return env
+checkDecls env (decl : decls) = do
+  env' <- checkDecl env decl
+  checkDecls env' decls
+
 addConstantAndOpen
   :: (IsTerm t)
   => (Name -> Tel t -> Type t -> CheckM t ())
@@ -271,7 +278,7 @@ checkClause
   => Closed (Type t)
   -> SA.Clause
   -> CheckM t (Closed (Clause t))
-checkClause funType (SA.Clause synPats synClauseBody) = do
+checkClause funType (SA.Clause synPats synClauseBody wheres) = do
   -- We check the patterns, and start a new block with the context that
   -- the patterns have left us with.
   checkPatterns synPats funType $ \pats clauseType -> startBlock $ do
@@ -280,9 +287,12 @@ checkClause funType (SA.Clause synPats synClauseBody) = do
           return $
             "context:" //> ctxDoc $$
             "clause:" //> PP.pretty synClauseBody
-    debugBracket "checkClause" msg $ do
-      clauseBody <- checkExpr synClauseBody clauseType
-      return $ Clause pats clauseBody
+    env <- ask
+    env' <- checkDecls env wheres
+    magnifyTC (const env') $ do
+      debugBracket "checkClause" msg $ do
+        clauseBody <- checkExpr synClauseBody clauseType
+        return $ Clause pats clauseBody
 
 checkPatterns
   :: (IsTerm t)
@@ -398,40 +408,14 @@ checkProgram' _ decls0 ret = do
     unless quiet $ do
       drawLine
       putStrLn "-- Checking declarations"
-      drawLine
     s <- initCheckState
     -- For the time being we always start a dummy block here
-    (mbErr, sig, _) <- runTC sigEmpty () s $ goDecls (initElabEnv C0) decls0
-    ret sig $ either Just id mbErr
-  where
-
-    goDecls :: ElabEnv t -> [SA.Decl] -> TC t r (CheckState t) (Maybe PP.Doc)
-    goDecls _ [] = do
+    (mbErr, sig, _) <- runTC sigEmpty () s $ do
+      void $ checkDecls (initElabEnv C0) decls0
       checkSignature
-    goDecls env (decl : decls) = do
-      quiet <- confQuiet <$> readConf
-      unless quiet $ do
-        putStrLn' $ render decl
-        let separate = case decl of
-              SA.TypeSig (SA.Sig n _) -> case decls of
-                SA.FunDef n' _     : _  -> not $ n == n'
-                []                     -> False
-                _                      -> True
-              SA.Data (SA.Sig n _) -> case decls of
-                SA.DataDef n' _ _  : _  -> not $ n == n'
-                []                     -> False
-                _                      -> True
-              SA.Record (SA.Sig n _) -> case decls of
-                SA.RecDef n' _ _ _ : _  -> not $ n == n'
-                []                     -> False
-                _                      -> True
-              _ ->
-                not $ null decls
-        when separate $ putStrLn' ""
-      env' <- checkDecl env decl
-      goDecls env' decls
-
-    checkSignature :: TC t r (CheckState t) (Maybe PP.Doc)
+    ret sig $ either Just (\() -> Nothing) mbErr
+  where
+    checkSignature :: TC t r (CheckState t) ()
     checkSignature = do
       sig <- askSignature
       unsolvedMvs <- metas sig
@@ -467,9 +451,7 @@ checkProgram' _ decls0 ret = do
           ss <- use csSolveState
           putStrLn' . render =<< prettyM ss
         drawLine
-      return $ if HS.null unsolvedMvs
-               then Nothing
-               else Just $ "Unsolved metas: " <+> PP.pretty (HS.toList unsolvedMvs)
+      unless (HS.null unsolvedMvs) $ checkError $ UnsolvedMetas unsolvedMvs
 
     putStrLn' :: MonadIO m => String -> m ()
     putStrLn' = liftIO . putStrLn
