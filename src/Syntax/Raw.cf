@@ -1,5 +1,5 @@
 
-entrypoints Program;
+entrypoints Module;
 entrypoints Expr;
 
 layout toplevel;
@@ -7,7 +7,7 @@ layout "where";
 layout "field";
 layout "postulate";
 
-Prog. Program ::= "module" Name "where" "{" [Decl] "}";
+Module. Module ::= "module" Name Params "where" "{" [Decl] "}";
 
 position token Name ((letter | '_') (letter | digit | '-' | '\'' | '_')*) ;
 
@@ -20,6 +20,7 @@ Record.    Decl  ::= "record" Name Params RecordBody;
 Open.      Decl  ::= "open" Name;
 Import.    Decl  ::= "open" "import" Name;
 Postulate. Decl  ::= "postulate" "{" [TypeSig] "}";
+Module_.   Decl  ::= Module;
 
 separator TypeSig ";";
 

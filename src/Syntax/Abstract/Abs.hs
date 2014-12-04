@@ -43,22 +43,31 @@ instance Ord Name where
 instance Hashable Name where
   hashWithSalt s (Name _ x) = hashWithSalt s x
 
+data QName = QName { qNameModule :: ![Name], qNameName :: !Name }
+  deriving (Eq, Ord, Generic, Show, Read)
+
+instance Hashable QName
+
 -- * Abstract syntax.
 ------------------------------------------------------------------------
 
-type Program = [Decl]
+data Module = Module Name Params [Decl]
+
+type Params = [(Name, Expr)]
 
 data Decl
   = TypeSig TypeSig
   | Postulate TypeSig
   | Data TypeSig
   | Record TypeSig
-  | FunDef Name [Clause]
-  | DataDef Name [Name] [TypeSig]
-  | RecDef  Name [Name] Name [TypeSig]
+  | FunDef QName [Clause]
+  | DataDef QName [Name] [TypeSig]
+  | RecDef  QName [Name] QName [TypeSig]
+  | Module_ Module
+  | Open QName [Expr]
 
 data TypeSig = Sig
-  { typeSigName :: Name
+  { typeSigName :: QName
   , typeSigType :: Expr
   }
 
@@ -73,22 +82,22 @@ data Expr
   | Set SrcLoc
   | Meta SrcLoc
   | Refl SrcLoc
-  | Con Name [Expr]
+  | Con QName [Expr]
 
 data Head
   = Var Name
-  | Def Name
+  | Def QName
   | J SrcLoc
 
 data Elim
   = Apply Expr
-  | Proj Name
+  | Proj QName
   deriving Eq
 
 data Pattern
   = VarP Name
   | WildP SrcLoc
-  | ConP Name [Pattern]
+  | ConP QName [Pattern]
 
 -- | Number of variables bound by a list of pattern.
 patternsBindings :: [Pattern] -> Int
@@ -112,6 +121,9 @@ instance HasSrcLoc SrcLoc where
 instance HasSrcLoc Name where
   srcLoc (Name p _) = p
 
+instance HasSrcLoc Module where
+  srcLoc (Module x _ _) = srcLoc x
+
 instance HasSrcLoc Decl where
   srcLoc d = case d of
     TypeSig sig    -> srcLoc sig
@@ -121,6 +133,8 @@ instance HasSrcLoc Decl where
     FunDef x _     -> srcLoc x
     DataDef x _ _  -> srcLoc x
     RecDef x _ _ _ -> srcLoc x
+    Module_ x      -> srcLoc x
+    Open x _       -> srcLoc x
 
 instance HasSrcLoc TypeSig where
   srcLoc (Sig x _) = srcLoc x
@@ -142,6 +156,9 @@ instance HasSrcLoc Head where
     Var x       -> srcLoc x
     Def x       -> srcLoc x
     J loc       -> loc
+
+instance HasSrcLoc QName where
+  srcLoc = srcLoc . qNameName
 
 instance HasSrcLoc Pattern where
   srcLoc p = case p of
@@ -182,6 +199,12 @@ instance Show Expr    where showsPrec = defaultShow
 instance Show Head    where showsPrec = defaultShow
 instance Show Pattern where showsPrec = defaultShow
 
+instance Pretty Module where
+  pretty (Module name pars decls) =
+    let parsDoc = mconcat $ [parens (pretty n <+> ":" <+> pretty ty) | (n, ty) <- pars]
+    in hsep [text "module", pretty name, parsDoc] $$>
+       vcat (map pretty decls)
+
 instance Pretty Name where
   pretty (Name _ x) = text x
 
@@ -209,6 +232,10 @@ instance Pretty Decl where
       text "constructor" <+> pretty con $$
       text "field" $$>
       vcat (map pretty fs)
+    Module_ m ->
+      pretty m
+    Open m args ->
+      hsep (text "open" : pretty m : map (prettyPrec 4) args)
     where
       prettyClause f (Clause ps e []) =
         group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e)
@@ -221,6 +248,10 @@ instance Pretty Head where
     Var x       -> pretty x
     Def f       -> pretty f
     J _         -> text "J"
+
+instance Pretty QName where
+  pretty n =
+    mconcat $ intersperse "." $ map pretty $ qNameModule n ++ [qNameName n]
 
 instance Pretty Pattern where
   pretty e = case e of
