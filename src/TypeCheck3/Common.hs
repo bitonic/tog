@@ -35,13 +35,13 @@ import           TypeCheck3.Monad
 data CheckError t
     = ExpectingEqual (Type t)
     | ExpectingPi (Type t)
-    | ExpectingTyCon Name (Type t)
+    | ExpectingTyCon QName (Type t)
     | FreeVariableInEquatedTerm Meta [Elim t] (Term t) Var
-    | NameNotInScope Name
     | OccursCheckFailed Meta (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
+    | PatternMatchOnRecord SA.Pattern QName -- Record type constructor
+    | MismatchingArgumentsForModule QName [SA.Expr]
     | UnsolvedMetas MetaSet
 
 checkError :: (IsTerm t) => CheckError t -> TC_ t a
@@ -80,8 +80,6 @@ renderError err =
     OccursCheckFailed mv t -> do
       tDoc <- prettyM t
       return $ "Attempt at recursive instantiation:" $$ PP.pretty mv <+> ":=" <+> tDoc
-    NameNotInScope name -> do
-      return $ "Name not in scope:" <+> PP.pretty name
     PatternMatchOnRecord synPat tyCon -> do
       tyConDoc <- prettyM tyCon
       return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> tyConDoc
@@ -97,6 +95,11 @@ renderError err =
       return $ "Expecting a" <+> tyConDoc <> ", not:" //> typeDoc
     UnsolvedMetas mvs -> do
       return $ "UnsolvedMetas" <+> PP.pretty (HS.toList mvs)
+    MismatchingArgumentsForModule n args -> do
+      return $
+        "MismatchingArgumentsForModule" $$
+        "module:" //> PP.pretty n $$
+        "args:" //> PP.hsep (map PP.pretty args)
   where
     prettyVar = PP.pretty
 

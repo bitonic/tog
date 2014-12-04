@@ -96,7 +96,7 @@ curryMeta t = do
               debug_ "tyConPars" $ PP.text $ show $ show tyConPars
               (dataConPars0, _) <-
                 assert_ ("curryMeta, unrollPiWithNames:" <+>) $
-                unrollPiWithNames appliedDataConType (map (pName . opndKey) projs)
+                unrollPiWithNames appliedDataConType (map (qNameName . pName . opndKey) projs)
               let dataConPars = telToCtx dataConPars0
               let numDataConPars = ctxLength dataConPars
               recordTerm <- con dataCon =<< mapM var (ctxVars dataConPars)
@@ -294,8 +294,7 @@ shouldKill vs t = runMaybeT $ do
       case def' of
         Constant _ Function{} -> return True
         Constant{}            -> return False
-        DataCon{}             -> __IMPOSSIBLE__
-        Projection{}          -> __IMPOSSIBLE__
+        _                     -> __IMPOSSIBLE__
         -- TODO: more precise analysis
         -- We need to check whether a function is stuck on a variable
         -- (not meta variable), but the API does not help us...
@@ -307,7 +306,7 @@ shouldKill vs t = runMaybeT $ do
 --   we can expand those).
 --
 --   Returns the variable and the projection name.
-isProjectedVar :: (IsTerm t) => Elim t -> MaybeT (TC t r s) (Var, Opened Name t)
+isProjectedVar :: (IsTerm t) => Elim t -> MaybeT (TC t r s) (Var, Opened QName t)
 isProjectedVar elim = do
   Apply t <- return elim
   App (Var v) vElims <- lift $ whnfView t
@@ -360,7 +359,7 @@ etaExpandVar type_ tel = do
   let Just tyConPars = mapM isApply tyConPars0
   appliedDataConType <- openContextual dataConType tyConPars
   (dataConPars0, _) <- assert_ ("etaExpandVar, unrollPiWithNames:" <+>) $
-    unrollPiWithNames appliedDataConType (map (pName . opndKey) projs)
+    unrollPiWithNames appliedDataConType (map (qNameName . pName . opndKey) projs)
   let dataConPars = telToCtx dataConPars0
   dataConT <- con dataCon =<< mapM var (ctxVars dataConPars)
   -- TODO isn't this broken?  don't we have to handle unit types
@@ -392,7 +391,7 @@ data MetaArg t v
   = MVAVar v               -- This vars might be projected before
                            -- expanding the context.
   | MVARecord
-      (Opened Name t)      -- Datacon name
+      (Opened QName t)     -- Datacon name
       [MetaArg t v]        -- Arguments to the datacon
   deriving (Functor, Foldable, Traversable)
 
@@ -914,14 +913,14 @@ headType ctx h = case h of
   Meta mv -> getMetaType mv
   J       -> return typeOfJ
 
-isRecordConstr :: (IsTerm t) => Opened Name t -> TC t r s Bool
+isRecordConstr :: (IsTerm t) => Opened QName t -> TC t r s Bool
 isRecordConstr dataCon = do
   def' <- getDefinition dataCon
   case def' of
     DataCon tyCon _ _ -> isRecordType tyCon
     _                 -> return False
 
-isRecordType :: (IsTerm t) => Opened Name t -> TC t r s Bool
+isRecordType :: (IsTerm t) => Opened QName t -> TC t r s Bool
 isRecordType tyCon = do
   def' <- getDefinition tyCon
   return $ case def' of

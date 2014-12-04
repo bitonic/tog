@@ -39,7 +39,7 @@ import qualified PrettyPrint                      as PP
 
 data Block t = Block
   { _blockCtx    :: !(Ctx t)
-  , _blockOpened :: !(HMS.HashMap Name [Term t])
+  , _blockOpened :: !(HMS.HashMap QName [Term t])
   }
 
 makeLenses ''Block
@@ -79,7 +79,7 @@ elabEnvTel :: ElabEnv t -> Tel t
 elabEnvTel (ElabEnv blocks ctx) = mconcat $ map ctxToTel $ map _blockCtx blocks ++ [ctx]
 
 getOpenedDefinition
-  :: (IsTerm t) => Name -> TC t (ElabEnv t) s (Opened Name t, Definition Opened t)
+  :: (IsTerm t) => QName -> TC t (ElabEnv t) s (Opened QName t, Definition Opened t)
 getOpenedDefinition name = do
   env <- ask
   go (ctxLength (env^.eeCtx)) (env^.eeBlocks)
@@ -95,7 +95,7 @@ getOpenedDefinition name = do
           def' <- openDefinition (sigGetDefinition sig name) args'
           return (Opened name args', def')
 
-openDefinitionInEnv :: Name -> [Term t] -> (Opened Name t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
+openDefinitionInEnv :: QName -> [Term t] -> (Opened QName t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
 openDefinitionInEnv name args cont = do
   env <- ask
   -- We can open a definition only when the context is empty, and there
@@ -107,7 +107,7 @@ openDefinitionInEnv name args cont = do
     _ ->
       __IMPOSSIBLE__
 
-openDefinitionInEnv_ :: (IsTerm t) => Name  -> (Opened Name t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
+openDefinitionInEnv_ :: (IsTerm t) => QName  -> (Opened QName t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
 openDefinitionInEnv_ n cont = do
   args <- mapM var . ctxVars =<< asks elabEnvCtx
   openDefinitionInEnv n args cont
@@ -258,7 +258,8 @@ inferHead synH = atSrcLoc synH $ case synH of
     mbV <- lookupName name
     case mbV of
       Nothing -> do
-        checkError $ NameNotInScope name
+        -- We have already scope checked
+        __IMPOSSIBLE__
       Just (v, type_) -> do
         h <- app (Var v) []
         return (h, type_)

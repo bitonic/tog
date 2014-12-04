@@ -28,7 +28,7 @@ data Tm
             {-# UNPACK #-} !Ref
     | Refl
     | Set
-    | Con !(T.Opened Name Ref) ![Ref]
+    | Con !(T.Opened QName Ref) ![Ref]
     | App !(T.Head Ref) ![T.Elim Ref]
     deriving (Show, Eq, Typeable)
 

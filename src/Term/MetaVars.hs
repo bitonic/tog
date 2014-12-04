@@ -16,12 +16,12 @@ instance IsTerm t => Metas t (Invertible t) where
 instance (Metas t a, Metas t b) => Metas t (a, b) where
   metas (x, y) = (<>) <$> metas x <*> metas y
 
-instance (Metas t (f Name t), Metas t (f Projection t)) => Metas t (Definition f t) where
+instance (Metas t (f QName t), Metas t (f Projection t)) => Metas t (Definition f t) where
   metas (Constant t c)             = metas (t, c)
   metas (DataCon dataCon _ type_)  = metas (dataCon, type_)
   metas (Projection _ tyCon type_) = metas (tyCon, type_)
 
-instance (Metas t (f Name t), Metas t (f Projection t)) => Metas t (Constant f t) where
+instance (Metas t (f QName t), Metas t (f Projection t)) => Metas t (Constant f t) where
   metas Postulate               = return mempty
   metas (Data dataCon)          = metas dataCon
   metas (Record dataCon fields) = metas (dataCon, fields)
@@ -48,6 +48,9 @@ instance (Metas t a) => Metas t (Contextual t a) where
   metas (Contextual x y) = metas (x, y)
 
 instance Metas t Name where
+  metas _ = return mempty
+
+instance Metas t QName where
   metas _ = return mempty
 
 instance Metas t Projection where

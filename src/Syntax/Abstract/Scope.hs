@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -w -fwarn-incomplete-patterns -Werror #-}
 module Syntax.Abstract.Scope
-    ( scopeCheckProgram
+    ( scopeCheckModule
     , scopeCheckExpr
     , Scope(..)
     , NameInfo(..)
@@ -14,7 +14,7 @@ import Control.Monad.Writer
 import Control.Monad.Error
 import Data.Monoid
 import qualified Data.Map as Map
-import Data.Map (Map)
+import qualified Data.Set as Set
 
 import qualified Syntax.Raw as C
 import Syntax.Abstract.Abs
@@ -28,20 +28,31 @@ instance Show ScopeError where
 instance Error ScopeError where
   strMsg = ScopeError noSrcLoc
 
+type ScopeModule = Set.Set Name
+
 data Scope = Scope
-  { inScope :: Map String NameInfo
+  { scopeNameInfos     :: Map.Map String NameInfo
+  , scopeModules       :: Map.Map QName ScopeModule
+  , scopeCurrentModule :: QName
   }
 
-initScope :: Scope
-initScope = Scope $ Map.fromList []
+scopeCheckModule :: C.Module -> Either PP.Doc Module
+scopeCheckModule = error "TODO scopeCheckModule"
+
+scopeCheckExpr :: Scope -> C.Expr -> Either PP.Doc Expr
+scopeCheckExpr = error "TODO scopeCheckExpr"
+
+data NameInfo = VarName QName
+              | DefName QName Hiding
+              | ConName QName Hiding NumberOfArguments
+              | ProjName QName Hiding
 
 type Hiding            = Int
 type NumberOfArguments = Int
 
-data NameInfo = VarName Name
-              | DefName Name Hiding
-              | ConName Name Hiding NumberOfArguments
-              | ProjName Name Hiding
+{-
+initScope :: Scope
+initScope = Scope Map.empty Map.empty
 
 infoName :: NameInfo -> Name
 infoName (VarName x)     = x
@@ -561,3 +572,4 @@ instance HasSrcLoc C.Pattern where
     C.AppP p _ -> srcLoc p
     C.HideP p  -> srcLoc p
 
+-}

@@ -11,7 +11,7 @@ import qualified PrettyPrint                      as PP
 import           Term.Types
 import qualified Term.Subst                       as Sub
 
-instance (PrettyM t (f Name t), PrettyM t (f Projection t)) => PrettyM t (Definition f t) where
+instance (PrettyM t (f QName t), PrettyM t (f Projection t)) => PrettyM t (Definition f t) where
   prettyM (Constant type_ Postulate) = do
     typeDoc <- prettyM type_
     return $ "postulate" //> typeDoc
@@ -47,6 +47,9 @@ instance PrettyM t (Clause t) where
       PP.hsep (patsDoc ++ ["="]) //> bodyDoc
 
 instance PrettyM t Name where
+  prettyM = return . PP.pretty
+
+instance PrettyM t QName where
   prettyM = return . PP.pretty
 
 instance PrettyM t (Pattern t) where

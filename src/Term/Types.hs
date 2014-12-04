@@ -83,9 +83,11 @@ module Term.Types
   , getDefinition
   , getMetaType
   , lookupMetaBody
+  , getModule
     -- * Signature
   , MetaBody(..)
   , metaBodyToTerm
+  , Module
   , Signature(..)
   , sigEmpty
     -- ** Querying
@@ -103,11 +105,13 @@ module Term.Types
   , sigAddClauses
   , sigAddProjection
   , sigAddDataCon
+  , sigAddModule
+  , sigGetModule
   , sigAddMeta
   , sigInstantiateMeta
     -- ** Utils
   , sigToScope
-  -- * Context
+    -- * Context
   , Ctx(..)
   , ctxSingleton
   , ctxLength
@@ -251,7 +255,7 @@ newtype Field = Field {unField :: Natural}
 -- further.
 data Head t
     = Var !Var
-    | Def !(Opened Name t)
+    | Def !(Opened QName t)
     | Meta !Meta
     | J
     deriving (Show, Read, Eq, Generic, Functor)
@@ -289,7 +293,7 @@ isProj Apply{}  = Nothing
 isProj (Proj p) = Just p
 
 data Projection = Projection'
-  { pName  :: !Name
+  { pName  :: !QName
   , pField :: !Field
   } deriving (Show, Read, Eq, Ord, Generic)
 
@@ -307,7 +311,7 @@ data TermView t
     | Equal !(Type t) !(Term t) !(Term t)
     | Refl
     | Set
-    | Con !(Opened Name t) [Term t]
+    | Con !(Opened QName t) [Term t]
     | App !(Head t) [Elim t]
     deriving (Eq, Generic, Show)
 
@@ -568,7 +572,7 @@ data Blocked t
  deriving (Eq, Show, Read, Typeable, Functor)
 
 data BlockedHead t
-    = BlockedOnFunction !(Opened Name t)
+    = BlockedOnFunction !(Opened QName t)
     | BlockedOnJ
     deriving (Eq, Show, Read, Typeable, Functor)
 
@@ -613,10 +617,10 @@ app h elims = seqList elims $ unview $ App h elims
 meta :: (MonadTerm t m) => Meta -> [Elim t] -> m t
 meta mv = app (Meta mv)
 
-def :: (MonadTerm t m) => Opened Name t -> [Elim t] -> m t
+def :: (MonadTerm t m) => Opened QName t -> [Elim t] -> m t
 def key = app (Def key)
 
-con :: (MonadTerm t m) => Opened Name t -> [Term t] -> m t
+con :: (MonadTerm t m) => Opened QName t -> [Term t] -> m t
 con c args = seqList args $ unview $ Con c args
 
 -- Clauses
@@ -633,7 +637,7 @@ data Clause t = Clause [Pattern t] (ClauseBody t)
 
 data Pattern t
     = VarP
-    | ConP Name [Pattern t]
+    | ConP QName [Pattern t]
     deriving (Eq, Show, Read, Typeable, Functor)
 
 patternBindings :: Pattern t -> Natural
@@ -669,17 +673,17 @@ type ContextualDef t = Contextual t (Definition Const t)
 
 data Definition f t
   = Constant (Type t) (Constant f t)
-  | DataCon (f Name t) Natural (Contextual t (Type t))
+  | DataCon (f QName t) Natural (Contextual t (Type t))
   -- ^ Data type name, number of arguments, telescope ranging over the
   -- parameters of the type constructor ending with the type of the
   -- constructor.
-  | Projection Field (f Name t) (Contextual t (Type t))
+  | Projection Field (f QName t) (Contextual t (Type t))
   -- ^ Field number, record type name, telescope ranging over the
   -- parameters of the type constructor ending with the type of the
   -- projected thing and finally the type of the projection.
 
-deriving instance (Eq (Constant f t), Eq (f Name t), Eq t) => Eq (Definition f t)
-deriving instance (Show (Constant f t), Show (f Name t), Show t) => Show (Definition f t)
+deriving instance (Eq (Constant f t), Eq (f QName t), Eq t) => Eq (Definition f t)
+deriving instance (Show (Constant f t), Show (f QName t), Show t) => Show (Definition f t)
 
 openDefinition
   :: forall t m. (MonadTerm t m, IsTerm t)
@@ -701,9 +705,9 @@ openDefinition ctxt args = do
 
 data Constant f t
   = Postulate
-  | Data ![f Name t]
+  | Data ![f QName t]
   -- ^ A data type, with constructors.
-  | Record !(f Name t) ![f Projection t]
+  | Record !(f QName t) ![f Projection t]
   -- ^ A record, with its constructor and projections.
   | Function !(FunInst t)
   -- ^ A function, which might be waiting for instantiation
@@ -711,8 +715,8 @@ data Constant f t
   deriving (Typeable)
 #endif
 
-deriving instance (Eq (f Name t), Eq (f Projection t), Eq t) => Eq (Constant f t)
-deriving instance (Show (f Name t), Show (f Projection t), Show t) => Show (Constant f t)
+deriving instance (Eq (f QName t), Eq (f Projection t), Eq t) => Eq (Constant f t)
+deriving instance (Show (f QName t), Show (f Projection t), Show t) => Show (Constant f t)
 
 data FunInst t
   = Inst !(Invertible t)
@@ -731,7 +735,7 @@ data Invertible t
 -- | A 'TermHead' is an injective type- or data-former.
 data TermHead
   = PiHead
-  | DefHead Name
+  | DefHead QName
   deriving (Eq, Show, Read)
 
 instance PP.Pretty TermHead where
@@ -741,7 +745,7 @@ ignoreInvertible :: Invertible t -> [Clause t]
 ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
 
-definitionToNameInfo :: Name -> Definition n t -> NameInfo
+definitionToNameInfo :: QName -> Definition n t -> NameInfo
 definitionToNameInfo n (Constant _ _)     = SA.DefName n 0
 definitionToNameInfo n (DataCon _ args _) = SA.ConName n 0 $ fromIntegral args
 definitionToNameInfo n (Projection _ _ _) = SA.ProjName n 0
@@ -793,7 +797,7 @@ instance (IsTerm t) => MonadTerm t (TermM t) where
 runTermM :: Signature t -> TermM t a -> IO a
 runTermM sig (TermM m) = runReaderT m sig
 
-getDefinition :: (MonadTerm t m, IsTerm t) => Opened Name t -> m (Definition Opened t)
+getDefinition :: (MonadTerm t m, IsTerm t) => Opened QName t -> m (Definition Opened t)
 getDefinition n = do
   sig <- askSignature
   openDefinition (sigGetDefinition sig (opndKey n)) (opndArgs n)
@@ -803,6 +807,9 @@ getMetaType mv = (`sigGetMetaType` mv) <$> askSignature
 
 lookupMetaBody :: (MonadTerm t m) => Meta -> m (Maybe (MetaBody t))
 lookupMetaBody mv = (`sigLookupMetaBody` mv) <$> askSignature
+
+getModule :: (MonadTerm t m) => QName -> m (Module t)
+getModule n = (`sigGetModule` n) <$> askSignature
 
 -- Signature
 ------------------------------------------------------------------------
@@ -819,9 +826,15 @@ metaBodyToTerm (MetaBody args mvb) = go args
     go 0 = return mvb
     go n = lam =<< go (n-1)
 
+-- | A module, containing some names.  Note that once we reach
+-- type-checking every name is fully qualified, so modules at these
+-- stage are only opened so that we can instantiate their arguments.
+type Module t = Contextual t (HS.HashSet QName)
+
 -- | A 'Signature' stores every globally scoped thing.
 data Signature t = Signature
-    { sigDefinitions    :: HMS.HashMap Name (ContextualDef t)
+    { sigDefinitions    :: HMS.HashMap QName (ContextualDef t)
+    , sigModules        :: HMS.HashMap QName (Module t)
     , sigMetasTypes     :: HMS.HashMap Meta (Type t)
     , sigMetasBodies    :: HMS.HashMap Meta (MetaBody t)
       -- ^ Invariant: if a meta is present in 'sigMetasBodies', it's in
@@ -830,35 +843,35 @@ data Signature t = Signature
     }
 
 sigEmpty :: Signature t
-sigEmpty = Signature HMS.empty HMS.empty HMS.empty 0
+sigEmpty = Signature HMS.empty HMS.empty HMS.empty HMS.empty 0
 
-sigLookupDefinition :: Signature t -> Name -> Maybe (ContextualDef t)
+sigLookupDefinition :: Signature t -> QName -> Maybe (ContextualDef t)
 sigLookupDefinition sig key = HMS.lookup key (sigDefinitions sig)
 
 -- | Gets a definition for the given 'DefKey'.
-sigGetDefinition :: Signature t -> Name -> Closed (ContextualDef t)
+sigGetDefinition :: Signature t -> QName -> Closed (ContextualDef t)
 sigGetDefinition sig key = case HMS.lookup key (sigDefinitions sig) of
   Nothing   -> __IMPOSSIBLE__
   Just def' -> def'
 
-sigAddDefinition :: Signature t -> Name -> ContextualDef t -> Signature t
+sigAddDefinition :: Signature t -> QName -> ContextualDef t -> Signature t
 sigAddDefinition sig key def' = case sigLookupDefinition sig key of
   Nothing -> sigInsertDefinition sig key def'
   Just _  -> __IMPOSSIBLE__
 
-sigInsertDefinition :: Signature t -> Name -> ContextualDef t -> Signature t
+sigInsertDefinition :: Signature t -> QName -> ContextualDef t -> Signature t
 sigInsertDefinition sig key def' =
   sig{sigDefinitions = HMS.insert key def' (sigDefinitions sig)}
 
-sigAddPostulate :: Signature t -> Name -> Tel t -> Type t -> Signature t
+sigAddPostulate :: Signature t -> QName -> Tel t -> Type t -> Signature t
 sigAddPostulate sig name tel type_ =
   sigAddDefinition sig name $ Contextual tel $ Constant type_ Postulate
 
-sigAddData :: Signature t -> Name -> Tel t -> Type t -> Signature t
+sigAddData :: Signature t -> QName -> Tel t -> Type t -> Signature t
 sigAddData sig name tel type_ =
   sigAddDefinition sig name $ Contextual tel $ Constant type_ $ Data []
 
-sigAddRecordCon :: Signature t -> Opened Name t -> Name -> Signature t
+sigAddRecordCon :: Signature t -> Opened QName t -> QName -> Signature t
 sigAddRecordCon sig name0 dataCon =
   case sigGetDefinition sig name of
     Contextual tel (Constant type_ Postulate) -> do
@@ -868,13 +881,13 @@ sigAddRecordCon sig name0 dataCon =
   where
     name = opndKey name0
 
-sigAddTypeSig :: Signature t -> Name -> Tel t -> Type t -> Signature t
+sigAddTypeSig :: Signature t -> QName -> Tel t -> Type t -> Signature t
 sigAddTypeSig sig name tel type_ =
   sigAddDefinition sig name $ Contextual tel $ Constant type_ $ Function Open
 
--- | We take an 'Opened Name t' because if we're adding clauses the
+-- | We take an 'Opened QName t' because if we're adding clauses the
 -- function declaration must already be opened.
-sigAddClauses :: Signature t -> Opened Name t -> Invertible t -> Signature t
+sigAddClauses :: Signature t -> Opened QName t -> Invertible t -> Signature t
 sigAddClauses sig name0 clauses =
   let name = opndKey name0
       def' = case sigGetDefinition sig name of
@@ -885,7 +898,7 @@ sigAddClauses sig name0 clauses =
   in sigInsertDefinition sig name def'
 
 sigAddProjection
-  :: Signature t -> Name -> Field -> Opened Name t -> Contextual t (Type t) -> Signature t
+  :: Signature t -> QName -> Field -> Opened QName t -> Contextual t (Type t) -> Signature t
 sigAddProjection sig0 projName projIx tyCon0 ctxtType =
   case sigGetDefinition sig0 tyCon of
     Contextual tel (Constant tyConType (Record dataCon projs)) ->
@@ -900,7 +913,7 @@ sigAddProjection sig0 projName projIx tyCon0 ctxtType =
     tyCon = opndKey tyCon0
 
 sigAddDataCon
-  :: Signature t -> Name -> Opened Name t -> Natural -> Contextual t (Type t) -> Signature t
+  :: Signature t -> QName -> Opened QName t -> Natural -> Contextual t (Type t) -> Signature t
 sigAddDataCon sig0 dataConName tyCon0 numArgs ctxtType =
   case sigGetDefinition sig0 tyCon of
     Contextual tel (Constant tyConType (Data dataCons)) ->
@@ -918,6 +931,22 @@ sigAddDataCon sig0 dataConName tyCon0 numArgs ctxtType =
     tyCon = opndKey tyCon0
     def' tel = Contextual tel $ DataCon (Const tyCon) numArgs ctxtType
     mkSig tel = sigAddDefinition sig0 dataConName $ def' tel
+
+sigAddModule
+  :: Signature t -> QName -> Tel t -> HS.HashSet QName -> Signature t
+sigAddModule sig n args names =
+  case HMS.lookup n (sigModules sig) of
+    Nothing ->
+      sig{sigModules = HMS.insert n (Contextual args names) (sigModules sig)}
+    Just _ ->
+      __IMPOSSIBLE__
+
+sigGetModule
+  :: Signature t -> QName -> Module t
+sigGetModule sig n =
+  case HMS.lookup n (sigModules sig) of
+    Nothing -> __IMPOSSIBLE__
+    Just m  -> m
 
 -- | Gets the type of a 'Meta'.  Fails if the 'Meta' if not
 -- present.
@@ -946,16 +975,17 @@ sigInstantiateMeta sig mv t = case HMS.lookup mv (sigMetasTypes sig) of
   Just _  -> sig{sigMetasBodies = HMS.insert mv t (sigMetasBodies sig)}
   Nothing -> __IMPOSSIBLE__
 
-sigDefinedNames :: Signature t -> [Name]
+sigDefinedNames :: Signature t -> [QName]
 sigDefinedNames sig = HMS.keys $ sigDefinitions sig
 
 sigDefinedMetas :: Signature t -> [Meta]
 sigDefinedMetas sig = HMS.keys $ sigMetasTypes sig
 
 sigToScope :: Signature t -> Scope
-sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
-  where
-    f n = (nameString n, definitionToNameInfo n (contextualInside (sigGetDefinition sig n)))
+sigToScope = error "TODO sigToScope"
+-- sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
+--   where
+--     f n = (nameString n, definitionToNameInfo n (contextualInside (sigGetDefinition sig n)))
 
 -- Context
 ------------------------------------------------------------------------

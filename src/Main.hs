@@ -113,7 +113,7 @@ parseMain =
           return $ confDisableDebug conf0
         else return conf0
       instrument conf $ do
-        checkFile file $ \ts mbErr -> do
+        processFile file $ \ts mbErr -> do
           forM_ mbErr $ \err -> do
             putStrLn (PP.render err)
             unless interactive exitFailure
@@ -141,18 +141,18 @@ parseMain =
             interact' ts'
 -}
 
-checkFile
+processFile
   :: FilePath
   -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a)
   -> IO a
-checkFile file ret = do
+processFile file ret = do
   mbErr <- runExceptT $ do
     s   <- lift $ readFile file
-    raw <- exceptShowErr "Parse" $ parseProgram s
-    exceptShowErr "Scope" $ scopeCheckProgram raw
+    raw <- exceptShowErr "Parse" $ parseModule s
+    exceptShowErr "Scope" $ scopeCheckModule raw
   case mbErr of
     Left err  -> ret (sigEmpty :: Signature Simple) (Just err)
-    Right int -> checkProgram int $ \sig mbErr' ->
+    Right int -> checkFile int $ \sig mbErr' ->
                  ret sig (showError "Type" <$> mbErr')
   where
     showError errType err =

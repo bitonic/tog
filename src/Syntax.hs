@@ -10,15 +10,16 @@
 -- @
 module Syntax
   ( -- * Parsing
-    parseProgram
+    parseModule
   , parseExpr
     -- * Name
   , Syntax.Abstract.Name(..)
+  , Syntax.Abstract.QName(..)
   , Syntax.Abstract.SrcLoc(..)
   , Syntax.Abstract.noSrcLoc
   , Syntax.Abstract.HasSrcLoc(..)
     -- * Scope checking
-  , scopeCheckProgram
+  , scopeCheckModule
   , scopeCheckExpr
   , Scope(..)
   , NameInfo(..)

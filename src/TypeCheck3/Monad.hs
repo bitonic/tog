@@ -34,6 +34,7 @@ module TypeCheck3.Monad
   , addClauses
   , addProjection
   , addDataCon
+  , addModule
   , addMeta
   , uncheckedInstantiateMeta
   ) where
@@ -42,6 +43,7 @@ import qualified Control.Lens                     as L
 import           Control.Monad.State.Strict       (StateT(StateT), runStateT, MonadState(..))
 import           Control.Monad.Reader             (MonadReader(..), asks)
 import           Control.Monad.Except             (catchError)
+import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
 import           Instrumentation
@@ -172,34 +174,38 @@ atSrcLoc l m = TC $ do
 -- Signature
 ------------------------------------------------------------------------
 
-addPostulate :: Name -> Tel t -> Type t -> TC t r s ()
+addPostulate :: QName -> Tel t -> Type t -> TC t r s ()
 addPostulate f tel type_ = do
   modifySignature $ \sig -> sigAddPostulate sig f tel type_
 
-addData :: Name -> Tel t -> Type t -> TC t r s ()
+addData :: QName -> Tel t -> Type t -> TC t r s ()
 addData f tel type_ = do
   modifySignature $ \sig -> sigAddData sig f tel type_
 
-addRecordCon :: Opened Name t -> Name -> TC t r s ()
+addRecordCon :: Opened QName t -> QName -> TC t r s ()
 addRecordCon tyCon dataCon = do
   modifySignature $ \sig -> sigAddRecordCon sig tyCon dataCon
 
-addTypeSig :: Name -> Tel t -> Type t -> TC t r s ()
+addTypeSig :: QName -> Tel t -> Type t -> TC t r s ()
 addTypeSig f tel type_ = do
   modifySignature $ \sig -> sigAddTypeSig sig f tel type_
 
-addClauses :: Opened Name t -> Invertible t -> TC t r s ()
+addClauses :: Opened QName t -> Invertible t -> TC t r s ()
 addClauses f cs = modifySignature $ \sig -> sigAddClauses sig f cs
 
 addProjection
-  :: Projection -> Opened Name t -> Contextual t (Type t) -> TC t r s ()
+  :: Projection -> Opened QName t -> Contextual t (Type t) -> TC t r s ()
 addProjection proj tyCon ctxtType =
   modifySignature $ \sig -> sigAddProjection sig (pName proj) (pField proj) tyCon ctxtType
 
 addDataCon
-  :: Name -> Opened Name t -> Natural -> Contextual t (Type t) -> TC t r s ()
+  :: QName -> Opened QName t -> Natural -> Contextual t (Type t) -> TC t r s ()
 addDataCon dataCon tyCon numArgs ctxtType =
   modifySignature $ \sig -> sigAddDataCon sig dataCon tyCon numArgs ctxtType
+
+addModule :: (IsTerm t) => QName -> Tel t -> HS.HashSet QName -> TC t r s ()
+addModule moduleName tel names =
+  modifySignature $ \sig -> sigAddModule sig moduleName tel names
 
 addMeta :: forall t r s. (IsTerm t) => Type t -> TC t r s Meta
 addMeta type_ = do

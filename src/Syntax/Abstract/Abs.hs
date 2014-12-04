@@ -51,7 +51,7 @@ instance Hashable QName
 -- * Abstract syntax.
 ------------------------------------------------------------------------
 
-data Module = Module Name Params [Decl]
+data Module = Module QName Params [QName] [Decl]
 
 type Params = [(Name, Expr)]
 
@@ -122,7 +122,7 @@ instance HasSrcLoc Name where
   srcLoc (Name p _) = p
 
 instance HasSrcLoc Module where
-  srcLoc (Module x _ _) = srcLoc x
+  srcLoc (Module x _ _ _) = srcLoc x
 
 instance HasSrcLoc Decl where
   srcLoc d = case d of
@@ -200,7 +200,7 @@ instance Show Head    where showsPrec = defaultShow
 instance Show Pattern where showsPrec = defaultShow
 
 instance Pretty Module where
-  pretty (Module name pars decls) =
+  pretty (Module name pars exports decls) =
     let parsDoc = mconcat $ [parens (pretty n <+> ":" <+> pretty ty) | (n, ty) <- pars]
     in hsep [text "module", pretty name, parsDoc] $$>
        vcat (map pretty decls)

@@ -124,7 +124,7 @@ eliminateInst
   :: (MonadTerm t m)
   => Natural
   -- ^ Length of the context the 'FunInst' resides in.
-  -> Opened (Either Meta Name) t -> FunInst t -> [Elim t]
+  -> Opened (Either Meta QName) t -> FunInst t -> [Elim t]
   -> m (Blocked t)
 eliminateInst _ (Opened (Left mv) args) Open es = do
   return $ BlockingHead mv (map Apply args ++ es)
@@ -158,7 +158,7 @@ eliminateInst argsNum opnd@(Opened _ args) (Inst inv) es | clauses <- ignoreInve
 
 eliminateClauses
   :: (MonadTerm t m)
-  => Opened (Either Meta Name) t -> [Clause t] -> [Elim t] -> m (Blocked t)
+  => Opened (Either Meta QName) t -> [Clause t] -> [Elim t] -> m (Blocked t)
 -- Again, metas only ever have one clause.  Note that all these are just
 -- assertions, things would work just fine without them, but let's
 -- program defensively.
@@ -175,7 +175,7 @@ eliminateClauses (Opened (Right f) args) clauses es = do
 
 whnfFun
   :: (MonadTerm t m)
-  => Opened Name t -> [Elim t] -> [Clause t]
+  => Opened QName t -> [Elim t] -> [Clause t]
   -> m (Maybe (Blocked t))
 whnfFun _ _ [] = do
   return Nothing

@@ -3,7 +3,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3
   ( -- * Program checking
-    checkProgram
+    checkFile
   ) where
   --   -- * Interactive mode
   -- , Command
@@ -67,6 +67,8 @@ checkDecl env decl = do
         SA.DataDef d xs cs  -> checkDataDef d xs cs cont
         SA.RecDef d xs c fs -> checkRecDef d xs c fs cont
         SA.FunDef f clauses -> checkFunDef f clauses cont
+        SA.Module_ module_  -> checkModule module_ cont
+        SA.Open modu args   -> checkOpen modu args cont
 
 checkDecls :: (IsTerm t) => ElabEnv t -> [SA.Decl] -> TC t r (CheckState t) (ElabEnv t)
 checkDecls env [] = do
@@ -77,8 +79,8 @@ checkDecls env (decl : decls) = do
 
 addConstantAndOpen
   :: (IsTerm t)
-  => (Name -> Tel t -> Type t -> CheckM t ())
-  -> Name
+  => (QName -> Tel t -> Type t -> CheckM t ())
+  -> QName
   -> Type t
   -> CCheckM t
 addConstantAndOpen f name type_ cont = do
@@ -136,7 +138,7 @@ checkRecord (SA.Sig name absType) cont = do
 
 checkDataDef
     :: (IsTerm t)
-    => Name
+    => QName
     -- ^ Name of the tycon.
     -> [Name]
     -- ^ Names of parameters to the tycon.
@@ -169,7 +171,7 @@ checkDataCon
     -- ^ Tycon applied to the parameters.
     -> SA.TypeSig
     -- ^ Data constructor type
-    -> CheckM t (Name, Natural, Type t)
+    -> CheckM t (QName, Natural, Type t)
     -- ^ Name of the datacon, number of arguments and type of the data
     -- constructor, scoped over the parameters of the data type.
 checkDataCon appliedTyConType (SA.Sig dataCon synDataConType) = do
@@ -184,11 +186,11 @@ checkDataCon appliedTyConType (SA.Sig dataCon synDataConType) = do
 
 checkRecDef
     :: (IsTerm t)
-    => Name
+    => QName
     -- ^ Name of the tycon.
     -> [Name]
     -- ^ Name of the parameters to the tycon.
-    -> Name
+    -> QName
     -- ^ Name of the data constructor.
     -> [SA.TypeSig]
     -- ^ Fields of the record.
@@ -220,12 +222,12 @@ checkFields = go C0
         return $ ctxToTel ctx
     go ctx (SA.Sig field synFieldType : fields) = do
         fieldType <- extendEnv ctx $ checkExpr synFieldType set
-        go (ctx :< (field, fieldType)) fields
+        go (ctx :< (qNameName field, fieldType)) fields
 
 addProjections
     :: forall t.
        (IsTerm t)
-    => Opened Name t
+    => Opened QName t
     -- ^ Type constructor.
     -> Tel (Type t)
     -- ^ Arguments to the type constructors
@@ -233,7 +235,7 @@ addProjections
     -- ^ Variable referring to the value of type record type itself,
     -- which is the last argument of each projection ("self").  Note
     -- that this variable will have all the context above in scope.
-    -> [Name]
+    -> [QName]
     -- ^ Names of the remaining fields.
     -> Tel (Type t)
     -- ^ Telescope holding the types of the next fields, scoped
@@ -256,7 +258,7 @@ addProjections tyCon tyConPars self fields0 fieldTypes0 cont = do
     go (zipWith Projection' fields0 $ map Field [0,1..]) fieldTypes0
 
 checkFunDef
-  :: (IsTerm t) => Name -> [SA.Clause] -> CCheckM t
+  :: (IsTerm t) => QName -> [SA.Clause] -> CCheckM t
 checkFunDef fun0 synClauses cont = do
     (fun, funDef) <- getOpenedDefinition fun0
     case funDef of
@@ -381,29 +383,65 @@ checkPattern synPat patType type_ cont = case synPat of
       _ -> do
         checkError $ ExpectingTyCon tyCon patType
 
+checkModule
+  :: forall t. (IsTerm t) => SA.Module -> CCheckM t
+checkModule (SA.Module moduleName pars0 exports decls) cont = do
+  go pars0
+  cont
+  where
+    go :: SA.Params -> CheckM t ()
+    go [] = do
+      tel <- startBlock $ do
+        env <- ask
+        void $ checkDecls env decls
+        return $ elabEnvTel env
+      addModule moduleName tel $ HS.fromList exports
+    go ((n, synType) : pars) = do
+      type_ <- checkExpr synType set
+      extendEnv_ (n, type_) $ go pars
+
+checkOpen
+  :: (IsTerm t) => QName -> [SA.Expr] -> CCheckM t
+checkOpen moduleName synArgs0 cont = do
+  Contextual tel0 names0 <- getModule moduleName
+
+  let go1 T0 [] args = do
+        go2 (reverse args) (HS.toList names0)
+      go1 ((_, type_) :> tel) (synArg : synArgs) args = do
+        arg <- checkExpr synArg type_
+        tel' <- instantiate_ tel arg
+        go1 tel' synArgs (arg : args)
+      go1 _ _ _ = do
+        checkError $ MismatchingArgumentsForModule moduleName synArgs0
+
+      go2 _    []             = cont
+      go2 args (name : names) = openDefinitionInEnv name args $ \_ -> go2 args names
+
+  go1 tel0 synArgs0 []
+
 -- Bringing everything together
 ------------------------------------------------------------------------
 
 -- Checking programs
 --------------------
 
-checkProgram
-  :: [SA.Decl]
+checkFile
+  :: SA.Module
   -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a) -> IO a
-checkProgram decls ret = do
+checkFile decls ret = do
   tt <- confTermType <$> readConf
   case tt of
-    "S"   -> checkProgram' (Proxy :: Proxy Simple) decls ret
-    "GR"  -> checkProgram' (Proxy :: Proxy GraphReduce) decls ret
-    -- "GRS" -> checkProgram' (Proxy :: Proxy GraphReduceSub) decls ret
-    "GRU" -> checkProgram' (Proxy :: Proxy GraphReduceUnpack) decls ret
-    "H"   -> checkProgram' (Proxy :: Proxy Hashed) decls ret
+    "S"   -> checkFile' (Proxy :: Proxy Simple) decls ret
+    "GR"  -> checkFile' (Proxy :: Proxy GraphReduce) decls ret
+    -- "GRS" -> checkFile' (Proxy :: Proxy GraphReduceSub) decls ret
+    "GRU" -> checkFile' (Proxy :: Proxy GraphReduceUnpack) decls ret
+    "H"   -> checkFile' (Proxy :: Proxy Hashed) decls ret
     type_ -> ret (sigEmpty :: Signature Simple) (Just ("Invalid term type" <+> PP.text type_))
 
-checkProgram'
+checkFile'
     :: forall t a. (IsTerm t)
-    => Proxy t -> [SA.Decl] -> (Signature t -> Maybe PP.Doc -> IO a) -> IO a
-checkProgram' _ decls0 ret = do
+    => Proxy t -> SA.Module -> (Signature t -> Maybe PP.Doc -> IO a) -> IO a
+checkFile' _ decls0 ret = do
     quiet <- confQuiet <$> readConf
     unless quiet $ do
       drawLine
@@ -411,7 +449,7 @@ checkProgram' _ decls0 ret = do
     s <- initCheckState
     -- For the time being we always start a dummy block here
     (mbErr, sig, _) <- runTC sigEmpty () s $ do
-      void $ checkDecls (initElabEnv C0) decls0
+      magnifyTC (const (initElabEnv C0)) $ checkModule decls0 $ return ()
       checkSignature
     ret sig $ either Just (\() -> Nothing) mbErr
   where

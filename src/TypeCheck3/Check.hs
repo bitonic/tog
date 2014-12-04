@@ -136,7 +136,7 @@ inferHead ctx h = case h of
   J        -> return typeOfJ
 
 matchTyCon
-  :: (IsTerm t) => Opened Name t -> Type t -> TC t r s [Term t]
+  :: (IsTerm t) => Opened QName t -> Type t -> TC t r s [Term t]
 matchTyCon tyCon type_ = do
   typeView <- whnfView type_
   let fallback = checkError $ ExpectingTyCon (opndKey tyCon) type_
