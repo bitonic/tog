@@ -203,9 +203,10 @@ addDataCon
 addDataCon dataCon tyCon numArgs ctxtType =
   modifySignature $ \sig -> sigAddDataCon sig dataCon tyCon numArgs ctxtType
 
-addModule :: (IsTerm t) => QName -> Tel t -> HS.HashSet QName -> TC t r s ()
-addModule moduleName tel names =
-  modifySignature $ \sig -> sigAddModule sig moduleName tel names
+addModule :: (IsTerm t) => QName -> Tel t -> Module t -> TC t r s ()
+addModule moduleName tel names = do
+  debugBracket_ "addModule" (PP.pretty moduleName) $
+    modifySignature $ \sig -> sigAddModule sig moduleName tel names
 
 addMeta :: forall t r s. (IsTerm t) => Type t -> TC t r s Meta
 addMeta type_ = do

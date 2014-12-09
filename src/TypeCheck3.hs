@@ -68,7 +68,8 @@ checkDecl env decl = do
         SA.RecDef d xs c fs -> checkRecDef d xs c fs cont
         SA.FunDef f clauses -> checkFunDef f clauses cont
         SA.Module_ module_  -> checkModule module_ cont
-        SA.Open modu args   -> checkOpen modu args cont
+        SA.Import modu args -> checkImport modu args cont
+        SA.Open modu        -> checkOpen modu cont
 
 checkDecls :: (IsTerm t) => ElabEnv t -> [SA.Decl] -> TC t r (CheckState t) (ElabEnv t)
 checkDecls env [] = do
@@ -386,22 +387,34 @@ checkPattern synPat patType type_ cont = case synPat of
 checkModule
   :: forall t. (IsTerm t) => SA.Module -> CCheckM t
 checkModule (SA.Module moduleName pars0 exports decls) cont = do
-  go pars0
-  cont
+  let msg =
+        "name:" //> PP.pretty moduleName $$
+        "pars:" //> PP.pretty pars0 $$
+                "exports:" //> PP.pretty exports
+  debugBracket_ "checkModule" msg $ do
+    module_ <- go pars0 C0
+    tel <- asks elabEnvTel
+    addModule moduleName tel module_
+    openDefinitionInEnv_ moduleName $ \_ -> do
+      -- If the module has no parameters, we import it right away.
+      case pars0 of
+        []  -> checkImport moduleName [] cont
+        _:_ -> cont
   where
-    go :: SA.Params -> CheckM t ()
-    go [] = do
-      tel <- startBlock $ do
+    go :: SA.Params -> Ctx t -> CheckM t (Module t)
+    go [] ctx = do
+      extendEnv ctx $ do
         env <- ask
         void $ checkDecls env decls
-        return $ elabEnvTel env
-      addModule moduleName tel $ HS.fromList exports
-    go ((n, synType) : pars) = do
-      type_ <- checkExpr synType set
-      extendEnv_ (n, type_) $ go pars
+      return $ Contextual (ctxToTel ctx) $ HS.fromList exports
+    go ((n, synType) : pars) ctx = do
+      type_ <- extendEnv ctx $ checkExpr synType set
+      go pars $ ctx :< (n, type_)
 
 checkOpen
-  :: (IsTerm t) => QName -> [SA.Expr] -> CCheckM t
+  :: (IsTerm t) => QName -> CCheckM t
+checkOpen = error "TODO"
+{-
 checkOpen moduleName synArgs0 cont = do
   Contextual tel0 names0 <- getModule moduleName
 
@@ -412,12 +425,30 @@ checkOpen moduleName synArgs0 cont = do
         tel' <- instantiate_ tel arg
         go1 tel' synArgs (arg : args)
       go1 _ _ _ = do
-        checkError $ MismatchingArgumentsForModule moduleName synArgs0
+        checkError $ MismatchingArgumentsForModule moduleName tel0 synArgs0
 
       go2 _    []             = cont
       go2 args (name : names) = openDefinitionInEnv name args $ \_ -> go2 args names
 
   go1 tel0 synArgs0 []
+-}
+
+checkImport
+  :: (IsTerm t) => QName -> [SA.Expr] -> CCheckM t
+checkImport moduleName0 synArgs = do
+  (moduleName0, Contextual tel0 names0) <- getOpenedDefinition moduleName0
+
+  let go1 go1 T0 [] args = do
+        go2 (reverse args) (HS.toList names0)
+      go1 ((_, type_) :> tel) (synArg : synArgs) args = do
+        arg <- checkExpr synArg type_
+        tel' <- instantiate_ tel arg
+        go1 tel' synArgs (arg : args)
+      go1 _ _ _ = do
+        checkError $ MismatchingArgumentsForModule moduleName tel0 synArgs0
+
+      go2 _    []             = cont
+      go2 args (name : names) = openDefinitionInEnv name args $ \_ -> go2 args names
 
 -- Bringing everything together
 ------------------------------------------------------------------------
@@ -433,7 +464,6 @@ checkFile decls ret = do
   case tt of
     "S"   -> checkFile' (Proxy :: Proxy Simple) decls ret
     "GR"  -> checkFile' (Proxy :: Proxy GraphReduce) decls ret
-    -- "GRS" -> checkFile' (Proxy :: Proxy GraphReduceSub) decls ret
     "GRU" -> checkFile' (Proxy :: Proxy GraphReduceUnpack) decls ret
     "H"   -> checkFile' (Proxy :: Proxy Hashed) decls ret
     type_ -> ret (sigEmpty :: Signature Simple) (Just ("Invalid term type" <+> PP.text type_))

@@ -71,6 +71,7 @@ module Prelude.Extended
   , toList
   , trace
   , traceM
+  , traceShow
   , traverse
   , unless
   , validationToEither

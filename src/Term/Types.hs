@@ -62,6 +62,7 @@ module Term.Types
   , Contextual(..)
   , openContextual
   , ignoreContextual
+  , Module
   , Definition(..)
   , openDefinition
   , Constant(..)
@@ -83,11 +84,9 @@ module Term.Types
   , getDefinition
   , getMetaType
   , lookupMetaBody
-  , getModule
     -- * Signature
   , MetaBody(..)
   , metaBodyToTerm
-  , Module
   , Signature(..)
   , sigEmpty
     -- ** Querying
@@ -106,7 +105,6 @@ module Term.Types
   , sigAddProjection
   , sigAddDataCon
   , sigAddModule
-  , sigGetModule
   , sigAddMeta
   , sigInstantiateMeta
     -- ** Utils
@@ -414,6 +412,8 @@ instance ApplySubst t (Definition Const t) where
     DataCon tyCon args <$> safeApplySubst dataConType rho
   safeApplySubst (Projection fld tyCon projType) rho =
     Projection fld tyCon <$> safeApplySubst projType rho
+  safeApplySubst (Module (Contextual tel names)) rho =
+    Module <$> (Contextual <$> safeApplySubst tel rho <*> pure names)
 
 instance ApplySubst t (Constant Const t) where
   safeApplySubst Postulate _ = do
@@ -671,6 +671,11 @@ ignoreContextual (Contextual _ x) = x
 
 type ContextualDef t = Contextual t (Definition Const t)
 
+-- | A module, containing some names.  Note that once we reach
+-- type-checking every name is fully qualified, so modules at these
+-- stage are only opened so that we can instantiate their arguments.
+type Module t = Contextual t (HS.HashSet QName)
+
 data Definition f t
   = Constant (Type t) (Constant f t)
   | DataCon (f QName t) Natural (Contextual t (Type t))
@@ -681,6 +686,7 @@ data Definition f t
   -- ^ Field number, record type name, telescope ranging over the
   -- parameters of the type constructor ending with the type of the
   -- projected thing and finally the type of the projection.
+  | Module (Module t)
 
 deriving instance (Eq (Constant f t), Eq (f QName t), Eq t) => Eq (Definition f t)
 deriving instance (Show (Constant f t), Show (f QName t), Show t) => Show (Definition f t)
@@ -694,6 +700,7 @@ openDefinition ctxt args = do
     Constant type_ constant -> Constant type_ $ openConstant constant
     DataCon dataCon args' type_ -> DataCon (openName dataCon) args' type_
     Projection fld tyCon type_ -> Projection fld (openName tyCon) type_
+    Module names -> Module names
   where
     openName :: Const a t -> Opened a t
     openName (Const n) = Opened n args
@@ -808,8 +815,8 @@ getMetaType mv = (`sigGetMetaType` mv) <$> askSignature
 lookupMetaBody :: (MonadTerm t m) => Meta -> m (Maybe (MetaBody t))
 lookupMetaBody mv = (`sigLookupMetaBody` mv) <$> askSignature
 
-getModule :: (MonadTerm t m) => QName -> m (Module t)
-getModule n = (`sigGetModule` n) <$> askSignature
+-- getModule :: (MonadTerm t m) => QName -> m (Contextual t (HS.HashSet QName))
+-- getModule n = (`sigGetModule` n) <$> askSignature
 
 -- Signature
 ------------------------------------------------------------------------
@@ -826,15 +833,9 @@ metaBodyToTerm (MetaBody args mvb) = go args
     go 0 = return mvb
     go n = lam =<< go (n-1)
 
--- | A module, containing some names.  Note that once we reach
--- type-checking every name is fully qualified, so modules at these
--- stage are only opened so that we can instantiate their arguments.
-type Module t = Contextual t (HS.HashSet QName)
-
 -- | A 'Signature' stores every globally scoped thing.
 data Signature t = Signature
     { sigDefinitions    :: HMS.HashMap QName (ContextualDef t)
-    , sigModules        :: HMS.HashMap QName (Module t)
     , sigMetasTypes     :: HMS.HashMap Meta (Type t)
     , sigMetasBodies    :: HMS.HashMap Meta (MetaBody t)
       -- ^ Invariant: if a meta is present in 'sigMetasBodies', it's in
@@ -843,7 +844,7 @@ data Signature t = Signature
     }
 
 sigEmpty :: Signature t
-sigEmpty = Signature HMS.empty HMS.empty HMS.empty HMS.empty 0
+sigEmpty = Signature HMS.empty HMS.empty HMS.empty 0
 
 sigLookupDefinition :: Signature t -> QName -> Maybe (ContextualDef t)
 sigLookupDefinition sig key = HMS.lookup key (sigDefinitions sig)
@@ -933,20 +934,9 @@ sigAddDataCon sig0 dataConName tyCon0 numArgs ctxtType =
     mkSig tel = sigAddDefinition sig0 dataConName $ def' tel
 
 sigAddModule
-  :: Signature t -> QName -> Tel t -> HS.HashSet QName -> Signature t
+  :: Signature t -> QName -> Tel t -> Module t -> Signature t
 sigAddModule sig n args names =
-  case HMS.lookup n (sigModules sig) of
-    Nothing ->
-      sig{sigModules = HMS.insert n (Contextual args names) (sigModules sig)}
-    Just _ ->
-      __IMPOSSIBLE__
-
-sigGetModule
-  :: Signature t -> QName -> Module t
-sigGetModule sig n =
-  case HMS.lookup n (sigModules sig) of
-    Nothing -> __IMPOSSIBLE__
-    Just m  -> m
+  sigAddDefinition sig n $ Contextual args $ Module names
 
 -- | Gets the type of a 'Meta'.  Fails if the 'Meta' if not
 -- present.

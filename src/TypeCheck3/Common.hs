@@ -29,6 +29,8 @@ import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 
+#include "impossible.h"
+
 -- Errors
 ---------
 
@@ -41,7 +43,7 @@ data CheckError t
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
     | PatternMatchOnRecord SA.Pattern QName -- Record type constructor
-    | MismatchingArgumentsForModule QName [SA.Expr]
+    | MismatchingArgumentsForModule QName (Tel t) [SA.Expr]
     | UnsolvedMetas MetaSet
 
 checkError :: (IsTerm t) => CheckError t -> TC_ t a
@@ -95,10 +97,12 @@ renderError err =
       return $ "Expecting a" <+> tyConDoc <> ", not:" //> typeDoc
     UnsolvedMetas mvs -> do
       return $ "UnsolvedMetas" <+> PP.pretty (HS.toList mvs)
-    MismatchingArgumentsForModule n args -> do
+    MismatchingArgumentsForModule n tel args -> do
+      telDoc <- prettyM tel
       return $
         "MismatchingArgumentsForModule" $$
         "module:" //> PP.pretty n $$
+        "tel:" //> telDoc $$
         "args:" //> PP.hsep (map PP.pretty args)
   where
     prettyVar = PP.pretty
@@ -213,6 +217,7 @@ termHead t = do
         Constant _ Function{}  -> Nothing
         DataCon{}              -> Nothing
         Projection{}           -> Nothing
+        Module{}               -> __IMPOSSIBLE__
     App{} -> do
       return Nothing
     Con f _ ->

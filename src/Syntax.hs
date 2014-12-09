@@ -20,7 +20,6 @@ module Syntax
   , Syntax.Abstract.HasSrcLoc(..)
     -- * Scope checking
   , scopeCheckModule
-  , scopeCheckExpr
   , Scope(..)
   , NameInfo(..)
   ) where

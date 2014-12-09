@@ -40,6 +40,7 @@ import qualified PrettyPrint                      as PP
 data Block t = Block
   { _blockCtx    :: !(Ctx t)
   , _blockOpened :: !(HMS.HashMap QName [Term t])
+    -- ^ Stores arguments to opened things.
   }
 
 makeLenses ''Block
@@ -73,14 +74,14 @@ initElabEnv :: Ctx t -> ElabEnv t
 initElabEnv ctx = ElabEnv [Block ctx HMS.empty] C0
 
 elabEnvCtx :: ElabEnv t -> Ctx t
-elabEnvCtx (ElabEnv blocks ctx) = mconcat (map _blockCtx blocks ++ [ctx])
+elabEnvCtx (ElabEnv blocks ctx) = mconcat $ reverse $ ctx : map _blockCtx blocks
 
 elabEnvTel :: ElabEnv t -> Tel t
-elabEnvTel (ElabEnv blocks ctx) = mconcat $ map ctxToTel $ map _blockCtx blocks ++ [ctx]
+elabEnvTel (ElabEnv blocks ctx) = mconcat $ map ctxToTel $ reverse $ ctx : map _blockCtx blocks
 
-getOpenedDefinition
-  :: (IsTerm t) => QName -> TC t (ElabEnv t) s (Opened QName t, Definition Opened t)
-getOpenedDefinition name = do
+getOpenedArgs
+  :: (IsTerm t) => QName -> TC t (ElabEnv t) s [Term t]
+getOpenedArgs name = do
   env <- ask
   go (ctxLength (env^.eeCtx)) (env^.eeBlocks)
   where
@@ -89,13 +90,18 @@ getOpenedDefinition name = do
     go n (block : blocks) = do
       case HMS.lookup name (block^.blockOpened) of
         Nothing   -> go (n + ctxLength (block^.blockCtx)) blocks
-        Just args -> do
-          args' <- weaken_ n args
-          sig <- askSignature
-          def' <- openDefinition (sigGetDefinition sig name) args'
-          return (Opened name args', def')
+        Just args -> weaken_ n args
 
-openDefinitionInEnv :: QName -> [Term t] -> (Opened QName t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
+getOpenedDefinition
+  :: (IsTerm t) => QName -> TC t (ElabEnv t) s (Opened QName t, Definition Opened t)
+getOpenedDefinition name = do
+  args <- getOpenedArgs name
+  sig <- askSignature
+  def' <- openDefinition (sigGetDefinition sig name) args
+  return (Opened name args, def')
+
+openDefinitionInEnv
+  :: QName -> [Term t] -> (Opened QName t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
 openDefinitionInEnv name args cont = do
   env <- ask
   -- We can open a definition only when the context is empty, and there

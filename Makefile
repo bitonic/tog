@@ -28,7 +28,7 @@ clean:
 
 .PHONY: test
 test: $(executable)
-	time ./test.sh
+	time ./test
 
 modules.pdf: $(bnfc_output) $(hs_sources)
 	graphmod -i src -i bnfc -i dist/build/tog/tog-tmp src/Main.hs | dot -T pdf -o modules.pdf

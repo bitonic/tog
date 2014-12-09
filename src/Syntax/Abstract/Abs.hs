@@ -8,6 +8,7 @@ module Syntax.Abstract.Abs where
 
 import Prelude.Extended
 import PrettyPrint
+import qualified Data.Semigroup as Semigroup
 
 -- * Source locations.
 ------------------------------------------------------------------------
@@ -46,6 +47,15 @@ instance Hashable Name where
 data QName = QName { qNameModule :: ![Name], qNameName :: !Name }
   deriving (Eq, Ord, Generic, Show, Read)
 
+instance Semigroup.Semigroup QName where
+  QName xs x <> QName ys y = QName (xs ++ [x] ++ ys) y
+
+qNameSnoc :: QName -> Name -> QName
+qNameSnoc (QName ns n) m = QName (ns ++ [n]) m
+
+mkQName_ :: Name -> QName
+mkQName_ = QName []
+
 instance Hashable QName
 
 -- * Abstract syntax.
@@ -64,7 +74,8 @@ data Decl
   | DataDef QName [Name] [TypeSig]
   | RecDef  QName [Name] QName [TypeSig]
   | Module_ Module
-  | Open QName [Expr]
+  | Import QName [Expr]
+  | Open QName
 
 data TypeSig = Sig
   { typeSigName :: QName
@@ -134,7 +145,8 @@ instance HasSrcLoc Decl where
     DataDef x _ _  -> srcLoc x
     RecDef x _ _ _ -> srcLoc x
     Module_ x      -> srcLoc x
-    Open x _       -> srcLoc x
+    Open x         -> srcLoc x
+    Import x _     -> srcLoc x
 
 instance HasSrcLoc TypeSig where
   srcLoc (Sig x _) = srcLoc x
@@ -201,8 +213,10 @@ instance Show Pattern where showsPrec = defaultShow
 
 instance Pretty Module where
   pretty (Module name pars exports decls) =
-    let parsDoc = mconcat $ [parens (pretty n <+> ":" <+> pretty ty) | (n, ty) <- pars]
-    in hsep [text "module", pretty name, parsDoc] $$>
+    let parsDoc =
+          let ds = [parens (pretty n <+> ":" <+> pretty ty) | (n, ty) <- pars]
+          in if null ds then [] else [mconcat ds]
+    in hsep ([text "module", pretty name] ++ parsDoc ++ ["where"]) $$>
        vcat (map pretty decls)
 
 instance Pretty Name where
@@ -234,8 +248,10 @@ instance Pretty Decl where
       vcat (map pretty fs)
     Module_ m ->
       pretty m
-    Open m args ->
-      hsep (text "open" : pretty m : map (prettyPrec 4) args)
+    Open m ->
+      hsep [text "open", pretty m]
+    Import m args ->
+      hsep (text "import" : pretty m : map (prettyPrec 4) args)
     where
       prettyClause f (Clause ps e []) =
         group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e)

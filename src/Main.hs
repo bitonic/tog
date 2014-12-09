@@ -115,7 +115,8 @@ parseMain =
       instrument conf $ do
         processFile file $ \ts mbErr -> do
           forM_ mbErr $ \err -> do
-            putStrLn (PP.render err)
+            silent <- confQuiet <$> readConf
+            unless silent $ putStrLn (PP.render err)
             unless interactive exitFailure
           when interactive $
             Haskeline.runInputT interactSettings (interact' ts)
@@ -141,11 +142,11 @@ parseMain =
             interact' ts'
 -}
 
-processFile
+check
   :: FilePath
   -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a)
   -> IO a
-processFile file ret = do
+check file ret = do
   mbErr <- runExceptT $ do
     s   <- lift $ readFile file
     raw <- exceptShowErr "Parse" $ parseModule s
@@ -160,6 +161,19 @@ processFile file ret = do
 
     exceptShowErr errType =
       ExceptT . return . either (Left . showError errType) Right
+
+scopeCheck :: FilePath -> IO ()
+scopeCheck file = do
+  s <- readFile file
+  mbErr <- runExceptT $ do
+    raw <- exceptShowErr "Parse" $ paseModule s
+    exceptShowErr "Scope" $ scopeCheckModule raw
+  case mbErr of
+    Left err -> do
+      putStrLn err
+      exitFailure
+    Right s -> do
+      putStrLn $ PP.render s
 
 main :: IO ()
 main = do
