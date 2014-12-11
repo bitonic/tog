@@ -375,7 +375,7 @@ checkPattern synPat patType type_ cont = case synPat of
           "type':" //> type'Doc
         -- GO GO GO
         checkPatterns synPats type' $ \pats type'' -> do
-          cont (ConP dataCon pats) type''
+          cont (ConP openDataCon pats) type''
       _ -> do
         checkError $ ExpectingTyCon tyCon patType
 

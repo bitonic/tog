@@ -634,7 +634,7 @@ data Clause t = Clause [Pattern t] (ClauseBody t)
 
 data Pattern t
     = VarP
-    | ConP QName [Pattern t]
+    | ConP (Opened QName t) [Pattern t]
     deriving (Eq, Show, Read, Typeable, Functor)
 
 patternBindings :: Pattern t -> Natural
@@ -748,11 +748,6 @@ instance PP.Pretty TermHead where
 ignoreInvertible :: Invertible t -> [Clause t]
 ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
-
--- definitionToNameInfo :: QName -> Definition n t -> NameInfo
--- definitionToNameInfo n (Constant _ _)     = SA.DefName n 0
--- definitionToNameInfo n (DataCon _ args _) = SA.ConName n 0 $ fromIntegral args
--- definitionToNameInfo n (Projection _ _ _) = SA.ProjName n 0
 
 definitionType :: (MonadTerm t m) => Closed (Definition n t) -> m (Closed (Type t))
 definitionType (Constant type_ _) =
@@ -969,12 +964,6 @@ sigDefinedNames sig = HMS.keys $ sigDefinitions sig
 
 sigDefinedMetas :: Signature t -> [Meta]
 sigDefinedMetas sig = HMS.keys $ sigMetasTypes sig
-
--- sigToScope :: Signature t -> Scope
--- sigToScope = error "TODO sigToScope"
--- sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
---   where
---     f n = (nameString n, definitionToNameInfo n (contextualInside (sigGetDefinition sig n)))
 
 -- Context
 ------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 
 import           Instrumentation
+import           Syntax
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, indent, hang)
 import qualified PrettyPrint                      as PP
@@ -298,10 +299,6 @@ checkEqualBlockedOn
   -> Term t
   -> TC t r s (Constraints_ t)
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
-  t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
-  return $ [(mvs, Unify ctx type_ t1 t2)]
-{-
-checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
   let msg = do
         bhDoc <- prettyM bh
         return $ "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) <>
@@ -366,13 +363,15 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
       -- are waiting on some metavar which doesn't head an eliminator.
       return False
 
-    matchPat :: Name -> [Pattern t] -> Elim t -> TC t r s Bool
-    matchPat dataCon pats (Apply t) = do
+    matchPat :: Opened QName t -> [Pattern t] -> Elim t -> TC t r s Bool
+    matchPat (Opened _ (_:_)) _ _ = do
+      return False              -- TODO make this work in all cases.
+    matchPat openedDataCon@(Opened dataCon []) pats (Apply t) = do
       tView <- whnfView t
       case tView of
         App (Meta mv) mvArgs -> do
           mvT <- instantiateDataCon mv dataCon
-          void $ matchPat dataCon pats . Apply =<< eliminate mvT mvArgs
+          void $ matchPat openedDataCon pats . Apply =<< eliminate mvT mvArgs
           return True
         Con dataCon' dataConArgs | dataCon == opndKey dataCon' -> do
           matchPats pats (map Apply dataConArgs)
@@ -383,7 +382,40 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
     matchPat _ _ _ = do
       -- Same as above.
       return False
--}
+
+-- | @instantiateDataCon α c@ makes it so that @α := c β₁ ⋯ βₙ@, where
+--   @c@ is a data constructor.
+--
+--   Pre: @α : Δ → D t₁ ⋯ tₙ@, where @D@ is the fully applied type
+--   constructor for @c@.
+--
+--   TODO right now this works only with a simple 'Name', but we should
+--   make it work for 'Opened Name' too.
+instantiateDataCon
+  :: (IsTerm t)
+  => Meta
+  -> QName
+  -- ^ Name of the datacon
+  -> TC t r s (Closed (Term t))
+instantiateDataCon mv dataCon = do
+  let openedDataCon = Opened dataCon []
+  mvType <- getMetaType mv
+  (telMvArgs, endType') <- unrollPi mvType
+  DataCon tyCon _ dataConType <- getDefinition openedDataCon
+  -- We know that the metavariable must have the right type (we have
+  -- typechecked the arguments already).
+  App (Def tyCon') tyConArgs0 <- whnfView endType'
+  Just tyConArgs <- return $ mapM isApply tyConArgs0
+  True <- synEq tyCon tyCon'
+  appliedDataConType <- openContextual dataConType tyConArgs
+  (dataConArgsTel, _) <- unrollPi appliedDataConType
+  dataConArgs <- createMvsPars (telToCtx telMvArgs) dataConArgsTel
+  mvT <- con openedDataCon dataConArgs
+  let mi = MetaBody (telLength telMvArgs) mvT
+  -- given the usage, here we know that the body is going to be well typed.
+  -- TODO make sure that the above holds.
+  instantiateMeta mv mi
+  metaBodyToTerm mi
 
 equalSpine
   :: (IsTerm t)

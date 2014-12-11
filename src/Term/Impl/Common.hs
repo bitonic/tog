@@ -214,7 +214,7 @@ matchClause (Apply arg : es) (ConP dataCon dataConPatterns : patterns) = do
       case tView of
         -- Here we can compare just the key, since the assumption is
         -- that we only reduce well-typed terms.
-        Con dataCon' dataConArgs | dataCon == opndKey dataCon' -> do
+        Con dataCon' dataConArgs | opndKey dataCon == opndKey dataCon' -> do
           matchClause (map Apply dataConArgs ++ es) (dataConPatterns ++ patterns)
         _ ->
           fallback
