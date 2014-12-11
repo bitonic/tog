@@ -2,12 +2,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Elaborate
-  ( -- * 'ElabEnv'
+  ( -- * 'Env'
     Block
-  , ElabEnv
-  , initElabEnv
-  , elabEnvCtx
-  , elabEnvTel
+  , Env
+  , initEnv
+  , envCtx
+  , envTel
   , extendEnv
   , extendEnv_
   , getOpenedDefinition
@@ -54,91 +54,103 @@ instance PrettyM t (Block t) where
       "ctx:" //> ctxDoc $$
       "opened:" //> openedDoc
 
-data ElabEnv t = ElabEnv
-  { _eeBlocks :: ![Block t]
-  , _eeCtx    :: !(Ctx t)
+-- | The environment we do the elaboration is a series of 'Block's plus
+-- a dangling context at the end.
+data Env t = Env
+  { _envBlocks  :: ![Block t]
+  , _envPending :: !(Ctx t)
   }
 
-makeLenses ''ElabEnv
+makeLenses ''Env
 
-instance PrettyM t (ElabEnv t) where
-  prettyM (ElabEnv blocks ctx) = do
+instance PrettyM t (Env t) where
+  prettyM (Env blocks ctx) = do
     blocksDoc <- prettyM blocks
     ctxDoc <- prettyM ctx
     return $
-      "ElabEnv" $$
+      "Env" $$
       "blocks:" //> blocksDoc $$
-      "ctx:" //> ctxDoc
+      "pending:" //> ctxDoc
 
-initElabEnv :: Ctx t -> ElabEnv t
-initElabEnv ctx = ElabEnv [Block ctx HMS.empty] C0
+initEnv :: Ctx t -> Env t
+initEnv ctx = Env [Block ctx HMS.empty] C0
 
-elabEnvCtx :: ElabEnv t -> Ctx t
-elabEnvCtx (ElabEnv blocks ctx) = mconcat $ reverse $ ctx : map _blockCtx blocks
+envCtx :: Env t -> Ctx t
+envCtx (Env blocks ctx) = mconcat $ reverse $ ctx : map _blockCtx blocks
 
-elabEnvTel :: ElabEnv t -> Tel t
-elabEnvTel (ElabEnv blocks ctx) = mconcat $ map ctxToTel $ reverse $ ctx : map _blockCtx blocks
-
-getOpenedArgs
-  :: (IsTerm t) => QName -> TC t (ElabEnv t) s [Term t]
-getOpenedArgs name = do
-  env <- ask
-  go (ctxLength (env^.eeCtx)) (env^.eeBlocks)
-  where
-    go _ [] = do
-      __IMPOSSIBLE__
-    go n (block : blocks) = do
-      case HMS.lookup name (block^.blockOpened) of
-        Nothing   -> go (n + ctxLength (block^.blockCtx)) blocks
-        Just args -> weaken_ n args
+envTel :: Env t -> Tel t
+envTel (Env blocks ctx) = mconcat $ map ctxToTel $ reverse $ ctx : map _blockCtx blocks
 
 getOpenedDefinition
-  :: (IsTerm t) => QName -> TC t (ElabEnv t) s (Opened QName t, Definition Opened t)
-getOpenedDefinition name = do
-  args <- getOpenedArgs name
+  :: (IsTerm t) => QName -> TC t (Env t) s (Opened QName t, Definition Opened t)
+getOpenedDefinition name0 = do
+  args <- getOpenedArgs name0
   sig <- askSignature
-  def' <- openDefinition (sigGetDefinition sig name) args
-  return (Opened name args, def')
+  def' <- openDefinition (sigGetDefinition sig name0) args
+  return (Opened name0 args, def')
+  where
+    -- | Get the arguments of an opened name.
+    getOpenedArgs name = do
+      env <- ask
+      go (ctxLength (env^.envPending)) (env^.envBlocks)
+      where
+        go _ [] = do
+          __IMPOSSIBLE__
+        go n (block : blocks) = do
+          case HMS.lookup name (block^.blockOpened) of
+            Nothing   -> go (n + ctxLength (block^.blockCtx)) blocks
+            Just args -> weaken_ n args
 
+-- | Open a definition with the given arguments.  Must be done in an
+-- empty 'envPending'.
 openDefinitionInEnv
-  :: QName -> [Term t] -> (Opened QName t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
+  :: QName -> [Term t] -> (Opened QName t -> TC t (Env t) s a)
+  -> TC t (Env t) s a
 openDefinitionInEnv name args cont = do
   env <- ask
   -- We can open a definition only when the context is empty, and there
   -- is one block.
   case env of
-    ElabEnv (block : blocks) C0 -> do
+    Env (block : blocks) C0 -> do
       let block' = block & blockOpened . at name ?~ args
-      magnifyTC (const (ElabEnv (block' : blocks) C0)) $ cont $ Opened name args
+      magnifyTC (const (Env (block' : blocks) C0)) $ cont $ Opened name args
     _ ->
       __IMPOSSIBLE__
 
-openDefinitionInEnv_ :: (IsTerm t) => QName  -> (Opened QName t -> TC t (ElabEnv t) s a) -> TC t (ElabEnv t) s a
+-- | Open a definition using the arguments variables in 'elabCtx' as arguments.
+openDefinitionInEnv_
+  :: (IsTerm t)
+  => QName -> (Opened QName t -> TC t (Env t) s a)
+  -> TC t (Env t) s a
 openDefinitionInEnv_ n cont = do
-  args <- mapM var . ctxVars =<< asks elabEnvCtx
+  args <- mapM var . ctxVars =<< asks envCtx
   openDefinitionInEnv n args cont
 
-startBlock :: TC t (ElabEnv t) s a -> TC t (ElabEnv t) s a
+-- | Pushes a new block on 'envBlocks', using the current 'envPending'.
+startBlock :: TC t (Env t) s a -> TC t (Env t) s a
 startBlock cont = do
-  ElabEnv blocks ctx <- ask
-  let env' = ElabEnv (Block ctx HMS.empty : blocks) C0
+  Env blocks ctx <- ask
+  let env' = Env (Block ctx HMS.empty : blocks) C0
   magnifyTC (const env') cont
 
-extendEnv_ :: (Name, Type t) -> TC t (ElabEnv t) s a -> TC t (ElabEnv t) s a
+extendEnv_ :: (Name, Type t) -> TC t (Env t) s a -> TC t (Env t) s a
 extendEnv_ type_ = extendEnv (C0 :< type_)
 
-extendEnv :: Ctx t -> TC t (ElabEnv t) s a -> TC t (ElabEnv t) s a
-extendEnv ctx = magnifyTC (over eeCtx (<> ctx))
+-- | Appends the given 'Ctx' to the current 'envPending'.
+extendEnv :: Ctx t -> TC t (Env t) s a -> TC t (Env t) s a
+extendEnv ctx = magnifyTC (over envPending (<> ctx))
 
+-- | Adds a meta-variable using the current 'envCtx' as context.
 addMetaInEnv :: (IsTerm t) => Type t -> ElabM t (Term t)
 addMetaInEnv type_ = do
-  ctx <- asks elabEnvCtx
+  ctx <- asks envCtx
   addMetaInCtx ctx type_
 
+-- | Looks up a name in the current 'envCtx'.
 lookupName
   :: (IsTerm t) => Name -> ElabM t (Maybe (Var, Type t))
 lookupName n = do
-  ctx <- asks elabEnvCtx
+  ctx <- asks envCtx
   ctxLookupName n ctx
 
 -- Elaboration
@@ -150,7 +162,7 @@ lookupName n = do
 --   @constr@ is solved, then @t@ is well typed and @t@ and @t′@ are
 --   equivalent (clarify equivalent).
 elaborate
-  :: (IsTerm t) => Type t -> SA.Expr -> TC t (ElabEnv t) s (Term t, Constraints t)
+  :: (IsTerm t) => Type t -> SA.Expr -> TC t (Env t) s (Term t, Constraints t)
 elaborate type_ absT = do
   env <- ask
   let msg = do
@@ -161,7 +173,7 @@ elaborate type_ absT = do
     debug "constraints" $ PP.list <$> mapM prettyM constrs
     return (t, constrs)
 
-type ElabM t = TC t (ElabEnv t) (Constraints t)
+type ElabM t = TC t (Env t) (Constraints t)
 
 writeConstraint :: Constraint t -> ElabM t ()
 writeConstraint con' = modify (con' :)
@@ -170,7 +182,7 @@ expect :: IsTerm t => Type t -> Type t -> Term t -> ElabM t (Term t)
 expect type_ type' u = do
   t <- addMetaInEnv type_
   env <- ask
-  writeConstraint $ JmEq (elabEnvCtx env) type_ t type' u
+  writeConstraint $ JmEq (envCtx env) type_ t type' u
   return t
 
 elaborate'

@@ -44,17 +44,19 @@ L.makeLenses ''CheckState
 initCheckState :: (IsTerm t) => IO (CheckState t)
 initCheckState = CheckState <$> initSolveState
 
-type CheckM t = TC t (ElabEnv t) (CheckState t)
+type CheckM t = TC t (Env t) (CheckState t)
 type CCheckM t = forall b. CheckM t b -> CheckM t b
 
 -- Decls
 ------------------------------------------------------------------------
 
+-- | Here we don't use continuations because we don't want the debugging
+-- output to be nested across declarations.
 checkDecl
   :: (IsTerm t)
-  => ElabEnv t
+  => Env t
   -> SA.Decl
-  -> TC t r (CheckState t) (ElabEnv t)
+  -> TC t r (CheckState t) (Env t)
 checkDecl env decl = do
   let cont = ask
   magnifyTC (const env) $ do
@@ -71,7 +73,7 @@ checkDecl env decl = do
         SA.Import modu args -> checkImport modu args cont
         SA.Open modu        -> checkOpen modu cont
 
-checkDecls :: (IsTerm t) => ElabEnv t -> [SA.Decl] -> TC t r (CheckState t) (ElabEnv t)
+checkDecls :: (IsTerm t) => Env t -> [SA.Decl] -> TC t r (CheckState t) (Env t)
 checkDecls env [] = do
   return env
 checkDecls env (decl : decls) = do
@@ -85,7 +87,7 @@ addConstantAndOpen
   -> Type t
   -> CCheckM t
 addConstantAndOpen f name type_ cont = do
-  tel <- asks elabEnvTel
+  tel <- asks envTel
   f name tel type_
   openDefinitionInEnv_ name $ \_ -> cont
 
@@ -101,7 +103,7 @@ checkExpr synT type_ = do
   debugBracket "checkExpr" msg $ do
     (t, constrs) <- elaborate type_ synT
     zoomTC csSolveState $ mapM_ solve constrs
-    ctx <- asks elabEnvCtx
+    ctx <- asks envCtx
     check ctx t type_
     return t
 
@@ -121,7 +123,7 @@ checkData (SA.Sig name absType) cont = do
     -- Check that at the end of the type there is a 'Set'
     (tel, endType) <- unrollPi type_
     extendEnv (telToCtx tel) $ do
-      ctx <- asks elabEnvCtx
+      ctx <- asks envCtx
       definitionallyEqual ctx set endType set
     addConstantAndOpen addData name type_ cont
 
@@ -131,7 +133,7 @@ checkRecord (SA.Sig name absType) cont = do
     -- Check that at the end of the type there is a 'Set'
     (tel, endType) <- unrollPi type_
     extendEnv (telToCtx tel) $ do
-      ctx <- asks elabEnvCtx
+      ctx <- asks envCtx
       definitionallyEqual ctx set endType set
     -- We add it as a postulate first, because we don't know what the
     -- datacon is yet.
@@ -181,7 +183,7 @@ checkDataCon appliedTyConType (SA.Sig dataCon synDataConType) = do
     (vsTel, endType) <- unrollPi dataConType
     extendEnv (telToCtx vsTel) $ do
       appliedTyConType' <- weaken_ (telLength vsTel) appliedTyConType
-      ctx <- asks elabEnvCtx
+      ctx <- asks envCtx
       definitionallyEqual ctx set appliedTyConType' endType
     return (dataCon, telLength vsTel, dataConType)
 
@@ -286,7 +288,7 @@ checkClause funType (SA.Clause synPats synClauseBody wheres) = do
   -- the patterns have left us with.
   checkPatterns synPats funType $ \pats clauseType -> startBlock $ do
     let msg = do
-          ctxDoc <- prettyM =<< asks elabEnvCtx
+          ctxDoc <- prettyM =<< asks envCtx
           return $
             "context:" //> ctxDoc $$
             "clause:" //> PP.pretty synClauseBody
@@ -393,7 +395,7 @@ checkModule (SA.Module moduleName pars0 exports decls) cont = do
         "exports:" //> PP.pretty exports
   debugBracket_ "checkModule" msg $ do
     module_ <- go pars0 C0
-    tel <- asks elabEnvTel
+    tel <- asks envTel
     addModule moduleName tel module_
     openDefinitionInEnv_ moduleName $ \_ -> cont
   where
@@ -459,7 +461,7 @@ checkFile' _ decls0 ret = do
     s <- initCheckState
     -- For the time being we always start a dummy block here
     (mbErr, sig, _) <- runTC sigEmpty () s $ do
-      magnifyTC (const (initElabEnv C0)) $ checkModule decls0 $ return ()
+      magnifyTC (const (initEnv C0)) $ checkModule decls0 $ return ()
       checkSignature
     ret sig $ either Just (\() -> Nothing) mbErr
   where
