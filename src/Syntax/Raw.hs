@@ -244,3 +244,6 @@ tokenLength t = length $ prToken t
 
 instance PP.Pretty QName where
   pretty = PP.string . printTree
+
+instance PP.Pretty Decl where
+  pretty = PP.string . printTree

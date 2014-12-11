@@ -213,6 +213,7 @@ import           Prelude hiding (length)
 import           Control.Monad.Reader (MonadReader, ReaderT, runReaderT, local)
 import           Control.Monad.Except (MonadError, throwError)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import qualified Control.Lens as L
 import           Control.Lens (at)
 import           Data.List.NonEmpty (NonEmpty(..), (<|))
@@ -235,16 +236,16 @@ type NumberOfArguments = Natural
 type LocalNames = Map.Map Name NameInfo
 type ExportedNames = Map.Map Name NameInfo
 
--- -- | Modules that should be auto-imported when the containing module is.
--- -- They are not prefixed by the containing module name. The 'Name's
--- -- contained should be a subset of the keys in 'Exports'.
--- type AutoImportModules = Set.Set Name
+-- | Modules that should be auto-imported when the containing module is.
+-- They are not prefixed by the containing module name. The 'Name's
+-- contained should be a subset of the keys in 'Exports'.
+type AutoImportModules = Set.Set Name
 
 data NameInfo
   = DefName Hiding
   | ConName Hiding NumberOfArguments
   | ProjName Hiding
-  | ModuleName Hiding ExportedNames
+  | ModuleName Hiding ExportedNames AutoImportModules
   deriving (Show)
 
 instance Pretty NameInfo where
@@ -252,7 +253,8 @@ instance Pretty NameInfo where
     DefName hidden -> "DefName" <+> pretty  hidden
     ConName hidden args -> "ConName" <+> pretty hidden <+> pretty args
     ProjName hidden -> "ProjName" <+> pretty hidden
-    ModuleName hidden names -> "ModuleName" <+> pretty hidden $$ "exports:" //> pretty names
+    ModuleName hidden names autoImports ->
+      "ModuleName" <+> pretty hidden <+> pretty autoImports $$ "exports:" //> pretty names
 
 -- | Useful type synonym to indicate that a name is fully qualified.
 type FullyQName = QName
@@ -276,6 +278,9 @@ data NameSpace = NameSpace
   { _nsModule :: FullyQName
   , _nsLocalNames :: LocalNames
     -- ^ The definitions defined in some module.
+  , _nsAutoImports :: AutoImportModules
+    -- ^ The modules in the current module that should be automatically
+    -- imported.
   }
 
 makeLenses ''Scope
@@ -288,7 +293,7 @@ instance Pretty ScopeError where
   pretty (ScopeError pos err) = pretty pos <> ":" <+> PP.text err
 
 initNameSpace :: FullyQName -> NameSpace
-initNameSpace qn = NameSpace qn Map.empty
+initNameSpace qn = NameSpace qn Map.empty Set.empty
 
 initScope :: FullyQName -> Scope
 initScope n = Scope Map.empty (initNameSpace n) [] Map.empty Map.empty
@@ -445,7 +450,7 @@ lookupQName (QName n []) = do
             Just (qn, ni) -> return $ ItsANameInfo qn ni
             Nothing -> return NotFound
 lookupQName (QName n (m:ms)) = do
-  (moduleQn, _, names) <- resolveImportedModule $ QName m ms
+  (moduleQn, _, names, _) <- resolveImportedModule $ QName m ms
   case Map.lookup n names of
     Nothing -> return NotFound
     Just ni -> return $ ItsANameInfo (qNameCons n moduleQn) ni
@@ -458,12 +463,12 @@ importModule qn hidden names ret = do
     Just _ -> scopeError qn $ render qn ++ " already imported"
     Nothing -> local (L.set (sImportedModules . at qn) (Just (hidden, names))) ret
 
-resolveModule :: QName -> Check (FullyQName, Hiding, ExportedNames)
+resolveModule :: QName -> Check (FullyQName, Hiding, ExportedNames, AutoImportModules)
 resolveModule m = do
   lkup <- lookupQName m
   case lkup of
     NotFound -> notInScopeError m
-    ItsANameInfo qn (ModuleName hidden names) -> return (qn, hidden, names)
+    ItsANameInfo qn (ModuleName hidden names autoImports) -> return (qn, hidden, names, autoImports)
     _ -> scopeError m $ render m ++ " should be a module"
 
 resolveCon :: QName -> Check (FullyQName, Hiding, NumberOfArguments)
@@ -474,13 +479,13 @@ resolveCon m = do
     ItsANameInfo qn (ConName hidden args) -> return (qn, hidden, args)
     _ -> scopeError m $ render m ++ " should be a data constructor"
 
-resolveImportedModule :: QName -> Check (FullyQName, Hiding, ExportedNames)
+resolveImportedModule :: QName -> Check (FullyQName, Hiding, ExportedNames, AutoImportModules)
 resolveImportedModule n = do
-  (qn, hidden, names) <- resolveModule n
+  (qn, hidden, names, autoImports) <- resolveModule n
   isImported <- isJust <$> L.view (sImportedModules . at qn)
   unless isImported $
     scopeError n $ render n ++ " should be imported"
-  return (qn, hidden, names)
+  return (qn, hidden, names, autoImports)
 
 ------------------------------------------------------------------------
 -- Scope checking
@@ -490,7 +495,7 @@ scopeCheckModule :: C.Module -> Either PP.Doc Module
 scopeCheckModule (C.Module (C.Name ((l, c), s)) pars ds) =
   case evalCheck (initScope q) (checkModule' q pars ds return) of
     Left err -> Left $ pretty err
-    Right x  -> Right x
+    Right (x, _) -> Right x
   where
     q = QName (Name (SrcLoc l c) s) []
 
@@ -505,14 +510,14 @@ scopeCheckFile fp = do
 
 -- | Scope checks a module.  Returns the generated module, and possibly
 -- some declarations containing auto-imports and the like.
-checkModule :: C.Module -> CCheck Module
+checkModule :: C.Module -> CCheck (Module, [C.Decl])
 checkModule (C.Module name pars ds) ret = do
   name <- return $ mkName name
   -- Qualify the name of the module
   qname <- qualifyName name
   checkModule' qname pars ds ret
 
-checkModule' :: QName -> C.Params -> [C.Decl] -> CCheck Module
+checkModule' :: QName -> C.Params -> [C.Decl] -> CCheck (Module, [C.Decl])
 checkModule' qname@(QName name _) pars ds ret = do
   case isParamDecl pars of
     Just pars -> do
@@ -531,11 +536,18 @@ checkModule' qname@(QName name _) pars ds ret = do
             -- parameters, and the declarations.
             definitions <- L.view $ sNameSpace . nsLocalNames
             let qdefinitions = map (`qNameCons` qname) $ Map.keys definitions
+            -- Store the auto imports
+            autoImports <- L.view $ sNameSpace . nsAutoImports
             return
-              ( ModuleName hidden definitions
+              ( ModuleName hidden definitions autoImports
               , Module qname tel qdefinitions ds
               )
-      bindLocalName name moduleInfo $ \_ -> ret module_
+      bindLocalName name moduleInfo $ \_ ->
+        if null pars
+          then -- Add it to the auto imports list, and return with the decl
+               local (over (sNameSpace . nsAutoImports) (Set.insert name)) $
+               ret (module_, [mkRawImportDecl (QName name [])])
+          else ret (module_, [])
     Nothing ->
       scopeError name "Bad module declaration"
 
@@ -615,23 +627,25 @@ checkDecls ds ret = case ds of
           return $ Clause ps body wheres
     checkDecls ds $ \ds -> ret (FunDef f clauses : ds)
   C.Module_ module_ : ds -> do
-    checkModule module_ $ \module_ -> do
-      checkDecls ds $ \ds -> do
+    checkModule module_ $ \(module_, moduleDs) -> do
+      checkDecls (moduleDs ++ ds) $ \ds -> do
         ret (Module_ module_ : ds)
   C.Import imp : ds -> do
     let (m, args) = case imp of
           C.ImportNoArgs m    -> (mkQName m, [])
           C.ImportArgs m args -> (mkQName m, args)
-    (qn, hidden, names) <- resolveModule m
+    (qn, hidden, names, autoImports) <- resolveModule m
     args <- insertImplicit (srcLoc m) hidden args
     args <- mapM checkExpr args
     -- Add the module to the set of imported modules
     importModule qn hidden names $ do
-      checkDecls ds $ \ds -> do
+      -- Import the modules to auto import
+      let autoImportsDecls = map (\n -> mkRawImportDecl (qNameCons n m)) $ Set.toList autoImports
+      checkDecls (autoImportsDecls ++ ds) $ \ds -> do
         ret (Import qn args : ds)
   C.Open m0 : ds -> do
     let m = mkQName m0
-    (m, _, exports) <- resolveImportedModule m
+    (m, _, exports, _) <- resolveImportedModule m
     let opened = [(n, qNameCons n m) | (n, _) <- Map.toList exports]
     bindOpenedNames opened $ do
       checkDecls ds $ \ds -> do
@@ -876,7 +890,7 @@ checkAppHead qn = case qn of
           ProjName n       -> return (IsProj x, n)
           ConName n a      -> return (IsCon x a, n)
           DefName n        -> return (Other $ Def x, n)
-          ModuleName _ _   -> scopeError x $ "Cannot use module name " ++ render x ++ " in term."
+          ModuleName{}     -> scopeError x $ "Cannot use module name " ++ render x ++ " in term."
 
 checkHiding :: C.Expr -> Check (Hiding, C.Expr)
 checkHiding e = case e of
@@ -955,17 +969,18 @@ cWild :: HasSrcLoc a => a -> C.Pattern
 cWild x = C.IdP (C.NotQual (C.Name ((l, c), "_")))
   where SrcLoc l c = srcLoc x
 
--- mkRawImportDecl :: QName -> C.Decl
--- mkRawImportDecl = C.Import . C.ImportNoArgs . toRawName
---   where
---     toRawName :: QName -> C.QName
---     toRawName (QName ns n) = go $ n : ns
---       where
---         unMkName (Name (SrcLoc l c) s) = C.Name ((l, c), s)
+mkRawImportDecl :: QName -> C.Decl
+mkRawImportDecl qn = let x = C.Import . C.ImportNoArgs . toRawName $ qn
+                     in trace (render x) x
+  where
+    toRawName :: QName -> C.QName
+    toRawName (QName n ns) = go $ n : ns
+      where
+        unMkName (Name (SrcLoc l c) s) = C.Name ((l, c), s)
 
---         go []       = __IMPOSSIBLE__
---         go [n]      = C.NotQual $ unMkName n
---         go (n : ns) = C.Qual (go ns) $ unMkName n
+        go []       = __IMPOSSIBLE__
+        go [n]      = C.NotQual $ unMkName n
+        go (n : ns) = C.Qual (go ns) $ unMkName n
 
 ------------------------------------------------------------------------
 --  HasSrcLoc instances

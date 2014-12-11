@@ -4,7 +4,6 @@ module One where
   postulate
     A : Set
     foo : A
-import One
 
 test1 : One.A
 test1 = One.foo
@@ -19,7 +18,6 @@ module Dummy where
 
   test3 : A
   test3 = foo
-import Dummy
 
 data List (A : Set) : Set
 data List A where
@@ -43,7 +41,6 @@ module Nat where
   append : Nat -> Nat -> Nat
   append zero n = n
   append (suc n) m = suc (append n m)
-import Nat
 
 sum : List Nat.Nat -> Nat.Nat
 sum = concat
@@ -74,9 +71,6 @@ module First' where
     module Third' where
       quux : B
       quux = bar foo
-import First'
-import First'.Second'
-import First'.Second'.Third'
 
 test3 : First'.Second'.B
 test3 = First'.Second'.Third'.quux
