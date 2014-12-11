@@ -74,3 +74,25 @@ module First' where
 
 test3 : First'.Second'.B
 test3 = First'.Second'.Third'.quux
+
+module DefEq (A : Set) (_ : (A -> A) -> A -> A) where
+  postulate foo : A
+
+module Dummy1 (A : Set) where
+  open import DefEq A (\f -> f)
+
+  bar : A
+  bar = foo
+
+module Dummy2 (A : Set) where
+  open import DefEq A (\f x -> f x)
+
+  bar : A
+  bar = foo
+
+module Dummy3 (A : Set) where
+  import Dummy1 A
+  import Dummy2 A
+
+  test : Dummy1.bar == Dummy2.bar
+  test = refl

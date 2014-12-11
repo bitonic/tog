@@ -4,6 +4,8 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Pretty () where
 
+import qualified Data.HashSet                     as HS
+
 import           Prelude.Extended
 import           Syntax
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
@@ -38,6 +40,9 @@ instance (PrettyM t (f QName t), PrettyM t (f Projection t)) => PrettyM t (Defin
     tyConDoc <- prettyM tyCon
     typeDoc <- prettyM =<< telPi pars type_
     return $ "projection" <+> tyConDoc $$> typeDoc
+  prettyM (Module (Contextual tel names)) = do
+    telDoc <- prettyM tel
+    return $ "module" <+> telDoc <+> PP.tupled (map PP.pretty (HS.toList names))
 
 instance PrettyM t (Clause t) where
   prettyM (Clause pats body) = do
