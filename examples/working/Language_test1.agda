@@ -16,7 +16,7 @@ module Language_test1 where
 ------------------------------------------------------------------------
 -- Prelude
 
-open import Prelude
+-- open import Prelude
 
 subst : {A : Set} {x y : A} (P : A -> Set) ->
         x == y -> P x -> P y
@@ -26,7 +26,7 @@ record Unit : Set
 record Unit where
   constructor tt
 
-open Unit
+-- open Unit
 
 record Sigma (A : Set) (B : A -> Set) : Set
 record Sigma A B where
@@ -35,7 +35,7 @@ record Sigma A B where
     fst : A
     snd : B fst
 
-open Sigma
+-- open Sigma
 
 ------------------------------------------------------------------------
 -- A universe

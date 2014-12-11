@@ -2,7 +2,6 @@
 entrypoints Module;
 entrypoints Expr;
 
-layout toplevel;
 layout "where";
 layout "field";
 layout "postulate";

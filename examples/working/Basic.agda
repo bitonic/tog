@@ -1,7 +1,7 @@
 
 module Basic where
 
-open import Prelude
+-- open import Prelude
 
 data List (A : Set) : Set
 data List A where
@@ -20,7 +20,7 @@ record Equiv {A} R where
     sym : (x : A) (y : A) -> R x y -> R y x
     trans : (x y z : A) -> R x y -> R y z -> R x z
 
-open Equiv
+-- open Equiv
 
 trans1 : {A : Set}{R : A -> A -> Set}{x y z : A} -> Equiv R -> R x y -> R y z -> R x z
 trans1 eq p q = trans eq _ _ _ p q

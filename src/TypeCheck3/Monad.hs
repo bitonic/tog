@@ -43,7 +43,6 @@ import qualified Control.Lens                     as L
 import           Control.Monad.State.Strict       (StateT(StateT), runStateT, MonadState(..))
 import           Control.Monad.Reader             (MonadReader(..), asks)
 import           Control.Monad.Except             (catchError)
-import qualified Data.HashSet                     as HS
 
 import           Prelude.Extended
 import           Instrumentation
