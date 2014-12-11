@@ -4,7 +4,6 @@ import           Prelude                          hiding (interact)
 import           Options.Applicative
 import           Options.Applicative.Types
 import           System.Exit                      (exitFailure)
-import qualified System.Console.Haskeline         as Haskeline
 import           Data.List.Split                  (splitOn)
 
 import           Instrumentation
@@ -14,9 +13,6 @@ import           Prelude.Extended
 import           Term
 import           TypeCheck3
 import           Syntax
-
--- Modules that we don't need, but should compile
-import           Term.Testing                     ()
 
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf
@@ -33,7 +29,9 @@ parseTypeCheckConf = Conf
         help "Select debug labels to print."
       )
   <*> switch
-      (long "stackTrace" <> short 's' <> help "Print debug output")
+      ( long "stackTrace" <> short 's' <>
+        help "Print a stack trace on error."
+      )
   <*> switch
       (long "quiet" <> short 'q' <> help "Do not print any output.")
   <*> switch
@@ -80,6 +78,10 @@ parseTypeCheckConf = Conf
       ( long "timeSections" <>
         help "Measure how much time is taken by each debug section"
       )
+  <*> switch
+      ( long "whnfEliminate" <>
+        help "Reduce term when eliminating a term"
+      )
 
 debugLabelsOption
   :: Mod OptionFields DebugLabels
@@ -94,60 +96,29 @@ parseMain :: Parser (IO ())
 parseMain =
   typeCheck
     <$> argument str (metavar "FILE")
-    <*> parseInteractive
     <*> parseTypeCheckConf
   where
-    parseInteractive =
-      switch
-      ( long "interactive" <> short 'i' <>
-        help "Start interpreter once the file is loaded."
-      )
-
-    typeCheck file interactive conf0 = do
-      conf <- if interactive && confDebug conf0
-        then do
-          putStrLn "-i incompatible with -d, disabling -d"
-          return $ confDisableDebug conf0
-        else return conf0
+    typeCheck file conf = do
       instrument conf $ do
-        checkFile file $ \(ts, mbErr) -> do
+        processFile file $ \_ mbErr -> do
           forM_ mbErr $ \err -> do
-            putStrLn (PP.render err)
-            unless interactive exitFailure
-          when interactive $
-            Haskeline.runInputT interactSettings (interact' ts)
+            silent <- confQuiet <$> readConf
+            unless silent $ putStrLn (PP.render err)
+            exitFailure
 
-    interactSettings = Haskeline.defaultSettings
-      { Haskeline.historyFile    = Just "~/.tog_history"
-      , Haskeline.autoAddHistory = True
-      }
-
-    interact' :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
-    interact' ts = do
-      mbS <- Haskeline.getInputLine "> "
-      forM_ mbS $ \s ->
-        case parseCommand ts s of
-          Left err -> do
-            lift $ putStrLn $ PP.render err
-            interact' ts
-          Right cmd -> do
-            (doc, ts') <- lift $ runCommand ts cmd
-            lift $ putStrLn $ PP.render doc
-            interact' ts'
-
-checkFile
+processFile
   :: FilePath
-  -> (forall t. (IsTerm t) => (TCState' t, Maybe PP.Doc) -> IO a)
+  -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a)
   -> IO a
-checkFile file ret = do
+processFile file ret = do
   mbErr <- runExceptT $ do
     s   <- lift $ readFile file
-    raw <- exceptShowErr "Parse" $ parseProgram s
-    exceptShowErr "Scope" $ scopeCheckProgram raw
+    raw <- exceptShowErr "Parse" $ parseModule s
+    exceptShowErr "Scope" $ scopeCheckModule raw
   case mbErr of
-    Left err  -> emptyTCState' $ \s -> ret (s, Just err)
-    Right int -> checkProgram int $ \(ts, mbErr') ->
-                 ret (ts, showError "Type" <$> mbErr')
+    Left err  -> ret (sigEmpty :: Signature Simple) (Just err)
+    Right int -> checkFile int $ \sig mbErr' ->
+                 ret sig (showError "Type" <$> mbErr')
   where
     showError errType err =
       PP.text errType <+> "error: " $$ PP.nest 2 err

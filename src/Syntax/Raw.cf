@@ -1,27 +1,34 @@
 
-entrypoints Program;
+entrypoints Module;
 entrypoints Expr;
 
-layout toplevel;
 layout "where";
 layout "field";
 layout "postulate";
 
-Prog. Program ::= "module" Name "where" "{" [Decl] "}";
+Module. Module ::= "module" Name Params "where" "{" [Decl] "}";
 
 position token Name ((letter | '_') (letter | digit | '-' | '\'' | '_')*) ;
 
+Qual.    QName ::= QName "." Name;
+NotQual. QName ::= Name;
+
 separator Decl ";";
 
-TypeSig.   Decl  ::= TypeSig;
-FunDef.    Decl  ::= Name [Pattern1] "=" Expr Where;
-Data.      Decl  ::= "data" Name Params DataBody;
-Record.    Decl  ::= "record" Name Params RecordBody;
-Open.      Decl  ::= "open" Name;
-Import.    Decl  ::= "open" "import" Name;
-Postulate. Decl  ::= "postulate" "{" [TypeSig] "}";
+TypeSig.    Decl  ::= TypeSig;
+FunDef.     Decl  ::= Name [Pattern1] "=" Expr Where;
+Data.       Decl  ::= "data" Name Params DataBody;
+Record.     Decl  ::= "record" Name Params RecordBody;
+Open.       Decl  ::= "open" QName;
+OpenImport. Decl  ::= "open" "import" Import;
+Import.     Decl  ::= "import" Import;
+Postulate.  Decl  ::= "postulate" "{" [TypeSig] "}";
+Module_.    Decl  ::= Module;
 
 separator TypeSig ";";
+
+ImportNoArgs. Import ::= QName;
+ImportArgs.   Import ::= QName [Arg];
 
 Sig. TypeSig ::= Name ":" Expr;
 
@@ -62,14 +69,14 @@ Eq.   Expr1 ::= Expr2 "==" Expr2;
 _.    Expr1 ::= Expr2;
 App.  Expr2 ::= [Arg];
 _.    Expr3 ::= "(" Expr ")";
-Id.   Expr3 ::= Name;
+Id.   Expr3 ::= QName;
 
 HArg. Arg ::= "{" Expr "}";
 Arg.  Arg ::= Expr3;
 separator nonempty Arg "";
 
 AppP.  Pattern  ::= Pattern Pattern1;
-IdP.   Pattern1 ::= Name;
+IdP.   Pattern1 ::= QName;
 HideP. Pattern1 ::= "{" Pattern "}";
 coercions Pattern 1;
 separator Pattern1 "";

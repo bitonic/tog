@@ -3,7 +3,8 @@ module Term.Impl.Hashed where
 import qualified Data.HashTable.IO                as HT
 import           System.IO.Unsafe                 (unsafePerformIO)
 
-import           Term
+import           Term.Types
+import           Term.Synonyms
 import           Term.Impl.Common
 import           Prelude.Extended
 

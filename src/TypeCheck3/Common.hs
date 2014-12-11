@@ -18,6 +18,7 @@ module TypeCheck3.Common
   ) where
 
 import           Prelude                          hiding (abs, pi)
+import qualified Data.HashSet                     as HS
 
 import           Instrumentation
 import           Prelude.Extended
@@ -28,24 +29,27 @@ import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           TypeCheck3.Monad
 
+#include "impossible.h"
+
 -- Errors
 ---------
 
 data CheckError t
     = ExpectingEqual (Type t)
     | ExpectingPi (Type t)
-    | ExpectingTyCon Name (Type t)
+    | ExpectingTyCon QName (Type t)
     | FreeVariableInEquatedTerm Meta [Elim t] (Term t) Var
-    | NameNotInScope Name
     | OccursCheckFailed Meta (Closed (Term t))
     | SpineNotEqual (Type t) [Elim t] (Type t) [Elim t]
     | TermsNotEqual (Type t) (Term t) (Type t) (Term t)
-    | PatternMatchOnRecord SA.Pattern Name -- Record type constructor
+    | PatternMatchOnRecord SA.Pattern QName -- Record type constructor
+    | MismatchingArgumentsForModule QName (Tel t) [SA.Expr]
+    | UnsolvedMetas MetaSet
 
-checkError :: (IsTerm t) => CheckError t -> TC t s a
+checkError :: (IsTerm t) => CheckError t -> TC_ t a
 checkError err = typeError =<< renderError err
 
-renderError :: (IsTerm t) => CheckError t -> TC t s PP.Doc
+renderError :: (IsTerm t) => CheckError t -> TC_ t PP.Doc
 renderError err =
   case err of
     TermsNotEqual type1 t1 type2 t2 -> do
@@ -78,10 +82,9 @@ renderError err =
     OccursCheckFailed mv t -> do
       tDoc <- prettyM t
       return $ "Attempt at recursive instantiation:" $$ PP.pretty mv <+> ":=" <+> tDoc
-    NameNotInScope name -> do
-      return $ "Name not in scope:" <+> PP.pretty name
     PatternMatchOnRecord synPat tyCon -> do
-      return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> PP.pretty tyCon
+      tyConDoc <- prettyM tyCon
+      return $ "Cannot have pattern" <+> PP.pretty synPat <+> "for record type" <+> tyConDoc
     ExpectingPi type_ -> do
       typeDoc <- prettyM type_
       return $ "Expecting a pi type, not:" //> typeDoc
@@ -89,8 +92,18 @@ renderError err =
       typeDoc <- prettyM type_
       return $ "Expecting an identity type, not:" //> typeDoc
     ExpectingTyCon tyCon type_ -> do
+      tyConDoc <- prettyM tyCon
       typeDoc <- prettyM type_
-      return $ "Expecting a" <+> PP.pretty tyCon <> ", not:" //> typeDoc
+      return $ "Expecting a" <+> tyConDoc <> ", not:" //> typeDoc
+    UnsolvedMetas mvs -> do
+      return $ "UnsolvedMetas" <+> PP.pretty (HS.toList mvs)
+    MismatchingArgumentsForModule n tel args -> do
+      telDoc <- prettyM tel
+      return $
+        "MismatchingArgumentsForModule" $$
+        "module:" //> PP.pretty n $$
+        "tel:" //> telDoc $$
+        "args:" //> PP.hsep (map PP.pretty args)
   where
     prettyVar = PP.pretty
 
@@ -100,9 +113,10 @@ renderError err =
 
 addMetaInCtx
   :: (IsTerm t)
-  => Ctx t -> Type t -> TC t s (Term t)
+  => Ctx t -> Type t -> TC_ t (Term t)
 addMetaInCtx ctx type_ = do
-  mv <- addMeta =<< ctxPi ctx type_
+  type' <- ctxPi ctx type_
+  mv <- addMeta type'
   ctxApp (meta mv []) ctx
 
 -- Telescope & context utils
@@ -111,7 +125,7 @@ addMetaInCtx ctx type_ = do
 -- | Useful just for debugging.
 extendContext
   :: (IsTerm t)
-  => Ctx (Type t) -> (Name, Type t) -> TC t s (Ctx (Type t))
+  => Ctx (Type t) -> (Name, Type t) -> TC_ t (Ctx (Type t))
 extendContext ctx type_ = do
   let ctx' = ctx :< type_
   debug "extendContext" $ prettyM ctx'
@@ -128,7 +142,7 @@ unrollPiWithNames
   -- ^ Type to unroll
   -> [Name]
   -- ^ Names to give to each parameter
-  -> TC t s (Tel (Type t), Type t)
+  -> TC_ t (Tel (Type t), Type t)
   -- ^ A telescope with accumulated domains of the pis and the final
   -- codomain.
 unrollPiWithNames type_ [] =
@@ -146,7 +160,7 @@ unrollPi
   :: (IsTerm t)
   => Type t
   -- ^ Type to unroll
-  -> TC t s (Tel (Type t), Type t)
+  -> TC_ t (Tel (Type t), Type t)
 unrollPi type_ = do
   typeView <- whnfView type_
   case typeView of
@@ -189,23 +203,25 @@ instance PrettyM t (Constraint t) where
 -- Clauses invertibility
 ------------------------
 
-termHead :: (IsTerm t) => t -> TC t s (Maybe TermHead)
+termHead :: (IsTerm t) => t -> TC_ t (Maybe TermHead)
 termHead t = do
   tView <- whnfView t
   case tView of
-    App (Def (DKName f)) _ -> do
-      fDef <- getDefinition_ f
+    App (Def opnd) _ -> do
+      let f = opndKey opnd
+      fDef <- getDefinition opnd
       return $ case fDef of
-        Constant _ Data{}         -> Just $ DefHead f
-        Constant _ Record{}       -> Just $ DefHead f
-        Constant _ Postulate{}    -> Just $ DefHead f
-        Constant _ Instantiable{} -> Nothing
-        DataCon{}                 -> Nothing
-        Projection{}              -> Nothing
+        Constant _ Data{}      -> Just $ DefHead f
+        Constant _ Record{}    -> Just $ DefHead f
+        Constant _ Postulate{} -> Just $ DefHead f
+        Constant _ Function{}  -> Nothing
+        DataCon{}              -> Nothing
+        Projection{}           -> Nothing
+        Module{}               -> __IMPOSSIBLE__
     App{} -> do
       return Nothing
     Con f _ ->
-      return $ Just $ DefHead f
+      return $ Just $ DefHead $ opndKey f
     Pi{} ->
       return $ Just $ PiHead
     Lam{} ->
@@ -218,7 +234,7 @@ termHead t = do
       return Nothing
 
 checkInvertibility
-  :: (IsTerm t) => [Closed (Clause t)] -> TC t s (Closed (Invertible t))
+  :: (IsTerm t) => [Closed (Clause t)] -> TC_ t (Closed (Invertible t))
 checkInvertibility = go []
   where
     go injClauses [] =

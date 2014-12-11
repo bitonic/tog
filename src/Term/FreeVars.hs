@@ -27,7 +27,7 @@ instance Monoid FreeVars where
     FreeVars (rigid1 `mappend` rigid2) (flex1 `mappend` flex2)
 
 freeVars
-  :: forall t m. (IsTerm t, MonadTerm t m)
+  :: forall t m. (MonadTerm t m)
   => t -> m FreeVars
 freeVars = go Just
   where
@@ -50,11 +50,14 @@ freeVars = go Just
         App (Var v) elims -> do
           let fvs = FreeVars (maybe Set.empty Set.singleton (strengthen' v)) Set.empty
           (fvs <>) <$> (mconcat <$> mapM (go strengthen') [t | Apply t <- elims])
-        App (Def (DKMeta _)) elims -> do
+        App (Def (Opened _ args)) elims -> do
+          fvs1 <- mconcat <$> mapM (go strengthen') args
+          let elims' = [t | Apply t <- elims]
+          fvs2 <- mconcat <$> mapM (go strengthen') elims'
+          return $ fvs1 <> fvs2
+        App (Meta _) elims -> do
           fvs <- mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
           return FreeVars{fvRigid = Set.empty, fvFlexible = fvAll fvs}
-        App (Def (DKName _)) elims ->
-          mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
         App J elims ->
           mconcat <$> mapM (go strengthen') [t | Apply t <- elims]
         Set ->

@@ -1,11 +1,11 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.Testing where
 
+{-
 import           Prelude                          hiding (pi)
 
 import           Prelude.Extended
 import           Term                             hiding (lam, pi, equal, set, refl, con, app)
-import           Term.Impl
 import qualified Term                             as Term
 import           Syntax
 import qualified Syntax.Abstract                  as SA
@@ -42,9 +42,9 @@ tm nms e0 = case e0 of
   SA.App h es -> do
     let h' = case h of
           SA.Var n -> case n `elemIndex` nms of
-                        Nothing -> Def $ DKName n
-                        Just i  -> Var $ mkVar n $ fromIntegral i
-          SA.Def n -> Def $ DKName n
+            Nothing -> Def $ Opened (DKName n) []
+            Just i  -> Var $ mkVar n $ fromIntegral i
+          SA.Def n -> Def $ Opened (DKName n) []
           SA.J _   -> J
     Term.app h' =<< mapM tmElim es
   where
@@ -89,3 +89,4 @@ instance IsString SA.Expr where
 
 instance IsString SA.Head where
   fromString s = SA.Var (fromString s)
+-}

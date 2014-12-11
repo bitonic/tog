@@ -25,17 +25,18 @@ data Conf = Conf
   , confDebugLabels             :: DebugLabels
   , confStackTrace              :: Bool
   , confQuiet                   :: Bool
-  , confNoMetasSummary       :: Bool
-  , confMetasReport          :: Bool
-  , confMetasOnlyUnsolved    :: Bool
+  , confNoMetasSummary          :: Bool
+  , confMetasReport             :: Bool
+  , confMetasOnlyUnsolved       :: Bool
   , confNoProblemsSummary       :: Bool
   , confProblemsReport          :: Bool
-  , confCheckMetaConsistency :: Bool
+  , confCheckMetaConsistency    :: Bool
   , confFastGetAbsName          :: Bool
   , confDisableSynEquality      :: Bool
   , confDontNormalizePP         :: Bool
   , confWhnfApplySubst          :: Bool
   , confTimeSections            :: Bool
+  , confWhnfEliminate           :: Bool
   }
 
 data DebugLabels
@@ -59,7 +60,7 @@ instance Monoid DebugLabels where
   DLSome xs `mappend` DLSome ys = DLSome (xs ++ ys)
 
 defaultConf :: Conf
-defaultConf = Conf "S" "Simple" mempty False False False False False False False False False False False False False
+defaultConf = Conf "S" "Simple" mempty False False False False False False False False False False False False False False
 
 {-# NOINLINE confRef #-}
 confRef :: IORef (Maybe Conf)

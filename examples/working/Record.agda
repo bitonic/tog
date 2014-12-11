@@ -1,7 +1,7 @@
 {-# OPTIONS --type-in-type #-}
 module Record where
 
-open import Prelude
+-- open import Prelude
 
 record Sigma (A : Set)(B : A -> Set) : Set
 record Sigma A B where
@@ -10,7 +10,7 @@ record Sigma A B where
     fst : A
     snd : B fst
 
-open Sigma
+-- open Sigma
 
 data Unit : Set
 data Unit where

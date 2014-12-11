@@ -18,7 +18,11 @@ module PrettyPrint
   , prettyApp
   , hang
   , indent
+  , tupled
   ) where
+
+import qualified Data.Map.Strict                  as Map.Strict
+import qualified Data.Set                         as Set
 
 import           Prelude.Extended
 import qualified Text.PrettyPrint.Leijen          as PP
@@ -136,6 +140,12 @@ instance Pretty a => Pretty (Maybe a) where
 
 instance Pretty Natural where
   pretty = text . show
+
+instance (Pretty k, Pretty v) => Pretty (Map.Strict.Map k v) where
+  pretty m = "Map.Strict.fromList" <+> pretty (Map.Strict.toList m)
+
+instance (Pretty v) => Pretty (Set.Set v) where
+  pretty s = "Set.fromList" <+> pretty (Set.toList s)
 
 prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
 prettyApp _ h []   = h

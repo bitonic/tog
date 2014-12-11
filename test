@@ -1,0 +1,25 @@
+#!/bin/bash
+
+tc="./dist/build/tog/tog"
+
+make $tc
+
+echo "== Files that should load"
+
+for f in examples/working/*.agda; do
+    echo $f
+    /usr/bin/time -f "%U" $tc -q --fastGetAbsName $@ $f
+    if [ "$?" -ne 0 ]; then
+        exit 1
+    fi
+done
+
+echo "== Files that shouldn't load"
+
+for f in examples/shouldfail/*.agda; do
+    echo $f
+    /usr/bin/time -f "%U" $tc -q --fastGetAbsName $@ $f
+    if [ "$?" -ne 1 ]; then
+        exit 1
+    fi
+done

@@ -1,7 +1,7 @@
 module Term.Impl.Simple (Simple) where
 
 import           Prelude.Extended
-import           Term
+import           Term.Types
 import           Term.Impl.Common
 import           System.IO.Unsafe                 (unsafePerformIO)
 

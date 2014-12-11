@@ -8,6 +8,8 @@ module Syntax.Abstract.Abs where
 
 import Prelude.Extended
 import PrettyPrint
+import qualified Syntax.Raw as C
+import qualified Data.Semigroup as Semigroup
 
 -- * Source locations.
 ------------------------------------------------------------------------
@@ -43,26 +45,44 @@ instance Ord Name where
 instance Hashable Name where
   hashWithSalt s (Name _ x) = hashWithSalt s x
 
+-- | A qualified name is a non-empty list of names.  We store them
+-- backwards, so that @M.N.f@ will be stored as @f :| [N, M]@.
+data QName = QName {qNameName :: !Name, qNameModule :: ![Name]}
+  deriving (Eq, Show, Ord, Read, Typeable, Generic)
+
+instance Hashable QName
+
+qNameCons :: Name -> QName -> QName
+qNameCons n (QName n' ns) = QName n (n' : ns)
+
+qNameSingleton :: Name -> QName
+qNameSingleton n = QName n []
+
 -- * Abstract syntax.
 ------------------------------------------------------------------------
 
-type Program = [Decl]
+data Module = Module QName Params [QName] [Decl]
+
+type Params = [(Name, Expr)]
 
 data Decl
   = TypeSig TypeSig
   | Postulate TypeSig
   | Data TypeSig
   | Record TypeSig
-  | FunDef  Name [Clause]
-  | DataDef Name [Name] [TypeSig]
-  | RecDef  Name [Name] Name [TypeSig]
+  | FunDef QName [Clause]
+  | DataDef QName [Name] [TypeSig]
+  | RecDef  QName [Name] QName [TypeSig]
+  | Module_ Module
+  | Import QName [Expr]
+  | Open QName
 
 data TypeSig = Sig
-  { typeSigName :: Name
+  { typeSigName :: QName
   , typeSigType :: Expr
   }
 
-data Clause = Clause [Pattern] Expr
+data Clause = Clause [Pattern] Expr [Decl]
 
 data Expr
   = Lam Name Expr
@@ -73,22 +93,22 @@ data Expr
   | Set SrcLoc
   | Meta SrcLoc
   | Refl SrcLoc
-  | Con Name [Expr]
+  | Con QName [Expr]
 
 data Head
   = Var Name
-  | Def Name
+  | Def QName
   | J SrcLoc
 
 data Elim
   = Apply Expr
-  | Proj Name
+  | Proj QName
   deriving Eq
 
 data Pattern
   = VarP Name
   | WildP SrcLoc
-  | ConP Name [Pattern]
+  | ConP QName [Pattern]
 
 -- | Number of variables bound by a list of pattern.
 patternsBindings :: [Pattern] -> Int
@@ -112,6 +132,9 @@ instance HasSrcLoc SrcLoc where
 instance HasSrcLoc Name where
   srcLoc (Name p _) = p
 
+instance HasSrcLoc Module where
+  srcLoc (Module x _ _ _) = srcLoc x
+
 instance HasSrcLoc Decl where
   srcLoc d = case d of
     TypeSig sig    -> srcLoc sig
@@ -121,6 +144,9 @@ instance HasSrcLoc Decl where
     FunDef x _     -> srcLoc x
     DataDef x _ _  -> srcLoc x
     RecDef x _ _ _ -> srcLoc x
+    Module_ x      -> srcLoc x
+    Open x         -> srcLoc x
+    Import x _     -> srcLoc x
 
 instance HasSrcLoc TypeSig where
   srcLoc (Sig x _) = srcLoc x
@@ -142,6 +168,9 @@ instance HasSrcLoc Head where
     Var x       -> srcLoc x
     Def x       -> srcLoc x
     J loc       -> loc
+
+instance HasSrcLoc QName where
+  srcLoc (QName n _) = srcLoc n
 
 instance HasSrcLoc Pattern where
   srcLoc p = case p of
@@ -182,6 +211,14 @@ instance Show Expr    where showsPrec = defaultShow
 instance Show Head    where showsPrec = defaultShow
 instance Show Pattern where showsPrec = defaultShow
 
+instance Pretty Module where
+  pretty (Module name pars exports decls) =
+    let parsDoc =
+          let ds = [parens (pretty n <+> ":" <+> pretty ty) | (n, ty) <- pars]
+          in if null ds then [] else [mconcat ds]
+    in hsep ([text "module", pretty name] ++ parsDoc ++ ["where"]) $$>
+       vcat (map pretty decls)
+
 instance Pretty Name where
   pretty (Name _ x) = text x
 
@@ -209,15 +246,28 @@ instance Pretty Decl where
       text "constructor" <+> pretty con $$
       text "field" $$>
       vcat (map pretty fs)
+    Module_ m ->
+      pretty m
+    Open m ->
+      hsep [text "open", pretty m]
+    Import m args ->
+      hsep (text "import" : pretty m : map (prettyPrec 4) args)
     where
-      prettyClause f (Clause ps e) =
+      prettyClause f (Clause ps e []) =
         group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e)
+      prettyClause f (Clause ps e wheres) =
+        group (hsep (pretty f : map pretty ps ++ ["="]) //> pretty e) $$
+        indent 2 ("where" $$ indent 2 (vcat (map pretty wheres)))
 
 instance Pretty Head where
   pretty h = case h of
     Var x       -> pretty x
     Def f       -> pretty f
     J _         -> text "J"
+
+instance Pretty QName where
+  pretty (QName n ns) =
+    mconcat $ intersperse "." $ map pretty $ reverse (n : ns)
 
 instance Pretty Pattern where
   pretty e = case e of
@@ -278,3 +328,77 @@ prettyTel = group . prs . reverse
     prs (b : bs) = group (prs bs) $$ pr b
 
     pr (x, e) = parens (pretty x <+> text ":" <+> pretty e)
+
+------------------------------------------------------------------------
+--  HasSrcLoc instances
+
+instance HasSrcLoc C.Name where
+  srcLoc (C.Name ((l, c), _)) = SrcLoc l c
+
+instance HasSrcLoc C.QName where
+  srcLoc (C.Qual n _) = srcLoc n
+  srcLoc (C.NotQual n) = srcLoc n
+
+instance HasSrcLoc C.Expr where
+  srcLoc e = case e of
+    C.Lam (x:_) _ -> srcLoc x
+    C.Lam [] _    -> error $ "nullary lambda: " ++ show e
+    C.Pi tel _    -> srcLoc tel
+    C.Fun a _     -> srcLoc a
+    C.Eq x _      -> srcLoc x
+    C.App (e:_)   -> srcLoc e
+    C.App []      -> error "empty application"
+    C.Id x        -> srcLoc x
+
+instance HasSrcLoc C.Arg where
+  srcLoc (C.Arg e)  = srcLoc e
+  srcLoc (C.HArg e) = srcLoc e
+
+instance HasSrcLoc C.Telescope where
+  srcLoc (C.Tel (b : _)) = srcLoc b
+  srcLoc tel = error $ "empty telescope: " ++ show tel
+
+instance HasSrcLoc C.Binding where
+  srcLoc (C.Bind  (x:_) _) = srcLoc x
+  srcLoc (C.HBind (x:_) _) = srcLoc x
+  srcLoc b = error $ "binding no names: " ++ show b
+
+instance HasSrcLoc C.TypeSig where
+  srcLoc (C.Sig x _) = srcLoc x
+
+instance HasSrcLoc C.Decl where
+  srcLoc d = case d of
+    C.Postulate (d:_)  -> srcLoc d
+    C.Postulate []     -> noSrcLoc
+    C.TypeSig x        -> srcLoc x
+    C.Data x _ _       -> srcLoc x
+    C.Record x _ _     -> srcLoc x
+    C.FunDef x _ _ _   -> srcLoc x
+    C.Open x           -> srcLoc x
+    C.Import x         -> srcLoc x
+    C.Module_ x        -> srcLoc x
+    C.OpenImport x     -> srcLoc x
+
+instance HasSrcLoc C.Import where
+  srcLoc x = case x of
+    C.ImportNoArgs x -> srcLoc x
+    C.ImportArgs x _ -> srcLoc x
+
+instance HasSrcLoc C.Pattern where
+  srcLoc p = case p of
+    C.IdP x    -> srcLoc x
+    C.AppP p _ -> srcLoc p
+    C.HideP p  -> srcLoc p
+
+instance HasSrcLoc C.Module where
+  srcLoc (C.Module x _ _) = srcLoc x
+
+instance HasSrcLoc C.Params where
+  srcLoc (C.ParamDecl (x : _)) = srcLoc x
+  srcLoc (C.ParamDef (x : _)) = srcLoc x
+  srcLoc _ = noSrcLoc
+
+instance HasSrcLoc C.HiddenName where
+  srcLoc (C.NotHidden n) = srcLoc n
+  srcLoc (C.Hidden n) = srcLoc n
+

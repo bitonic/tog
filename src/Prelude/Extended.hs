@@ -1,90 +1,105 @@
 {-# LANGUAGE CPP #-}
 module Prelude.Extended
-  ( Foldable
-  , Traversable
-  , Hashable(..)
-  , (<*>)
-  , Applicative
-  , (<>)
-  , (<$>)
-  , (>=>)
-  , (<=<)
-  , Typeable
-  , Generic
-  , fromMaybe
-  , pure
-  , join
-  , foldl'
-  , liftM
-  , when
-  , void
-  , guard
-  , mzero
-  , forM
-  , msum
-  , unless
-  , first
-  , forM_
-  , on
-  , sortBy
-  , groupBy
-  , isJust
-  , comparing
-  , traverse
+  ( module Prelude
+  , (!!)
+  , (***)
   , (<$)
-  , sequenceA
+  , (<$>)
+  , (<*>)
+  , (<=<)
+  , (<>)
+  , (<|>)
+  , (>=>)
+  , Applicative
+  , Bifunctor(..)
+  , Collect(..)
+  , Const(..)
+  , ExceptT(..)
+  , Foldable
+  , Generic
+  , Hashable(..)
+  , IsString(..)
+  , MaybeT(..)
+  , MonadIO(..)
+  , Monoid(..)
+  , Natural
+  , Traversable
+  , Typeable
+  , Validation(..)
+  , _1
+  , _2
+  , _3
+  , any
+  , ap
+  , catMaybes
+  , comparing
+  , eitherToValidation
+  , elemIndex
+  , fold
+  , foldl'
+  , foldlM
+  , for
+  , forM
+  , forM_
+  , fromMaybe
+  , groupBy
+  , guard
+  , hPutStr
+  , hPutStrLn
+  , intersperse
+  , isJust
+  , isNothing
+  , isPrefixOf
+  , join
+  , length
   , lift
+  , liftM
+  , mplus
+  , msum
+  , mzero
+  , on
+  , over
+  , pure
+  , replicate
+  , runExceptT
+  , sequenceA
+  , sortBy
+  , stderr
+  , strictDrop
+  , strictSplitAt
+  , throwE
+  , toList
   , trace
   , traceM
-  , (<|>)
-  , ap
-  , IsString(..)
-  , (***)
-  , second
-  , isNothing
-  , Monoid(..)
-  , mplus
-  , any
-  , MonadIO(..)
-  , foldlM
-  , fold
-  , intersperse
-  , isPrefixOf
-  , for
-  , elemIndex
-  , Natural
-  , length
-  , (!!)
-  , module Prelude
-  , replicate
-  , splitAt
-  , hPutStrLn
-  , hPutStr
-  , stderr
-
-  , toList
-  , Validation(..)
+  , traceShow
+  , traverse
+  , unless
   , validationToEither
-  , eitherToValidation
-  , MaybeT(..)
-  , ExceptT(..)
-  , runExceptT
-  , throwE
-  , L.over
-  , L._1
-  , L._2
-  , L._3
-  , Collect(..)
-  , catMaybes
+  , void
+  , when
+  , makeLenses
+  , use
+  , (%=)
+  , (.=)
+  , (^.)
+  , zoom
+  , Lens'
+  , Getter
   ) where
 
 import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)
-import qualified Prelude
 
 import Control.Applicative
-import Control.Arrow
+import Control.Arrow hiding (first, second)
+import Control.Lens
 import Control.Monad hiding (forM_, msum, forM)
 import Control.Monad.IO.Class
+import Control.Monad.Trans
+import Control.Monad.Trans.Except
+import Control.Monad.Trans.Maybe
+import Data.Bifunctor
+import Data.Collect
+import Data.Either.Validation
 import Data.Foldable
 import Data.Function
 import Data.Hashable
@@ -92,19 +107,13 @@ import Data.List hiding (foldl', any, length, (!!), replicate, splitAt)
 import Data.Maybe
 import Data.Monoid
 import Data.Ord
+import Data.String
 import Data.Traversable
 import Data.Typeable
-import GHC.Generics
-import Control.Monad.Trans
 import Debug.Trace
-import Data.String
+import GHC.Generics
 import Numeric.Natural
 import System.IO
-import Data.Either.Validation
-import Control.Monad.Trans.Maybe
-import Control.Monad.Trans.Except
-import qualified Control.Lens as L
-import Data.Collect
 
 #if __GLASGOW_HASKELL__ < 708
 traceM :: (Monad m) => String -> m ()
@@ -121,7 +130,15 @@ length (_ : xs) = 1 + length xs
 []       !! _ = error "Prelude.Extended.!!: out of bounds"
 
 replicate :: Natural -> a -> [a]
-replicate n = Prelude.replicate (fromIntegral n)
+replicate 0 _ = []
+replicate n x = x : replicate (n-1) x
 
-splitAt :: Natural -> [a] -> ([a], [a])
-splitAt n = Prelude.splitAt (fromIntegral n)
+strictSplitAt :: Natural -> [a] -> ([a], [a])
+strictSplitAt 0 xs       = ([], xs)
+strictSplitAt _ []       = error "strictSplitAt: list too short"
+strictSplitAt n (x : xs) = let (l, r) = strictSplitAt (n-1) xs in (x : l, r)
+
+strictDrop :: Natural -> [a] -> [a]
+strictDrop 0 xs       = xs
+strictDrop _ []       = error "strictDrop: list too short"
+strictDrop n (_ : xs) = strictDrop (n-1) xs

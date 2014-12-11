@@ -2,12 +2,28 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Elaborate
-  ( elaborate
+  ( -- * 'Env'
+    Block
+  , Env
+  , initEnv
+  , envCtx
+  , envTel
+  , extendEnv
+  , extendEnv_
+  , getOpenedDefinition
+  , openDefinitionInEnv
+  , openDefinitionInEnv_
+  , startBlock
+    -- * Elaboration
+  , elaborate
   ) where
 
+import           Control.Lens                     ((&), at, (?~))
 import           Control.Monad.State              (modify)
+import qualified Data.HashMap.Strict              as HMS
 
 import           Instrumentation
+import           Syntax
 import           Prelude.Extended
 import qualified Syntax.Abstract                  as SA
 import           Term
@@ -16,7 +32,129 @@ import           TypeCheck3.Monad
 import           PrettyPrint                      (($$), (//>))
 import qualified PrettyPrint                      as PP
 
-type ElabM t = TC t (Constraints t)
+#include "impossible.h"
+
+-- Elaboration environment
+------------------------------------------------------------------------
+
+data Block t = Block
+  { _blockCtx    :: !(Ctx t)
+  , _blockOpened :: !(HMS.HashMap QName [Term t])
+    -- ^ Stores arguments to opened things.
+  }
+
+makeLenses ''Block
+
+instance PrettyM t (Block t) where
+  prettyM (Block ctx opened) = do
+    ctxDoc <- prettyM ctx
+    openedDoc <- prettyM $ HMS.toList opened
+    return $
+      "Block" $$
+      "ctx:" //> ctxDoc $$
+      "opened:" //> openedDoc
+
+-- | The environment we do the elaboration is a series of 'Block's plus
+-- a dangling context at the end.
+data Env t = Env
+  { _envBlocks  :: ![Block t]
+  , _envPending :: !(Ctx t)
+  }
+
+makeLenses ''Env
+
+instance PrettyM t (Env t) where
+  prettyM (Env blocks ctx) = do
+    blocksDoc <- prettyM blocks
+    ctxDoc <- prettyM ctx
+    return $
+      "Env" $$
+      "blocks:" //> blocksDoc $$
+      "pending:" //> ctxDoc
+
+initEnv :: Ctx t -> Env t
+initEnv ctx = Env [Block ctx HMS.empty] C0
+
+envCtx :: Env t -> Ctx t
+envCtx (Env blocks ctx) = mconcat $ reverse $ ctx : map _blockCtx blocks
+
+envTel :: Env t -> Tel t
+envTel (Env blocks ctx) = mconcat $ map ctxToTel $ reverse $ ctx : map _blockCtx blocks
+
+getOpenedDefinition
+  :: (IsTerm t) => QName -> TC t (Env t) s (Opened QName t, Definition Opened t)
+getOpenedDefinition name0 = do
+  args <- getOpenedArgs name0
+  sig <- askSignature
+  def' <- openDefinition (sigGetDefinition sig name0) args
+  return (Opened name0 args, def')
+  where
+    -- | Get the arguments of an opened name.
+    getOpenedArgs name = do
+      env <- ask
+      go (ctxLength (env^.envPending)) (env^.envBlocks)
+      where
+        go _ [] = do
+          __IMPOSSIBLE__
+        go n (block : blocks) = do
+          case HMS.lookup name (block^.blockOpened) of
+            Nothing   -> go (n + ctxLength (block^.blockCtx)) blocks
+            Just args -> weaken_ n args
+
+-- | Open a definition with the given arguments.  Must be done in an
+-- empty 'envPending'.
+openDefinitionInEnv
+  :: QName -> [Term t] -> (Opened QName t -> TC t (Env t) s a)
+  -> TC t (Env t) s a
+openDefinitionInEnv name args cont = do
+  env <- ask
+  -- We can open a definition only when the context is empty, and there
+  -- is one block.
+  case env of
+    Env (block : blocks) C0 -> do
+      let block' = block & blockOpened . at name ?~ args
+      magnifyTC (const (Env (block' : blocks) C0)) $ cont $ Opened name args
+    _ ->
+      __IMPOSSIBLE__
+
+-- | Open a definition using the arguments variables in 'elabCtx' as arguments.
+openDefinitionInEnv_
+  :: (IsTerm t)
+  => QName -> (Opened QName t -> TC t (Env t) s a)
+  -> TC t (Env t) s a
+openDefinitionInEnv_ n cont = do
+  args <- mapM var . ctxVars =<< asks envCtx
+  openDefinitionInEnv n args cont
+
+-- | Pushes a new block on 'envBlocks', using the current 'envPending'.
+startBlock :: TC t (Env t) s a -> TC t (Env t) s a
+startBlock cont = do
+  Env blocks ctx <- ask
+  let env' = Env (Block ctx HMS.empty : blocks) C0
+  magnifyTC (const env') cont
+
+extendEnv_ :: (Name, Type t) -> TC t (Env t) s a -> TC t (Env t) s a
+extendEnv_ type_ = extendEnv (C0 :< type_)
+
+-- | Appends the given 'Ctx' to the current 'envPending'.
+extendEnv :: Ctx t -> TC t (Env t) s a -> TC t (Env t) s a
+extendEnv ctx = magnifyTC (over envPending (<> ctx))
+
+-- | Adds a meta-variable using the current 'envCtx' as context.
+addMetaInEnv :: (IsTerm t) => Type t -> ElabM t (Term t)
+addMetaInEnv type_ = do
+  ctx <- asks envCtx
+  addMetaInCtx ctx type_
+
+-- | Looks up a name in the current 'envCtx'.
+lookupName
+  :: (IsTerm t) => Name -> ElabM t (Maybe (Var, Type t))
+lookupName n = do
+  ctx <- asks envCtx
+  ctxLookupName n ctx
+
+-- Elaboration
+------------------------------------------------------------------------
 
 -- | Pre: In @elaborate Γ τ t@, @Γ ⊢ τ : Set@.
 --
@@ -24,22 +162,32 @@ type ElabM t = TC t (Constraints t)
 --   @constr@ is solved, then @t@ is well typed and @t@ and @t′@ are
 --   equivalent (clarify equivalent).
 elaborate
-  :: (IsTerm t) => Ctx t -> Type t -> SA.Expr -> TC t s (Term t, Constraints t)
-elaborate ctx type_ absT =
-  nestTC [] $ elaborate' ctx type_ absT
+  :: (IsTerm t) => Type t -> SA.Expr -> TC t (Env t) s (Term t, Constraints t)
+elaborate type_ absT = do
+  env <- ask
+  let msg = do
+        envDoc <- prettyM env
+        return $ "env:" //> envDoc
+  debugBracket "elaborate" msg $ do
+    (t, constrs) <- magnifyStateTC (const []) $ (,) <$> elaborate' type_ absT <*> get
+    debug "constraints" $ PP.list <$> mapM prettyM constrs
+    return (t, constrs)
+
+type ElabM t = TC t (Env t) (Constraints t)
 
 writeConstraint :: Constraint t -> ElabM t ()
 writeConstraint con' = modify (con' :)
 
-expect :: IsTerm t => Ctx t -> Type t -> Type t -> Term t -> ElabM t (Term t)
-expect ctx type_ type' u = do
-  t <- addMetaInCtx ctx type_
-  writeConstraint $ JmEq ctx type_ t type' u
+expect :: IsTerm t => Type t -> Type t -> Term t -> ElabM t (Term t)
+expect type_ type' u = do
+  t <- addMetaInEnv type_
+  env <- ask
+  writeConstraint $ JmEq (envCtx env) type_ t type' u
   return t
 
 elaborate'
-  :: (IsTerm t) => Ctx t -> Type t -> SA.Expr -> ElabM t (Term t)
-elaborate' ctx type_ absT = atSrcLoc absT $ do
+  :: (IsTerm t) => Type t -> SA.Expr -> ElabM t (Term t)
+elaborate' type_ absT = atSrcLoc absT $ do
   let msg = do
         typeDoc <- prettyM type_
         let absTDoc = PP.pretty absT
@@ -47,92 +195,96 @@ elaborate' ctx type_ absT = atSrcLoc absT $ do
           "type:" //> typeDoc $$
           "t:" //> absTDoc
   debugBracket "elaborate" msg $ do
-    let expect_ = expect ctx type_
+    let expect_ = expect type_
     case absT of
       SA.Set _ -> do
         expect_ set set
       SA.Pi name synDom synCod -> do
-        dom <- elaborate' ctx set synDom
-        cod <- elaborate' (ctx :< (name, dom)) set synCod
+        dom <- elaborate' set synDom
+        cod <- extendEnv_ (name, dom) $ elaborate' set synCod
         t <- pi dom cod
         expect_ set t
       SA.Fun synDom synCod -> do
-        elaborate' ctx type_ (SA.Pi "_" synDom synCod)
+        elaborate' type_ (SA.Pi "_" synDom synCod)
       SA.Meta _ -> do
-        mvT <- addMetaInCtx ctx type_
+        mvT <- addMetaInEnv type_
         return mvT
       SA.Equal synType synT1 synT2 -> do
-        type' <- elaborate' ctx set synType
-        t1 <- elaborate' ctx type' synT1
-        t2 <- elaborate' ctx type' synT2
+        type' <- elaborate' set synType
+        t1 <- elaborate' type' synT1
+        t2 <- elaborate' type' synT2
         t <- equal type' t1 t2
         expect_ set t
       SA.Lam name synBody -> do
-        dom <- addMetaInCtx ctx set
-        let ctx' = ctx :< (name, dom)
-        cod <- addMetaInCtx ctx' set
-        body <- elaborate' ctx' cod synBody
+        dom <- addMetaInEnv set
+        (cod, body) <- extendEnv_ (name, dom) $ do
+          cod <- addMetaInEnv set
+          body <- elaborate' cod synBody
+          return (cod, body)
         type' <- pi dom cod
         t <- lam body
         expect_ type' t
       SA.Refl _ -> do
-        eqType <- addMetaInCtx ctx set
-        t1 <- addMetaInCtx ctx eqType
+        eqType <- addMetaInEnv set
+        t1 <- addMetaInEnv eqType
         type' <- equal eqType t1 t1
         expect_ type' refl
-      SA.Con dataCon synArgs -> do
-        DataCon tyCon _ tyConParsTel dataConType <- getDefinition_ dataCon
-        tyConType <- definitionType =<< getDefinition_ tyCon
-        tyConArgs <- fillArgsWithMetas ctx tyConType
-        appliedDataConType <-  telDischarge tyConParsTel dataConType tyConArgs
-        dataConArgs <- elaborateDataConArgs ctx appliedDataConType synArgs
-        type' <- defName tyCon $ map Apply tyConArgs
+      SA.Con dataCon0 synArgs -> do
+        (dataCon, DataCon tyCon _ dataConType) <- getOpenedDefinition dataCon0
+        tyConType <- definitionType =<< getDefinition tyCon
+        tyConArgs <- fillArgsWithMetas tyConType
+        appliedDataConType <- openContextual dataConType tyConArgs
+        dataConArgs <- elaborateDataConArgs appliedDataConType synArgs
+        type' <- def tyCon $ map Apply tyConArgs
         t <- con dataCon dataConArgs
         expect_ type' t
       SA.App h elims -> do
-        elaborateApp' ctx type_ h elims
+        elaborateApp' type_ h elims
 
 -- | Takes a telescope in the form of a Pi-type and replaces all it's
 -- elements with metavariables.
-fillArgsWithMetas :: IsTerm t => Ctx t -> Type t -> ElabM t [Term t]
-fillArgsWithMetas ctx' type' = do
+fillArgsWithMetas :: IsTerm t => Type t -> ElabM t [Term t]
+fillArgsWithMetas type' = do
   typeView <- whnfView type'
   case typeView of
     Pi dom cod -> do
-      arg <- addMetaInCtx ctx' dom
+      arg <- addMetaInEnv dom
       cod' <- instantiate_ cod arg
-      (arg :) <$> fillArgsWithMetas ctx' cod'
+      (arg :) <$> fillArgsWithMetas cod'
     Set -> do
       return []
     _ -> do
-      fatalError "impossible.fillArgsWithMetas: bad type for tycon"
+      -- The tycon must end with Set
+      __IMPOSSIBLE__
 
 elaborateDataConArgs
-  :: (IsTerm t) => Ctx t -> Type t -> [SA.Expr] -> ElabM t [Term t]
-elaborateDataConArgs _ _ [] =
+  :: (IsTerm t) => Type t -> [SA.Expr] -> ElabM t [Term t]
+elaborateDataConArgs _ [] =
   return []
-elaborateDataConArgs ctx type_ (synArg : synArgs) = do
+elaborateDataConArgs type_ (synArg : synArgs) = do
   Pi dom cod <- whnfView type_
-  arg <- elaborate' ctx dom synArg
+  arg <- elaborate' dom synArg
   cod' <- instantiate_ cod arg
-  args <- elaborateDataConArgs ctx cod' synArgs
+  args <- elaborateDataConArgs cod' synArgs
   return (arg : args)
 
 inferHead
   :: (IsTerm t)
-  => Ctx t -> SA.Head -> ElabM t (Term t, Type t)
-inferHead ctx synH = atSrcLoc synH $ case synH of
+  => SA.Head -> ElabM t (Term t, Type t)
+inferHead synH = atSrcLoc synH $ case synH of
   SA.Var name -> do
-    mbV <-  ctxLookupName name ctx
+    mbV <- lookupName name
     case mbV of
       Nothing -> do
-        checkError $ NameNotInScope name
+        -- We have already scope checked
+        __IMPOSSIBLE__
       Just (v, type_) -> do
         h <- app (Var v) []
         return (h, type_)
-  SA.Def name -> do
-    type_ <- definitionType =<< getDefinition_ name
-    h <- defName name []
+  SA.Def name0 -> do
+    (name, def') <- getOpenedDefinition name0
+    type_ <- definitionType def'
+    h <- def name []
     return (h, type_)
   SA.J{} -> do
     h <- app J []
@@ -140,44 +292,42 @@ inferHead ctx synH = atSrcLoc synH $ case synH of
 
 elaborateApp'
   :: (IsTerm t)
-  => Ctx t -> Type t -> SA.Head -> [SA.Elim] -> ElabM t (Term t)
-elaborateApp' ctx type_ h elims = do
+  => Type t -> SA.Head -> [SA.Elim] -> ElabM t (Term t)
+elaborateApp' type_ h elims = do
   let msg = do
-        ctxDoc <- prettyM ctx
         typeDoc <- prettyM type_
         return $
-          "ctx:" //> ctxDoc $$
           "type:" //> typeDoc $$
           "head:" //> PP.pretty h $$
           "elims:" //> PP.pretty elims
-  debugBracket "elaborateApp" msg $ elaborateApp ctx type_ h $ reverse elims
+  debugBracket "elaborateApp" msg $ elaborateApp type_ h $ reverse elims
 
 -- Note that the eliminators are in reverse order.
 elaborateApp
   :: (IsTerm t)
-  => Ctx t -> Type t -> SA.Head -> [SA.Elim] -> ElabM t (Term t)
-elaborateApp ctx type_ h [] = atSrcLoc h $ do
-  (t, hType) <- inferHead ctx h
-  expect ctx type_ hType t
-elaborateApp ctx type_ h (SA.Apply arg : elims) = atSrcLoc arg $ do
-  dom <- addMetaInCtx ctx set
+  => Type t -> SA.Head -> [SA.Elim] -> ElabM t (Term t)
+elaborateApp type_ h [] = atSrcLoc h $ do
+  (t, hType) <- inferHead h
+  expect type_ hType t
+elaborateApp type_ h (SA.Apply arg : elims) = atSrcLoc arg $ do
+  dom <- addMetaInEnv set
   -- TODO better name here
-  cod <- addMetaInCtx (ctx :< ("_", dom)) set
+  cod <- extendEnv_ ("_", dom) $ addMetaInEnv set
   typeF <- pi dom cod
-  arg' <- elaborate' ctx dom arg
-  f <- elaborateApp ctx typeF h elims
+  arg' <- elaborate' dom arg
+  f <- elaborateApp typeF h elims
   type' <- instantiate_ cod arg'
   t <- eliminate f [Apply arg']
-  expect ctx type_ type' t
-elaborateApp ctx type_ h (SA.Proj projName : elims) = atSrcLoc projName $ do
-  Projection projIx tyCon projTypeTel projType <- getDefinition_ projName
-  let proj = Projection' projName projIx
-  tyConType <- definitionType =<< getDefinition_ tyCon
-  tyConArgs <- fillArgsWithMetas ctx tyConType
-  typeRec <- defName tyCon (map Apply tyConArgs)
-  rec_ <- elaborateApp ctx typeRec h elims
-  type0 <- telDischarge projTypeTel projType tyConArgs
+  expect type_ type' t
+elaborateApp type_ h (SA.Proj projName0 : elims) = atSrcLoc projName0 $ do
+  (projName, Projection projIx tyCon projType) <- getOpenedDefinition projName0
+  let proj  = first (`Projection'` projIx) projName
+  tyConType <- definitionType =<< getDefinition tyCon
+  tyConArgs <- fillArgsWithMetas tyConType
+  typeRec <- def tyCon (map Apply tyConArgs)
+  rec_ <- elaborateApp typeRec h elims
+  type0 <- openContextual projType tyConArgs
   Pi _ type1 <- whnfView type0
   type' <- instantiate_ type1 rec_
   t <- eliminate rec_ [Proj proj]
-  expect ctx type_ type' t
+  expect type_ type' t

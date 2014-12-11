@@ -18,7 +18,7 @@ import           TypeCheck3.Common
 -- metavariables as object variables.
 check
   :: (IsTerm t)
-  => Ctx t -> Term t -> Type t -> TC t s ()
+  => Ctx t -> Term t -> Type t -> TC t r s ()
 check ctx t type_ = do
   let msg = do
         tDoc <- prettyM t
@@ -30,9 +30,9 @@ check ctx t type_ = do
     tView <- whnfView t
     case tView of
       Con dataCon args -> do
-        DataCon tyCon _ tyConParsTel dataConType <- getDefinition_ dataCon
+        DataCon tyCon _ dataConType <- getDefinition dataCon
         tyConArgs <- matchTyCon tyCon type_
-        appliedDataConType <- telDischarge tyConParsTel dataConType tyConArgs
+        appliedDataConType <- openContextual dataConType tyConArgs
         checkConArgs ctx args appliedDataConType
       Refl -> do
         typeView <- whnfView type_
@@ -52,7 +52,7 @@ check ctx t type_ = do
 
 checkConArgs
   :: (IsTerm t)
-  => Ctx t -> [Term t] -> Type t -> TC t s ()
+  => Ctx t -> [Term t] -> Type t -> TC t r s ()
 checkConArgs _ [] _ = do
   return ()
 checkConArgs ctx (arg : args) type_ = do
@@ -63,7 +63,7 @@ checkConArgs ctx (arg : args) type_ = do
 
 checkSpine
   :: (IsTerm t)
-  => Ctx t -> Term t -> [Elim t] -> Type t -> TC t s (Type t)
+  => Ctx t -> Term t -> [Elim t] -> Type t -> TC t r s (Type t)
 checkSpine _ _ [] type_ =
   return (type_)
 checkSpine ctx h (el : els) type_ = case el of
@@ -79,17 +79,17 @@ checkSpine ctx h (el : els) type_ = case el of
 
 applyProjection
   :: (IsTerm t)
-  => Projection
+  => Opened Projection t
   -> Term t
   -- ^ Head
   -> Type t
   -- ^ Type of the head
-  -> TC t s (Term t, Type t)
+  -> TC t r s (Term t, Type t)
 applyProjection proj h type_ = do
-  Projection _ tyCon projTypeTel projType <- getDefinition_ $ pName proj
+  Projection _ tyCon projType <- getDefinition $ first pName proj
   h' <- eliminate h [Proj proj]
   tyConArgs <- matchTyCon tyCon type_
-  appliedProjType <-  telDischarge projTypeTel projType tyConArgs
+  appliedProjType <-  openContextual projType tyConArgs
   appliedProjTypeView <- whnfView appliedProjType
   case appliedProjTypeView of
     Pi _ endType -> do
@@ -101,7 +101,7 @@ applyProjection proj h type_ = do
 
 infer
   :: (IsTerm t)
-  => Ctx t -> Term t -> TC t s (Type t)
+  => Ctx t -> Term t -> TC t r s (Type t)
 infer ctx t = do
   debugBracket "infer" (prettyM t) $ do
     tView <- whnfView t
@@ -128,25 +128,31 @@ infer ctx t = do
 
 inferHead
   :: (IsTerm t)
-  => Ctx t -> Head -> TC t s (Type t)
+  => Ctx t -> Head t -> TC t r s (Type t)
 inferHead ctx h = case h of
   Var v    -> ctxGetVar v ctx
   Def name -> definitionType =<< getDefinition name
+  Meta mv  -> getMetaType mv
   J        -> return typeOfJ
 
 matchTyCon
-  :: (IsTerm t) => Name -> Type t -> TC t s [Term t]
+  :: (IsTerm t) => Opened QName t -> Type t -> TC t r s [Term t]
 matchTyCon tyCon type_ = do
   typeView <- whnfView type_
+  let fallback = checkError $ ExpectingTyCon (opndKey tyCon) type_
   case typeView of
-    App (Def (DKName tyCon')) elims | tyCon' == tyCon -> do
-      let Just tyConArgs = mapM isApply elims
-      return tyConArgs
+    App (Def tyCon') elims -> do
+      sameTyCon <- synEq tyCon tyCon'
+      if sameTyCon
+        then do
+          let Just tyConArgs = mapM isApply elims
+          return tyConArgs
+        else fallback
     _ -> do
-      checkError $ ExpectingTyCon tyCon type_
+      fallback
 
 matchPi
-  :: (IsTerm t) => Type t -> TC t s (Type t, Type t)
+  :: (IsTerm t) => Type t -> TC t r s (Type t, Type t)
 matchPi type_ = do
   typeView <- whnfView type_
   case typeView of
@@ -159,14 +165,14 @@ matchPi type_ = do
 ------------------------------------------------------------------------
 
 -- | Type-directed definitional equality.
-definitionallyEqual :: (IsTerm t) => Ctx t -> Type t -> Term t -> Term t -> TC t s ()
+definitionallyEqual :: (IsTerm t) => Ctx t -> Type t -> Term t -> Term t -> TC t r s ()
 definitionallyEqual ctx type_ t1 t2 = checkEqual (ctx, type_, t1, t2)
 
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
 checkEqual
   :: (IsTerm t)
-  => CheckEqual t -> TC t s ()
+  => CheckEqual t -> TC t r s ()
 checkEqual x@(_, type_, t1, t2) = do
   let msg = do
         typeDoc <- prettyM type_
@@ -185,8 +191,9 @@ checkEqual x@(_, type_, t1, t2) = do
       mbX <- action x'
       forM_ mbX $ runCheckEqual actions finally
 
-checkSynEq :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
+checkSynEq :: (IsTerm t) => CheckEqual t -> TC t r s (Maybe (CheckEqual t))
 checkSynEq (ctx, type_, t1, t2) = do
+  debug_ "checkSynEq" ""
   -- Optimization: try with a simple syntactic check first.
   t1' <- ignoreBlocking =<< whnf t1
   t2' <- ignoreBlocking =<< whnf t2
@@ -196,8 +203,16 @@ checkSynEq (ctx, type_, t1, t2) = do
     then Nothing
     else Just (ctx, type_, t1', t2')
 
-etaExpand :: (IsTerm t) => CheckEqual t -> TC t s (Maybe (CheckEqual t))
+etaExpand :: (IsTerm t) => CheckEqual t -> TC t r s (Maybe (CheckEqual t))
 etaExpand (ctx, type_, t1, t2) = do
+  debug "etaExpand" $ do
+    typeDoc <- prettyM type_
+    t1Doc <- prettyM t1
+    t2Doc <- prettyM t2
+    return $
+      "type:" //> typeDoc $$
+      "t1:" //> t1Doc $$
+      "t2:" //> t2Doc
   f <- expand
   t1' <- f t1
   t2' <- f t2
@@ -230,11 +245,14 @@ etaExpand (ctx, type_, t1, t2) = do
         _ ->
           return return
 
-compareTerms :: (IsTerm t) => CheckEqual t -> TC t s ()
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t r s ()
 compareTerms (ctx, type_, t1, t2) = do
+  debug_ "compareTerms" ""
   typeView <- whnfView type_
   t1View <- whnfView t1
   t2View <- whnfView t2
+  let fallback =
+        checkError $ TermsNotEqual type_ t1 type_ t2
   case (typeView, t1View, t2View) of
     -- Note that here we rely on canonical terms to have canonical
     -- types, and on the terms to be eta-expanded.
@@ -254,27 +272,38 @@ compareTerms (ctx, type_, t1, t2) = do
       checkEqual (ctx, type1', r1, r2)
     (Equal _ _ _, Refl, Refl) -> do
       return ()
-    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2)
-      | dataCon == dataCon' -> do
-        let Just tyConPars = mapM isApply tyConPars0
-        DataCon _ _ dataConTypeTel dataConType <- getDefinition_ dataCon
-        appliedDataConType <-  telDischarge dataConTypeTel dataConType tyConPars
-        checkEqualSpine ctx appliedDataConType Nothing (map Apply dataConArgs1) (map Apply dataConArgs2)
+    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) -> do
+      sameDataCon <- synEq dataCon dataCon'
+      if sameDataCon
+        then do
+          let Just tyConPars = mapM isApply tyConPars0
+          DataCon _ _ dataConType <- getDefinition dataCon
+          appliedDataConType <-  openContextual dataConType tyConPars
+          checkEqualSpine ctx appliedDataConType Nothing (map Apply dataConArgs1) (map Apply dataConArgs2)
+        else do
+          fallback
     (Set, Set, Set) -> do
       return ()
-    (_, App h elims1, App h'' elims2) | h == h'' -> do
-      hType <- inferHead ctx h
-      h' <- app h []
-      checkEqualSpine ctx hType (Just h') elims1 elims2
+    (_, App h elims1, App h'' elims2) -> do
+      sameH <- synEq h h''
+      if sameH
+        then do
+          hType <- inferHead ctx h
+          h' <- app h []
+          checkEqualSpine ctx hType (Just h') elims1 elims2
+        else do
+          fallback
     (_, _, _) -> do
-     checkError $ TermsNotEqual type_ t1 type_ t2
+      fallback
 
 checkEqualSpine
   :: (IsTerm t)
-  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC t s ()
+  => Ctx t -> Type t -> Maybe (Term t) -> [Elim t] -> [Elim t] -> TC t r s ()
 checkEqualSpine _ _ _ [] [] = do
   return ()
 checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+  let fallback =
+        checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
   case (elim1, elim2) of
     (Apply arg1, Apply arg2) -> do
       (dom, cod) <- matchPi type_
@@ -282,12 +311,17 @@ checkEqualSpine ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
       cod' <-  instantiate_ cod arg1
       mbH' <- traverse (`eliminate` [Apply arg1]) mbH
       checkEqualSpine ctx cod' mbH' elims1 elims2
-    (Proj proj, Proj proj') | proj == proj' -> do
-      let Just h = mbH
-      (h', type') <- applyProjection proj h type_
-      checkEqualSpine ctx type' (Just h') elims1 elims2
+    (Proj proj, Proj proj') -> do
+      sameProj <- synEq proj proj'
+      if sameProj
+        then do
+          let Just h = mbH
+          (h', type') <- applyProjection proj h type_
+          checkEqualSpine ctx type' (Just h') elims1 elims2
+        else do
+          fallback
     _ ->
-      checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
+      fallback
 checkEqualSpine _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 type_ elims2
 
@@ -296,11 +330,10 @@ checkEqualSpine _ type_ _ elims1 elims2 = do
 
 instantiateMeta
   :: (IsTerm t)
-  => Meta -> MetaBody t -> TC t s ()
-instantiateMeta mv mi = do
-  t <- metaBodyToTerm mi
+  => Meta -> MetaBody t -> TC t r s ()
+instantiateMeta mv mvb = do
   let msg = do
-        tDoc <- prettyM t
+        tDoc <- prettyM mvb
         return $
           "metavar:" //> PP.pretty mv $$
           "term:" //> tDoc
@@ -309,13 +342,14 @@ instantiateMeta mv mi = do
     when checkConsistency $ do
       mvType <- getMetaType mv
       let msg' err = do
-            tDoc <- prettyM t
             mvTypeDoc <- prettyM mvType
+            tDoc <- prettyM mvb
             return $
                "Inconsistent meta" $$
                "metavar:" <+> PP.pretty mv $$
                "type:" //> mvTypeDoc $$
                "term:" //> tDoc $$
                "err:" //> err
+      t <- metaBodyToTerm mvb
       assert msg' $ check C0 t mvType
-    uncheckedInstantiateMeta mv mi
+    uncheckedInstantiateMeta mv mvb

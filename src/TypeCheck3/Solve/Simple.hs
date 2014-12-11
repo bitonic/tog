@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module TypeCheck3.Solve.Simple
@@ -6,13 +7,12 @@ module TypeCheck3.Solve.Simple
   , solve
   ) where
 
-import           Control.Monad.State.Strict       (get, put)
 import           Control.Monad.Trans.Writer.Strict (execWriterT, tell)
 import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
-import           Syntax
 
 import           Instrumentation
+import           Syntax
 import           Prelude.Extended
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, indent, hang)
 import qualified PrettyPrint                      as PP
@@ -23,18 +23,28 @@ import           TypeCheck3.Monad
 import           TypeCheck3.Check
 import           TypeCheck3.Solve.Common
 
+#include "impossible.h"
+
 -- These definitions should be in every Solve module
 ----------------------------------------------------
 
-newtype SolveState t = SolveState (Constraints t)
+type ConstraintId = Natural
 
-type Constraints t = [(MetaSet, Constraint t)]
+type Constraints t = [([ConstraintId], MetaSet, Constraint t)]
+type Constraints_ t = [(MetaSet, Constraint t)]
 
 data Constraint t
   = Unify (Ctx t) (Type t) (Term t) (Term t)
   | UnifySpine (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)] [Elim (Term t)]
   | Conj [Constraint t]
   | (:>>:) (Constraint t) (Constraint t)
+
+data SolveState t = SolveState
+  { _ssConstraintCount :: !ConstraintId
+  , _ssConstraints     :: !(Constraints t)
+  }
+
+makeLenses ''SolveState
 
 simplify :: Constraint t -> Maybe (Constraint t)
 simplify (Conj [])    = Nothing
@@ -61,71 +71,109 @@ constraint (Common.JmEq ctx type1 t1 type2 t2) =
   Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
 
 initSolveState :: SolveState t
-initSolveState = SolveState []
+initSolveState = SolveState 0 []
 
-solve :: forall t. (IsTerm t) => Common.Constraint t -> TC t (SolveState t) ()
+solve :: forall t r. (IsTerm t) => Common.Constraint t -> TC t r (SolveState t) ()
 solve c = do
-  SolveState constrs0 <- get
-  constrs <- go False [] ((mempty, constraint c) : constrs0)
-  put $ SolveState constrs
+  debugBracket_ "solve" "" $ do
+    count <- bumpCount
+    let constr = ([count], mempty, constraint c)
+    ssConstraints %= (constr :)
+    go False []
   where
-    go :: Bool -> Constraints t -> Constraints t -> TC t s (Constraints t)
-    go progress constrs [] = do
-      if progress
-      then go False [] constrs
-      else return constrs
-    go progress newConstrs ((mvs, constr) : constrs) = do
-      attempt <- do mvsBodies <- forM (HS.toList mvs) lookupMetaBody
-                    return $ null mvsBodies || any isJust mvsBodies
-      if attempt
-        then do
-          constrs' <- solveConstraint constr
-          go True (constrs' ++ newConstrs) constrs
-        else do
-          go progress ((mvs, constr) : newConstrs) constrs
+    bumpCount = do
+      ssConstraintCount %= (+1)
+      use ssConstraintCount
 
-solveConstraint :: (IsTerm t) => Constraint t -> TC t s (Constraints t)
-solveConstraint constr0 = do
+    popConstr = do
+      constrs <- use ssConstraints
+      case constrs of
+        [] -> do
+          return Nothing
+        (c' : cs) -> do
+          ssConstraints .= cs
+          return $ Just c'
+
+    newConstraint (constrId, mvs, constr) =
+      debug "newConstraint" $ do
+        constrDoc <- prettyM constr
+        return $
+          "constrId:" //> PP.pretty constrId $$
+          "mvs:" //> PP.pretty (HS.toList mvs) $$
+          "constr:" //> constrDoc
+
+    go :: Bool -> Constraints t -> TC t r (SolveState t) ()
+    go progress newConstrs = do
+      mbConstr <- popConstr
+      case mbConstr of
+        Nothing -> do
+          ssConstraints .= newConstrs
+          if progress
+            then go False []
+            else return ()
+        Just (constrIds, mvs, constr) -> do
+          attempt <- do mvsBodies <- mapM lookupMetaBody (HS.toList mvs)
+                        return $ null mvsBodies || any isJust mvsBodies
+          if attempt
+            then do
+              untaggedConstrs <- solveConstraint constrIds constr
+              constrs <- forM untaggedConstrs $ \(mvs', constr') -> do
+                constrId' <- bumpCount
+                let taggedConstr = (constrId' : constrIds, mvs', constr')
+                newConstraint taggedConstr
+                return taggedConstr
+              go True (constrs ++ newConstrs)
+            else do
+              go progress ((constrIds, mvs, constr) : newConstrs)
+
+solveConstraint :: (IsTerm t) => [ConstraintId] -> Constraint t -> TC t r s (Constraints_ t)
+solveConstraint constrId constr0 = do
   let msg = do
         constrDoc <- prettyM constr0
         return $
-          "constraint:" //> constrDoc
-  debugBracket "solveConstraint" msg $ do
-    case constr0 of
-      Conj constrs -> do
-        mconcat <$> forM constrs solveConstraint
-      Unify ctx type_ t1 t2 -> do
-        checkEqual (ctx, type_, t1, t2)
-      UnifySpine ctx type_ mbH elims1 elims2 -> do
-        checkEqualSpine' ctx type_ mbH elims1 elims2
-      constr1 :>>: constr2 -> do
-        constrs1_0 <- solveConstraint constr1
-        let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
-                                 | (mvs, constr) <- constrs1_0 ]
-        case mbConstrs1 of
-          Nothing -> do
-            solveConstraint constr2
-          Just constrs1 -> do
-            let (mvs, constr1') = mconcat constrs1
-            return [(mvs, constr1' :>>: constr2)]
+          "constrId:" //> PP.pretty constrId $$
+          "constr:" //> constrDoc
+  debug "solveConstraint" msg
+  execConstraint constr0
+
+execConstraint :: (IsTerm t) => Constraint t -> TC t r s (Constraints_ t)
+execConstraint constr0 = case constr0 of
+  Conj constrs -> do
+    mconcat <$> forM constrs execConstraint
+  Unify ctx type_ t1 t2 -> do
+    checkEqual (ctx, type_, t1, t2)
+  UnifySpine ctx type_ mbH elims1 elims2 -> do
+    checkEqualSpine' ctx type_ mbH elims1 elims2
+  constr1 :>>: constr2 -> do
+    constrs1_0 <- execConstraint constr1
+    let mbConstrs1 = mconcat [ fmap (\c -> [(mvs, c)]) (simplify constr)
+                             | (mvs, constr) <- constrs1_0 ]
+    case mbConstrs1 of
+      Nothing -> do
+        execConstraint constr2
+      Just constrs1 -> do
+        let (mvs, constr1') = mconcat constrs1
+        return [(mvs, constr1' :>>: constr2)]
 
 instance PrettyM t (SolveState t) where
-  prettyM (SolveState cs0) = do
+  prettyM (SolveState _ cs0) = do
      detailed <- confProblemsReport <$> readConf
      let go cs = do
            tell $ "-- Unsolved problems:" <+> PP.pretty (length cs)
-           when detailed $ forM_ cs $ \(mvs, c) -> do
+           when detailed $ forM_ cs $ \(cId, mvs, c) -> do
              tell $ PP.line <> "------------------------------------------------------------------------"
              cDoc <- lift $ prettyM c
-             tell $ PP.line <> "** Waiting on" <+> PP.pretty (HS.toList mvs) $$ cDoc
+             tell $ PP.line <> "** Waiting on" <+> PP.pretty cId <+>
+                    "[" <> PP.pretty (HS.toList mvs) <> "]" $$ cDoc
      execWriterT $ go cs0
 
 -- This is local stuff
 ----------------------
 
-sequenceConstraints :: Constraints t -> Constraint t -> Constraints t
+sequenceConstraints :: (IsTerm t) => Constraints_ t -> Constraint t -> TC_ t (Constraints_ t)
+sequenceConstraints [] c2 = execConstraint c2
 sequenceConstraints scs1 c2 =
-  let (css, cs1) = unzip scs1 in [(mconcat css, Conj cs1 :>>: c2)]
+  let (css, cs1) = unzip scs1 in return [(mconcat css, Conj cs1 :>>: c2)]
 
 -- Equality
 ------------------------------------------------------------------------
@@ -133,17 +181,17 @@ sequenceConstraints scs1 c2 =
 type CheckEqual t = (Ctx t, Type t, Term t, Term t)
 
 data CheckEqualProgress t
-  = Done (Constraints t)
+  = Done (Constraints_ t)
   | KeepGoing (CheckEqual t)
 
-done :: Constraints t -> TC t s (CheckEqualProgress t)
+done :: Constraints_ t -> TC t r s (CheckEqualProgress t)
 done = return . Done
 
-keepGoing :: CheckEqual t -> TC t s (CheckEqualProgress t)
+keepGoing :: CheckEqual t -> TC t r s (CheckEqualProgress t)
 keepGoing = return . KeepGoing
 
 checkEqual
-  :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
+  :: (IsTerm t) => CheckEqual t -> TC t r s (Constraints_ t)
 checkEqual (ctx0, type0, t1_0, t2_0) = do
   let msg = do
         ctxDoc <- prettyM ctx0
@@ -175,7 +223,7 @@ checkEqual (ctx0, type0, t1_0, t2_0) = do
 
 checkSynEq
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
+  => CheckEqual t -> TC t r s (CheckEqualProgress t)
 checkSynEq args@(ctx, type_, t1, t2) = do
   disabled <- confDisableSynEquality <$> readConf
   if disabled
@@ -194,16 +242,15 @@ checkSynEq args@(ctx, type_, t1, t2) = do
 
 etaExpand'
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
+  => CheckEqual t -> TC t r s (CheckEqualProgress t)
 etaExpand' (ctx, type0, t1, t2) = do
-  debugBracket_ "etaExpand" "" $ do
-    t1' <- etaExpand type0 t1
-    t2' <- etaExpand type0 t2
-    keepGoing (ctx, type0, t1', t2')
+  t1' <- etaExpand type0 t1
+  t2' <- etaExpand type0 t2
+  keepGoing (ctx, type0, t1', t2')
 
 checkMetas
   :: (IsTerm t)
-  => CheckEqual t -> TC t s (CheckEqualProgress t)
+  => CheckEqual t -> TC t r s (CheckEqualProgress t)
 checkMetas (ctx, type_, t1, t2) = do
   blockedT1 <- whnf t1
   t1' <- ignoreBlocking blockedT1
@@ -245,57 +292,65 @@ checkMetas (ctx, type_, t1, t2) = do
       keepGoing (ctx, type_, t1', t2')
 
 checkEqualBlockedOn
-  :: forall t s.
+  :: forall t r s.
      (IsTerm t)
   => Ctx t -> Type t
-  -> HS.HashSet Meta -> BlockedHead -> [Elim t]
+  -> HS.HashSet Meta -> BlockedHead t -> [Elim t]
   -> Term t
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
-  let msg = "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) <>
-            ", trying to invert definition" <+> PP.pretty bh
+  let msg = do
+        bhDoc <- prettyM bh
+        return $ "Equality blocked on metavars" <+> PP.pretty (HS.toList mvs) <>
+                  ", trying to invert definition" <+> bhDoc
   t1 <- ignoreBlocking $ BlockedOn mvs bh elims1
-  debugBracket_ "checkEqualBlockedOn" msg $ do
+  debugBracket "checkEqualBlockedOn" msg $ do
     case bh of
       BlockedOnJ -> do
         debug_ "head is J, couldn't invert." ""
         fallback t1
       BlockedOnFunction fun1 -> do
-        Constant _ (Instantiable (InstFun clauses)) <- getDefinition_ fun1
+        Constant _ (Function (Inst clauses)) <- getDefinition fun1
         case clauses of
           NotInvertible _ -> do
             debug_ "couldn't invert." ""
             fallback t1
           Invertible injClauses -> do
             t2View <- whnfView t2
+            let notInvertible = do
+                  t2Head <- termHead t2
+                  case t2Head of
+                    Nothing -> do
+                      debug_ "definition invertible but we don't have a clause head." ""
+                      fallback t1
+                    Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
+                      debug_ ("inverting on" <+> PP.pretty tHead) ""
+                      -- Make the eliminators match the patterns
+                      matched <- matchPats pats elims1
+                      -- And restart, if we matched something.
+                      if matched
+                        then do
+                          debug_ "matched constructor, restarting" ""
+                          checkEqual (ctx, type_, t1, t2)
+                        else do
+                          debug_ "couldn't match constructor" ""
+                          fallback t1
+                    Just _ -> do
+                      checkError $ TermsNotEqual type_ t1 type_ t2
             case t2View of
-              App (Def (DKName fun2)) elims2 | fun1 == fun2 -> do
-                debug_ "could invert, and same heads, checking spines." ""
-                equalSpine (Def (DKName fun1)) ctx elims1 elims2
+              App (Def fun2) elims2 -> do
+                sameFun <- synEq fun1 fun2
+                if sameFun
+                  then do
+                    debug_ "could invert, and same heads, checking spines." ""
+                    equalSpine (Def fun1) ctx elims1 elims2
+                  else notInvertible
               _ -> do
-                t2Head <- termHead t2
-                case t2Head of
-                  Nothing -> do
-                    debug_ "definition invertible but we don't have a clause head." ""
-                    fallback t1
-                  Just tHead | Just (Clause pats _) <- lookup tHead injClauses -> do
-                    debug_ ("inverting on" <+> PP.pretty tHead) ""
-                    -- Make the eliminators match the patterns
-                    matched <- matchPats pats elims1
-                    -- And restart, if we matched something.
-                    if matched
-                      then do
-                        debug_ "matched constructor, restarting" ""
-                        checkEqual (ctx, type_, t1, t2)
-                      else do
-                        debug_ "couldn't match constructor" ""
-                        fallback t1
-                  Just _ -> do
-                    checkError $ TermsNotEqual type_ t1 type_ t2
+                notInvertible
   where
     fallback t1 = return $ [(mvs, Unify ctx type_ t1 t2)]
 
-    matchPats :: [Pattern] -> [Elim t] -> TC t s Bool
+    matchPats :: [Pattern t] -> [Elim t] -> TC t r s Bool
     matchPats (VarP : pats) (_ : elims) = do
       matchPats pats elims
     matchPats (ConP dataCon pats' : pats) (elim : elims) = do
@@ -308,15 +363,17 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
       -- are waiting on some metavar which doesn't head an eliminator.
       return False
 
-    matchPat :: Name -> [Pattern] -> Elim t -> TC t s Bool
-    matchPat dataCon pats (Apply t) = do
+    matchPat :: Opened QName t -> [Pattern t] -> Elim t -> TC t r s Bool
+    matchPat (Opened _ (_:_)) _ _ = do
+      return False              -- TODO make this work in all cases.
+    matchPat openedDataCon@(Opened dataCon []) pats (Apply t) = do
       tView <- whnfView t
       case tView of
-        App (Def (DKMeta mv)) mvArgs -> do
+        App (Meta mv) mvArgs -> do
           mvT <- instantiateDataCon mv dataCon
-          void $ matchPat dataCon pats . Apply =<< eliminate mvT mvArgs
+          void $ matchPat openedDataCon pats . Apply =<< eliminate mvT mvArgs
           return True
-        Con dataCon' dataConArgs | dataCon == dataCon' ->
+        Con dataCon' dataConArgs | dataCon == opndKey dataCon' -> do
           matchPats pats (map Apply dataConArgs)
         _ -> do
           -- This can happen -- when we are blocked on metavariables
@@ -326,9 +383,43 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
       -- Same as above.
       return False
 
+-- | @instantiateDataCon α c@ makes it so that @α := c β₁ ⋯ βₙ@, where
+--   @c@ is a data constructor.
+--
+--   Pre: @α : Δ → D t₁ ⋯ tₙ@, where @D@ is the fully applied type
+--   constructor for @c@.
+--
+--   TODO right now this works only with a simple 'Name', but we should
+--   make it work for 'Opened Name' too.
+instantiateDataCon
+  :: (IsTerm t)
+  => Meta
+  -> QName
+  -- ^ Name of the datacon
+  -> TC t r s (Closed (Term t))
+instantiateDataCon mv dataCon = do
+  let openedDataCon = Opened dataCon []
+  mvType <- getMetaType mv
+  (telMvArgs, endType') <- unrollPi mvType
+  DataCon tyCon _ dataConType <- getDefinition openedDataCon
+  -- We know that the metavariable must have the right type (we have
+  -- typechecked the arguments already).
+  App (Def tyCon') tyConArgs0 <- whnfView endType'
+  Just tyConArgs <- return $ mapM isApply tyConArgs0
+  True <- synEq tyCon tyCon'
+  appliedDataConType <- openContextual dataConType tyConArgs
+  (dataConArgsTel, _) <- unrollPi appliedDataConType
+  dataConArgs <- createMvsPars (telToCtx telMvArgs) dataConArgsTel
+  mvT <- con openedDataCon dataConArgs
+  let mi = MetaBody (telLength telMvArgs) mvT
+  -- given the usage, here we know that the body is going to be well typed.
+  -- TODO make sure that the above holds.
+  instantiateMeta mv mi
+  metaBodyToTerm mi
+
 equalSpine
   :: (IsTerm t)
-  => Head -> Ctx t -> [Elim t] -> [Elim t] -> TC t s (Constraints t)
+  => Head t -> Ctx t -> [Elim t] -> [Elim t] -> TC t r s (Constraints_ t)
 equalSpine h ctx elims1 elims2 = do
   hType <- headType ctx h
   checkEqualSpine ctx hType h elims1 elims2
@@ -336,14 +427,14 @@ equalSpine h ctx elims1 elims2 = do
 checkEqualApplySpine
   :: (IsTerm t)
   => Ctx t -> Type t -> [Term t] -> [Term t]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualApplySpine ctx type_ args1 args2 =
   checkEqualSpine' ctx type_ Nothing (map Apply args1) (map Apply args2)
 
 checkEqualSpine
   :: (IsTerm t)
-  => Ctx t -> Type t -> Head -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC t s (Constraints t)
+  => Ctx t -> Type t -> Head t -> [Elim (Term t)] -> [Elim (Term t)]
+  -> TC t r s (Constraints_ t)
 checkEqualSpine ctx type_ h elims1 elims2  = do
   h' <- app h []
   checkEqualSpine' ctx type_ (Just h') elims1 elims2
@@ -352,7 +443,7 @@ checkEqualSpine'
   :: (IsTerm t)
   => Ctx t -> Type t -> Maybe (Term t)
   -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualSpine' ctx type_ mbH elims1 elims2 = do
   let msg = do
         typeDoc <- prettyM type_
@@ -374,10 +465,12 @@ checkEqualSpine''
   :: (IsTerm t)
   => Ctx t -> Type t -> Maybe (Term t)
   -> [Elim (Term t)] -> [Elim (Term t)]
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 checkEqualSpine'' _ _ _ [] [] = do
   return []
 checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
+    let fallback =
+          checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
     case (elim1, elim2) of
       (Apply arg1, Apply arg2) -> do
         Pi dom cod <- whnfView type_
@@ -391,20 +484,25 @@ checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
             return (res1 <> res2)
           Nothing -> do
             cod' <- instantiate_ cod arg1
-            return $ sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
-      (Proj proj, Proj proj') | proj == proj' -> do
-          let Just h = mbH
-          (h', type') <- applyProjection proj h type_
-          checkEqualSpine'' ctx type' (Just h') elims1 elims2
+            sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
+      (Proj proj, Proj proj') -> do
+          sameProj <- synEq proj proj'
+          if sameProj
+            then do
+              let Just h = mbH
+              (h', type') <- applyProjection proj h type_
+              checkEqualSpine'' ctx type' (Just h') elims1 elims2
+            else do
+              fallback
       _ ->
-        checkError $ SpineNotEqual type_ (elim1 : elims1) type_ (elim1 : elims2)
+        fallback
 checkEqualSpine'' _ type_ _ elims1 elims2 = do
   checkError $ SpineNotEqual type_ elims1 type_ elims2
 
 metaAssign
   :: (IsTerm t)
   => Ctx t -> Type t -> Meta -> [Elim (Term t)] -> Term t
-  -> TC t s (Constraints t)
+  -> TC t r s (Constraints_ t)
 metaAssign ctx0 type0 mv elims t0 = do
   mvType <- getMetaType mv
   let msg = do
@@ -465,7 +563,7 @@ metaAssign ctx0 type0 mv elims t0 = do
         t2 <- applyInvertMeta ctx inv t1
         case t2 of
           Success mvb -> do
-            mvs <- metas $ mbBody mvb
+            mvs <- metas mvb
             when (mv `HS.member` mvs) $
               checkError $ OccursCheckFailed mv $ mbBody mvb
             instantiateMeta mv mvb
@@ -476,11 +574,13 @@ metaAssign ctx0 type0 mv elims t0 = do
           Failure (CFail v) ->
             checkError $ FreeVariableInEquatedTerm mv elims t v
 
-compareTerms :: (IsTerm t) => CheckEqual t -> TC t s (Constraints t)
+compareTerms :: (IsTerm t) => CheckEqual t -> TC t r s (Constraints_ t)
 compareTerms (ctx, type_, t1, t2) = do
   typeView <- whnfView type_
   t1View <- whnfView t1
   t2View <- whnfView t2
+  let fallback =
+        checkError $ TermsNotEqual type_ t1 type_ t2
   case (typeView, t1View, t2View) of
     -- Note that here we rely on canonical terms to have canonical
     -- types, and on the terms to be eta-expanded.
@@ -507,17 +607,23 @@ compareTerms (ctx, type_, t1, t2) = do
       checkEqualApplySpine ctx equalType_ [type1', l1, r1] [type2', l2, r2]
     (Equal _ _ _, Refl, Refl) -> do
       return []
-    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) | dataCon == dataCon' -> do
-       let Just tyConPars = mapM isApply tyConPars0
-       DataCon _ _ dataConTypeTel dataConType <- getDefinition_ dataCon
-       appliedDataConType <- telDischarge dataConTypeTel dataConType tyConPars
-       checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+    (App (Def _) tyConPars0, Con dataCon dataConArgs1, Con dataCon' dataConArgs2) -> do
+       sameDataCon <- synEq dataCon dataCon'
+       if sameDataCon
+         then do
+           let Just tyConPars = mapM isApply tyConPars0
+           DataCon _ _ dataConType <- getDefinition dataCon
+           appliedDataConType <- openContextual dataConType tyConPars
+           checkEqualApplySpine ctx appliedDataConType dataConArgs1 dataConArgs2
+         else do
+           fallback
     (Set, Set, Set) -> do
       return []
-    (_, App h elims1, App h' elims2) | h == h' -> do
-      equalSpine h ctx elims1 elims2
+    (_, App h elims1, App h' elims2) -> do
+      sameH <- synEq h h'
+      if sameH then equalSpine h ctx elims1 elims2 else fallback
     (_, _, _) -> do
-     checkError $ TermsNotEqual type_ t1 type_ t2
+      fallback
 
 
 -- Pretty printing Constraints
