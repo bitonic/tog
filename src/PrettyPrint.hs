@@ -21,6 +21,8 @@ module PrettyPrint
   , tupled
   ) where
 
+import qualified Data.Map.Strict                  as Map.Strict
+
 import           Prelude.Extended
 import qualified Text.PrettyPrint.Leijen          as PP
 import           Text.PrettyPrint.Leijen          hiding ((<$>), (<$$>), renderPretty, renderCompact, Pretty(..), list, parens, tupled, hang, indent, (<>))
@@ -138,6 +140,9 @@ instance Pretty a => Pretty (Maybe a) where
 instance Pretty Natural where
   pretty = text . show
 
+instance (Pretty k, Pretty v) => Pretty (Map.Strict.Map k v) where
+  pretty m = "Map.Strict.fromList" <+> pretty (Map.Strict.toList m)
+
 prettyApp :: Pretty a => Int -> Doc -> [a] -> Doc
 prettyApp _ h []   = h
 prettyApp p h args0 = condParens (p > 3) $ h <> nest 2 (group (prettyArgs (reverse args0)))
@@ -151,3 +156,4 @@ hang n d = PP.hang (fromIntegral n) d
 
 indent :: Natural -> Doc -> Doc
 indent n d = PP.indent (fromIntegral n) d
+

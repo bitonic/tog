@@ -238,3 +238,9 @@ isLayoutClose = isTokenIn [layoutClose]
 -- | Get the number of characters in the token.
 tokenLength :: Token -> Int
 tokenLength t = length $ prToken t
+
+-- Pretty instances
+------------------------------------------------------------------------
+
+instance PP.Pretty QName where
+  pretty = PP.string . printTree

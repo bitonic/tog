@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# OPTIONS_GHC -fno-warn-name-shadowing -fno-warn-orphans #-}
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 -- | All scope checking is done in some module, say M.
 --
 -- We indicates new mappings from qualified or unqualified names to
@@ -165,6 +165,47 @@
 -- one exception: @open@ed things.  In that case, multiple things with
 -- the same name can be in scope, and you'll get an "ambiguous name"
 -- error when trying to use them.
+--
+-- = Resolution
+--
+-- When resolving some name @n@ in a module, we have two cases:
+--
+-- * __Unqualified name__: we look at the variables, local definitions,
+--   and @open@ed things.  As remarked in the "Shadowing" section, the
+--   first two are unambiguous, and if a matching name is found, we know
+--   that there isn't going to be an @open@ed name with the same name.
+--
+--   On the other hand, @open@ed names can be ambiguous: an error will
+--   be thrown if that is the case.
+--
+--   If this procedure fails, and the module has a parent module, we
+--   repeat by looking up in the parent module.
+--
+-- * __Qualified name__: If we have qualified name @M.f@, we check if
+--   @M@ is imported, and if it is, we check if @f@ is in its exports.
+--
+-- = Qualification of names
+--
+-- Scope checking qualifies all non-variable names in the code, while
+-- preserving module structure.  It also inserts @import@ statements
+-- automatically for modules with no parameters.
+--
+-- So if we have
+--
+-- > module M where
+-- >   module N where
+-- >     postulate X : Set
+-- >   open N
+-- >   postulate bar : X -> X
+--
+-- scope checking will result in
+--
+-- > module M where
+-- >   module M.N where
+-- >     postulate M.N.foo : Set
+-- >   import M.N
+-- >   open M.N
+-- >   postulate M.bar : M.N.X -> M.N.X
 module Syntax.Abstract.Scope (scopeCheckModule, scopeCheckFile) where
 
 import           Prelude hiding (length)
@@ -172,17 +213,16 @@ import           Prelude hiding (length)
 import           Control.Monad.Reader (MonadReader, ReaderT, runReaderT, local)
 import           Control.Monad.Except (MonadError, throwError)
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 import qualified Control.Lens as L
-import           Data.List (inits, tails)
-import qualified Data.Semigroup as Semi
+import           Control.Lens (at)
+import           Data.List.NonEmpty (NonEmpty(..), (<|))
 
 import           Prelude.Extended
 import           Instrumentation
 import qualified Syntax.Raw                       as C
 import           Syntax.Abstract.Abs
 import qualified PrettyPrint                      as PP
-import           PrettyPrint                      (render)
+import           PrettyPrint                      (render, Pretty(..), (<+>), ($$), (//>))
 
 #include "impossible.h"
 
@@ -193,48 +233,65 @@ type NumberOfArguments = Natural
 
 -- | Things defined in a module
 type LocalNames = Map.Map Name NameInfo
+type ExportedNames = Map.Map Name NameInfo
 
--- | Modules that should be auto-imported when the containing module is.
--- They are not prefixed by the containing module name. The 'Name's
--- contained should be a subset of the keys in 'Exports'.
-type AutoImportModules = Set.Set Name
+-- -- | Modules that should be auto-imported when the containing module is.
+-- -- They are not prefixed by the containing module name. The 'Name's
+-- -- contained should be a subset of the keys in 'Exports'.
+-- type AutoImportModules = Set.Set Name
 
 data NameInfo
   = DefName Hiding
   | ConName Hiding NumberOfArguments
   | ProjName Hiding
-  | ModuleName Hiding LocalNames AutoImportModules
-  | AmbiguousName [QName]
+  | ModuleName Hiding ExportedNames
   deriving (Show)
+
+instance Pretty NameInfo where
+  pretty ni = case ni of
+    DefName hidden -> "DefName" <+> pretty  hidden
+    ConName hidden args -> "ConName" <+> pretty hidden <+> pretty args
+    ProjName hidden -> "ProjName" <+> pretty hidden
+    ModuleName hidden names -> "ModuleName" <+> pretty hidden $$ "exports:" //> pretty names
 
 -- | Useful type synonym to indicate that a name is fully qualified.
 type FullyQName = QName
 
 data Scope = Scope
-  { _sVars :: Set.Set String
+  { _sVars :: Map.Map Name SrcLoc
     -- ^ The variables in scope
-  , _sOpenedNames :: Map.Map String [FullyQName]
+  , _sNameSpace :: NameSpace
+    -- ^ The namespace for the current module
+  , _sParentNameSpaces :: [NameSpace]
+    -- ^ The namespaces for the parent modules
+  , _sOpenedNames :: Map.Map Name (NonEmpty FullyQName)
     -- ^ Mapping that stores "opened" names to some fully qualified
     -- name.  If multiple, it means that we have an ambiguous name.
-  , _sImportedModules :: Set.Set FullyQName
-    -- ^ The imported modules.
-  , _sCurrentModule :: FullyQName
-    -- ^ The current module, fully qualified.
-  , _sLocalNames :: LocalNames
-    -- ^ The definitions defined so far in the current module.
-  , _sAutoImportModules :: AutoImportModules
-    -- ^ The list of auto-import modules for the current module.
+  , _sImportedModules :: Map.Map FullyQName (Hiding, ExportedNames)
+    -- ^ The imported modules, from the "local" name to the fully
+    -- qualified name.
+  }
+
+data NameSpace = NameSpace
+  { _nsModule :: FullyQName
+  , _nsLocalNames :: LocalNames
+    -- ^ The definitions defined in some module.
   }
 
 makeLenses ''Scope
+makeLenses ''NameSpace
 
 data ScopeError = ScopeError SrcLoc String
+  deriving (Show)
 
-instance Show ScopeError where
-  show (ScopeError pos err) = show pos ++ ": " ++ err
+instance Pretty ScopeError where
+  pretty (ScopeError pos err) = pretty pos <> ":" <+> PP.text err
+
+initNameSpace :: FullyQName -> NameSpace
+initNameSpace qn = NameSpace qn Map.empty
 
 initScope :: FullyQName -> Scope
-initScope n = Scope Set.empty Map.empty Set.empty n Map.empty Set.empty
+initScope n = Scope Map.empty (initNameSpace n) [] Map.empty Map.empty
 
 newtype Check a = Check { unCheck :: ReaderT Scope (Either ScopeError) a }
   deriving (Functor, Applicative, Monad, MonadReader Scope, MonadError ScopeError)
@@ -262,133 +319,168 @@ scopeError p err = throwError $ ScopeError (srcLoc p) err
 ------------------------------------------------------------------------
 -- Binding/resolving things
 
+lookupInNameSpaces
+  :: (NameSpace -> Check (Maybe a))
+  -> Check (Maybe a)
+lookupInNameSpaces f = do
+  ns <- L.view sNameSpace
+  nss <- L.view sParentNameSpaces
+  go (ns : nss)
+  where
+    go [] = return Nothing
+    go (ns : nss) = do
+      mb <- f ns
+      case mb of
+        Just x  -> return $ Just x
+        Nothing -> go nss
+
+isBoundVar
+  :: Name -> Check Bool
+isBoundVar n = Map.member n <$> L.view sVars
+
+checkShadowing :: Name -> Check ()
+checkShadowing n = do
+  mbVar <- L.view $ sVars . at n
+  forM_ mbVar $ \loc ->
+    scopeError n $ "Cannot shadow " ++ render n ++ ", variable bound at " ++ render loc
+  definedLocally <- lookupLocalName n
+  forM_ definedLocally $ \(qn, _) -> do
+    scopeError n $ "Cannot shadow " ++ render qn ++ ", defined at " ++ render (srcLoc qn)
+
+lookupLocalName
+  :: Name -> Check (Maybe (FullyQName, NameInfo))
+lookupLocalName n = do
+  lookupInNameSpaces $ \ns -> return $
+    (qNameCons n (ns^.nsModule),) <$> ns^.nsLocalNames^.at n
+
+lookupOpenedName
+  :: Name -> Check (Maybe (FullyQName, NameInfo))
+lookupOpenedName n = do
+  mbNames <- L.view $ sOpenedNames . at n
+  case mbNames of
+    Nothing        -> return Nothing
+    Just (x :| []) -> do Just ni <- lookupFullyQName x
+                         return $ Just (x, ni)
+    Just (x :| xs) -> err (x : xs)
+  where
+    err :: [FullyQName] -> Check a
+    err xs = scopeError n $ render n ++ " could be any of " ++ render xs
+
+lookupFullyQName :: FullyQName -> Check (Maybe NameInfo)
+lookupFullyQName (QName n ~(m:ms)) = do
+  Just (_, exports) <- L.view $ sImportedModules . at (QName m ms)
+  return $ Map.lookup n exports
+
+qualifyName
+  :: Name -> Check FullyQName
+qualifyName n = do
+  mn <- L.view $ sNameSpace . nsModule
+  return $ qNameCons n mn
+
 bindLocalName
-  :: Name -> NameInfo -> CCheck QName
+  :: Name -> NameInfo -> CCheck FullyQName
 bindLocalName n ni ret = do
-  shadowing <- isJust . Map.lookup n <$> L.view sLocalNames
-  when shadowing $
-    scopeError n $ "Cannot shadow " ++ render n
+  checkShadowing n
   qn <- qualifyName n
-  local (over sLocalNames (Map.insert n ni)) $ ret qn
-
-bindDef :: Name -> Hiding -> CCheck QName
-bindDef n hidden = bindLocalName n $ DefName hidden
-
-bindVar :: Name -> CCheck Name
-bindVar n ret = do
-  local (over sVars (Set.insert (nameString n))) $ ret n
-
-bindCon :: Name -> Hiding -> NumberOfArguments -> CCheck QName
-bindCon n hidden args = bindLocalName n $ ConName hidden args
-
-bindProj :: Name -> Hiding -> CCheck QName
-bindProj n hidden = bindLocalName n $ ProjName hidden
-
-qualifyName :: Name -> Check FullyQName
-qualifyName n = (`qNameSnoc` n) <$> L.view sCurrentModule
-
--- | Resolves a local 'DefName'.  Throws 'scopeError' if not in scope.
-resolveLocalDef :: C.Name -> Check (QName, Hiding)
-resolveLocalDef cn = do
-  let n = mkName cn
-  qn <- qualifyName n
-  mbNi <- Map.lookup n <$> L.view sLocalNames
-  case mbNi of
-    Nothing -> scopeError cn $ C.printTree cn ++ " not in scope."
-    Just (DefName hidden) -> return (qn, hidden)
-    Just _ -> scopeError cn $ C.printTree cn ++ " should be a definition."
-
--- | Resolves a module.  Throws a 'scopeError' if not in scope.
-resolveModule :: QName -> Check (QName, Hiding, LocalNames, AutoImportModules)
-resolveModule qn = do
-  nameOrDef <- resolveQName qn
-  case nameOrDef of
-    Right (m, ModuleName hidden names mods) -> return (m, hidden, names, mods)
-    _ -> scopeError qn $ render qn ++ " is not a module"
-
-resolveQName :: QName -> Check (Either Name (QName, NameInfo))
-resolveQName qn = do
-  mb <- lookupQName qn
-  case mb of
-    Nothing -> scopeError qn $ render qn ++ " not in scope."
-    Just x  -> return x
-
-resolveCon :: QName -> Check (Hiding, NumberOfArguments)
-resolveCon qn = do
-  nameOrDef <- resolveQName qn
-  case nameOrDef of
-    Right (_, ConName hidden args) -> return (hidden, args)
-    _ -> scopeError qn $ render qn ++ " is not a constructor"
-
--- | Returns a 'Name' if it's a var, a 'NameInfo' if it's some defined
--- name.
---
--- How this works:
---
--- * If the name is unqualified, and a variable variable, we return it
---   immediately.  If it's not a variable, we check in the local names.
---   Finally, we check in the opened names.
---
--- * If the name is qualified, we search for the names in two ways:
---
---   * Try to see if the name, fully qualified, is present in some
---     imported module;
---
---   * Check if any prefix of the qualified name is a module that we can
---     use to lookup the rest of the name in.
---
--- The qualified lookup can yield multiple names, in which case we throw
--- an "ambiguous name" error.
-lookupQName :: QName -> Check (Maybe (Either Name (QName, NameInfo)))
-lookupQName (QName [] name) = do
-  let s = nameString name
-  isVar <- Set.member s <$> L.view sVars
-  if isVar
-    then return $ Just $ Left name
-    else do
-      traceM =<< (render . Map.toList <$> L.view sOpenedNames)
-      mbQn1 <- Map.lookup s <$> L.view sOpenedNames
-      mbQn2 <- Map.lookup name <$> L.view sLocalNames
-      case (mbQn1, mbQn2) of
-        (Just _, Just _) -> scopeError name $ "Ambigous name."
-        (Nothing, Nothing) -> return Nothing
-        (Just [qn], _) -> lookupQName qn
-        (Just _, _) -> scopeError name $ "Ambiguous name"
-        (Nothing, Just ni) -> do
-          qn <- qualifyName name
-          return $ Just $ Right (qn, ni)
-lookupQName qn@(QName qual@(_:_) name) = do
-  -- Pick every possible module
-  xs <- fmap catMaybes $ forM (zip (inits qual) (tails qual)) $ \(module0, qual) -> do
-    case module0 of
-      [] -> do
-        return Nothing
-      (_:_) -> do
-        let module_ = QName (init module0) (last module0)
-        current <- L.view sCurrentModule
-        imported <- Set.member (current Semi.<> module_) <$> L.view sImportedModules
-        if imported
-          then do
-            (_, _, names, _) <- resolveModule module_
-            local (L.set sVars Set.empty . L.set sLocalNames names) $ lookupQName $ QName qual name
-          else return Nothing
-  case xs of
-    [x] -> return $ Just x
-    [] -> scopeError qn $ render qn ++ " not in scope"
-    _ -> scopeError qn $ "Ambiguous name"
+  local (L.set (sNameSpace . nsLocalNames . at n) (Just ni)) $ ret qn
 
 -- | Accepts a list of new bindings to add to the list of opened names.
 -- Fails if we'd have to shadow un-shadowable things -- variables and
 -- local names.
 bindOpenedNames :: [(Name, FullyQName)] -> CCheck_
 bindOpenedNames = mapC_ $ \(n, qn) ret -> do
-  let s = nameString n
-  definedVar <- Set.member s <$> L.view sVars
-  definedLocally <- isJust . Map.lookup n <$> L.view sLocalNames
-  when (definedVar || definedLocally) $
-    scopeError n $ "Cannot shadow name " ++ render n
-  alreadyOpened <- fromMaybe [] . Map.lookup s <$> L.view sOpenedNames
-  local (over sOpenedNames (Map.insert s (qn : alreadyOpened))) ret
+  checkShadowing n
+  local (over (sOpenedNames . at n) (Just . maybe (qn :| []) (qn <|))) ret
+
+bindDef :: Name -> Hiding -> CCheck FullyQName
+bindDef n hidden = bindLocalName n $ DefName hidden
+
+bindProj :: Name -> Hiding -> CCheck FullyQName
+bindProj n hidden = bindLocalName n $ ProjName hidden
+
+bindVar :: Name -> CCheck Name
+bindVar n ret = do
+  local (over sVars (Map.insert n (srcLoc n))) $ ret n
+
+notInScopeError :: (PP.Pretty name, HasSrcLoc name) => name -> Check a
+notInScopeError n = scopeError n $ render n ++ " not in scope"
+
+resolveLocalName :: Name -> Check (FullyQName, NameInfo)
+resolveLocalName n = do
+  mb <- lookupLocalName n
+  case mb of
+    Nothing -> notInScopeError n
+    Just x  -> return x
+
+resolveLocalDef :: Name -> Check (FullyQName, Hiding)
+resolveLocalDef n = do
+  ln <- resolveLocalName n
+  case ln of
+    (qn, DefName hidden) -> return (qn, hidden)
+    _ -> scopeError n $ render n ++ " should be a definition"
+
+data LookupQName
+  = NotFound
+  | ItsAVar Name
+  | ItsANameInfo FullyQName NameInfo
+
+instance Pretty LookupQName where
+  pretty lkup = case lkup of
+    NotFound -> "NotFound"
+    ItsAVar v -> "ItsAVar" <+> pretty v
+    ItsANameInfo qn ni -> "ItsANameInfo" <+> pretty qn $$ "info:" //> pretty ni
+
+lookupQName :: QName -> Check LookupQName
+lookupQName (QName n []) = do
+  isVar <- isBoundVar n
+  if isVar
+    then return $ ItsAVar n
+    else do
+      mbLocal <- lookupLocalName n
+      case mbLocal of
+        Just (qn, ni) -> return $ ItsANameInfo qn ni
+        Nothing -> do
+          mbOpened <- lookupOpenedName n
+          case mbOpened of
+            Just (qn, ni) -> return $ ItsANameInfo qn ni
+            Nothing -> return NotFound
+lookupQName (QName n (m:ms)) = do
+  (moduleQn, _, names) <- resolveImportedModule $ QName m ms
+  case Map.lookup n names of
+    Nothing -> return NotFound
+    Just ni -> return $ ItsANameInfo (qNameCons n moduleQn) ni
+
+importModule
+  :: QName -> Hiding -> ExportedNames -> CCheck_
+importModule qn hidden names ret = do
+  mb <- L.view $ sImportedModules . at qn
+  case mb of
+    Just _ -> scopeError qn $ render qn ++ " already imported"
+    Nothing -> local (L.set (sImportedModules . at qn) (Just (hidden, names))) ret
+
+resolveModule :: QName -> Check (FullyQName, Hiding, ExportedNames)
+resolveModule m = do
+  lkup <- lookupQName m
+  case lkup of
+    NotFound -> notInScopeError m
+    ItsANameInfo qn (ModuleName hidden names) -> return (qn, hidden, names)
+    _ -> scopeError m $ render m ++ " should be a module"
+
+resolveCon :: QName -> Check (FullyQName, Hiding, NumberOfArguments)
+resolveCon m = do
+  lkup <- lookupQName m
+  case lkup of
+    NotFound -> notInScopeError m
+    ItsANameInfo qn (ConName hidden args) -> return (qn, hidden, args)
+    _ -> scopeError m $ render m ++ " should be a data constructor"
+
+resolveImportedModule :: QName -> Check (FullyQName, Hiding, ExportedNames)
+resolveImportedModule n = do
+  (qn, hidden, names) <- resolveModule n
+  isImported <- isJust <$> L.view (sImportedModules . at qn)
+  unless isImported $
+    scopeError n $ render n ++ " should be imported"
+  return (qn, hidden, names)
 
 ------------------------------------------------------------------------
 -- Scope checking
@@ -397,10 +489,10 @@ bindOpenedNames = mapC_ $ \(n, qn) ret -> do
 scopeCheckModule :: C.Module -> Either PP.Doc Module
 scopeCheckModule (C.Module (C.Name ((l, c), s)) pars ds) =
   case evalCheck (initScope q) (checkModule' q pars ds return) of
-    Left err      -> Left $ PP.text $ show err
-    Right (x, _)  -> Right x
+    Left err -> Left $ pretty err
+    Right x  -> Right x
   where
-    q = QName [] $ Name (SrcLoc l c) s
+    q = QName (Name (SrcLoc l c) s) []
 
 scopeCheckFile :: FilePath -> IO ()
 scopeCheckFile fp = do
@@ -413,23 +505,20 @@ scopeCheckFile fp = do
 
 -- | Scope checks a module.  Returns the generated module, and possibly
 -- some declarations containing auto-imports and the like.
-checkModule :: C.Module -> CCheck (Module, [C.Decl])
+checkModule :: C.Module -> CCheck Module
 checkModule (C.Module name pars ds) ret = do
   name <- return $ mkName name
   -- Qualify the name of the module
   qname <- qualifyName name
   checkModule' qname pars ds ret
 
-checkModule' :: QName -> C.Params -> [C.Decl] -> CCheck (Module, [C.Decl])
-checkModule' qname@(QName _ name) pars ds ret = do
+checkModule' :: QName -> C.Params -> [C.Decl] -> CCheck Module
+checkModule' qname@(QName name _) pars ds ret = do
   case isParamDecl pars of
     Just pars -> do
-      -- Prepare the scope for scope-checking the module, by resetting
-      -- the auto exports/imports, and setting the current module name
-      -- appropriately.
-      let prepareScope = L.set sCurrentModule qname
-                       . L.set sLocalNames Map.empty
-                       . L.set sAutoImportModules Set.empty
+      -- Push a fresh NameSpace for the new module.
+      let prepareScope sc = L.over sParentNameSpaces (sc^.sNameSpace :)
+                          $ L.set sNameSpace (initNameSpace qname) sc
       (moduleInfo, module_) <- local prepareScope $ do
         -- Check the parameters and add them to the scope
         (hidden, pars, _) <- return $ telHiding pars
@@ -440,20 +529,13 @@ checkModule' qname@(QName _ name) pars ds ret = do
             -- and auto importing modules, and the 'Module' itself
             -- containing the fully qualified name and exports, the
             -- parameters, and the declarations.
-            definitions <- L.view sLocalNames
-            let qdefinitions = map (qNameSnoc qname) $ Map.keys definitions
-            autoImports <- L.view sAutoImportModules
+            definitions <- L.view $ sNameSpace . nsLocalNames
+            let qdefinitions = map (`qNameCons` qname) $ Map.keys definitions
             return
-              ( ModuleName hidden definitions autoImports
+              ( ModuleName hidden definitions
               , Module qname tel qdefinitions ds
               )
-      bindLocalName name moduleInfo $ \_ -> do
-        -- If the module doesn't have parameters, import it immediately,
-        -- and add it to the list of auto imports.
-        if null pars
-          then local (over sAutoImportModules (Set.insert name)) $
-                 ret (module_, [mkRawImportDecl (QName [] name)])
-          else ret (module_, [])
+      bindLocalName name moduleInfo $ \_ -> ret module_
     Nothing ->
       scopeError name "Bad module declaration"
 
@@ -481,15 +563,18 @@ checkDecls ds ret = case ds of
       Nothing -> do
         scopeError x $ "Bad data definition"
       Just xs -> do
-        (x, n) <- resolveLocalDef x
+        (x, n) <- resolveLocalDef $ mkName x
         when (n > length xs) $
           scopeError x $ "Too few parameters to " ++ render x ++
                          " (implicit arguments must be explicitly bound here)"
         xs <- checkHiddenNames n xs
-        mapC (bindVar . mkName) xs $ \xs -> do
+        xs <- return $ map mkName xs
+        cs <- mapC bindVar xs $ \xs -> do
           let t = App (Def x) (map (\x -> Apply (App (Var x) [])) xs)
-          mapC (checkConstructor t xs) cs $ \cs -> checkDecls ds $ \ds' ->
-            ret (DataDef x xs cs : ds')
+          mapM (checkConstructor t xs) cs
+        let bindCon (c, ni, a) ret = bindLocalName c ni $ \qn -> ret $ Sig qn a
+        mapC bindCon cs $ \cs ->
+          checkDecls ds $ \ds' -> ret (DataDef x xs cs : ds')
   C.Record x pars mbRecBody : ds -> case mbRecBody of
     C.NoRecordBody set -> case isParamDecl pars of
       Nothing -> scopeError x $ "Bad record declaration " ++ C.printTree x
@@ -500,21 +585,25 @@ checkDecls ds ret = case ds of
       Nothing -> do
         scopeError x $ "Bad record definition"
       Just xs -> do
-        (x, n) <- resolveLocalDef x
+        (x, n) <- resolveLocalDef $ mkName x
         when (n > length xs) $
           scopeError x $ "Too few parameters to " ++ show x ++
                          " (implicit arguments must be explicitly bound here)"
         xs <- checkHiddenNames n xs
-        mapC (bindVar . mkName) xs $ \xs -> do
+        xs <- return $ map mkName xs
+        (con, ni, fs) <- mapC bindVar xs $ \_ -> do
           checkFields (getFields fs) $ \fs ->
-            bindCon (mkName con) 0 (length fs) $ \con ->
-              -- TODO this is wrong: we should only allow instantiation of
-              -- locally defined functions, not all.
-              checkDecls ds $ \ds' ->
-                ret (RecDef x xs con fs : ds')
+            return (mkName con, ConName 0 (length fs), fs)
+        -- TODO this is wrong: we should only allow instantiation of
+        -- locally defined functions, not all.
+        bindLocalName con ni $ \con -> do
+          let bindProj (f, ni, a) ret = bindLocalName f ni $ \qn -> ret $ Sig qn a
+          mapC bindProj fs $ \fs -> do
+            checkDecls ds $ \ds' -> do
+              ret (RecDef x xs con fs : ds')
   C.FunDef f _ _ _ : _ -> do
     (clauses, ds) <- return $ takeFunDefs f ds
-    (f, n) <- resolveLocalDef f
+    (f, n) <- resolveLocalDef $ mkName f
     clauses <- forM (zip clauses [1..]) $ \((ps, body, wheres0), ix) -> do
       let wheres = case wheres0 of
             C.Where ds -> ds
@@ -526,34 +615,24 @@ checkDecls ds ret = case ds of
           return $ Clause ps body wheres
     checkDecls ds $ \ds -> ret (FunDef f clauses : ds)
   C.Module_ module_ : ds -> do
-    checkModule module_ $ \(module_, mds) -> do
-      checkDecls (mds ++ ds) $ \ds -> do
+    checkModule module_ $ \module_ -> do
+      checkDecls ds $ \ds -> do
         ret (Module_ module_ : ds)
   C.Import imp : ds -> do
     let (m, args) = case imp of
           C.ImportNoArgs m    -> (mkQName m, [])
           C.ImportArgs m args -> (mkQName m, args)
-    (m, hidden, _, autoImports) <- resolveModule m
+    (qn, hidden, names) <- resolveModule m
     args <- insertImplicit (srcLoc m) hidden args
     args <- mapM checkExpr args
-    -- Add the import statements for the auto-import modules.
-    let importDecls = map (mkRawImportDecl . qNameSnoc m) $ Set.toList autoImports
     -- Add the module to the set of imported modules
-    local (over sImportedModules (Set.insert m)) $ do
-      checkDecls (importDecls ++ ds) $ \ds -> do
-        ret (Import m args : ds)
+    importModule qn hidden names $ do
+      checkDecls ds $ \ds -> do
+        ret (Import qn args : ds)
   C.Open m0 : ds -> do
     let m = mkQName m0
-    traceM ("C.Open")
-    traceM (render m)
-    (m, _, exports, _) <- resolveModule m
-    traceM (render m)
-    imported <- Set.member m <$> L.view sImportedModules
-    -- The module must be imported
-    when imported $
-      scopeError m $ "To open a module you must import it first"
-    -- Add the names -- unqualified -- to the opened stuff
-    let opened = [(n, qNameSnoc m n) | (n, _) <- Map.toList exports]
+    (m, _, exports) <- resolveImportedModule m
+    let opened = [(n, qNameCons n m) | (n, _) <- Map.toList exports]
     bindOpenedNames opened $ do
       checkDecls ds $ \ds -> do
         ret (Open m : ds)
@@ -579,24 +658,25 @@ checkWheres f ix ds ret = do
   -- index for the clause.  Then, we save the 'sNameInfos' and the
   -- 'sOpenedNames', so that when scope-checking the body we'll have
   -- what we need in scope, but we throw away everything else.
-  let qname = qNameSnoc f (Name (srcLoc f) (show ix))
-  (importedModules, openedNames, ds) <- local (L.set sCurrentModule qname) $ do
-    checkDecls ds $ \ds -> do
-      (,,) <$> L.view sImportedModules <*> L.view sOpenedNames <*> pure ds
-  local (L.set sImportedModules importedModules . L.set sOpenedNames openedNames) $ ret ds
+  let qname = qNameCons (Name (srcLoc f) (show ix)) f
+  let prepareScope sc = L.over sParentNameSpaces (sc^.sNameSpace :)
+                      $ L.set sNameSpace (initNameSpace qname) sc
+  local prepareScope $ checkDecls ds ret
 
 checkTypeSig :: C.TypeSig -> CCheck TypeSig
 checkTypeSig (C.Sig x e) ret = do
   (n, a) <- checkScheme e
   bindDef (mkName x) n $ \x -> ret (Sig x a)
 
-checkFields :: [C.Constr] -> CCheck [TypeSig]
+checkFields :: [C.Constr] -> CCheck [(Name, NameInfo, Expr)]
 checkFields fs ret = do
   fs <- mapC checkField fs return
   mapC bindField fs ret
   where
-    bindField :: (C.Name, Natural, Expr) -> CCheck TypeSig
-    bindField (x, n, a) ret = bindProj (mkName x) n $ \x -> ret (Sig x a)
+    bindField :: (C.Name, Natural, Expr) -> CCheck (Name, NameInfo, Expr)
+    bindField (x, n, a) ret = do
+      x <- return $ mkName x
+      bindProj x n $ \_ -> ret (x, ProjName n, a)
 
 checkField :: C.Constr -> CCheck (C.Name, Natural, Expr)
 checkField (C.Constr c e) ret = do
@@ -624,11 +704,11 @@ argName :: C.Arg -> Check C.Name
 argName (C.Arg (C.Id (C.NotQual x))) = return x
 argName a = scopeError a $ "Expected variable name: " ++ C.printTree a
 
-checkConstructor :: Expr -> [Name] -> C.Constr -> CCheck TypeSig
-checkConstructor d xs (C.Constr c e) ret = do
+checkConstructor :: Expr -> [Name] -> C.Constr -> Check (Name, NameInfo, Expr)
+checkConstructor d xs (C.Constr c e) = do
   (n, a) <- checkScheme e
   args   <- checkConstructorType a d xs
-  bindCon (mkName c) n args $ \c -> ret (Sig c a)
+  return (mkName c, ConName n args, a)
 
 checkConstructorType
   :: Expr
@@ -676,14 +756,14 @@ checkPattern p ret = do
       -- The name in a pattern must be either a constructor or a variable.
       mbDef <- lookupQName $ mkQName x
       case (mbDef, x) of
-        (Just (Right (_, ConName{})), _) -> checkCon x [] ret
-        (Nothing, C.NotQual n) -> bindVar (mkName n) $ ret. VarP
+        (ItsANameInfo _ ConName{}, _) -> checkCon x [] ret
+        (_, C.NotQual n) -> bindVar (mkName n) $ ret. VarP
         (_, _) -> scopeError x $ C.printTree x ++ " not in scope"
     (c, ps) -> checkCon c ps ret
   where
     checkCon c0 ps ret = do
       let c = mkQName c0
-      (n, args) <- resolveCon c
+      (c, n, args) <- resolveCon c
       ps <- insertImplicitPatterns (srcLoc c) n ps
       checkNumberOfConstructorArguments p c ps args
       mapC checkPattern ps $ \ps -> ret (ConP c ps)
@@ -788,16 +868,15 @@ checkAppHead qn = case qn of
   _ -> fallback
   where
     fallback = do
-      varOrName <- resolveQName $ mkQName qn
+      varOrName <- lookupQName $ mkQName qn
       case varOrName of
-        Left x ->
-          return (Other $ Var x, 0)
-        Right (x, i) -> case i of
+        NotFound -> notInScopeError $ mkQName qn
+        ItsAVar x -> return (Other $ Var x, 0)
+        ItsANameInfo x i -> case i of
           ProjName n       -> return (IsProj x, n)
           ConName n a      -> return (IsCon x a, n)
           DefName n        -> return (Other $ Def x, n)
-          ModuleName _ _ _ -> scopeError x $ "Cannot use module name " ++ render x ++ " in term."
-          AmbiguousName{}  -> __IMPOSSIBLE__
+          ModuleName _ _   -> scopeError x $ "Cannot use module name " ++ render x ++ " in term."
 
 checkHiding :: C.Expr -> Check (Hiding, C.Expr)
 checkHiding e = case e of
@@ -839,9 +918,9 @@ mkName :: C.Name -> Name
 mkName (C.Name ((l, c), s)) = Name (SrcLoc l c) s
 
 mkQName :: C.QName -> QName
-mkQName (C.NotQual n) = QName [] $ mkName n
+mkQName (C.NotQual n) = QName (mkName n) []
 mkQName (C.Qual qn n) = case mkQName qn of
-  QName m n' -> QName (m ++ [n']) $ mkName n
+  QName n' m -> QName (mkName n) (n' : m)
 
 telHiding :: [C.Binding] -> (Hiding, [C.Binding], Bool)
 telHiding [] = (0, [], False)
@@ -876,90 +955,20 @@ cWild :: HasSrcLoc a => a -> C.Pattern
 cWild x = C.IdP (C.NotQual (C.Name ((l, c), "_")))
   where SrcLoc l c = srcLoc x
 
-mkRawImportDecl :: QName -> C.Decl
-mkRawImportDecl = C.Import . C.ImportNoArgs . toRawName
-  where
-    toRawName :: QName -> C.QName
-    toRawName (QName ns n) = go $ n : ns
-      where
-        unMkName (Name (SrcLoc l c) s) = C.Name ((l, c), s)
+-- mkRawImportDecl :: QName -> C.Decl
+-- mkRawImportDecl = C.Import . C.ImportNoArgs . toRawName
+--   where
+--     toRawName :: QName -> C.QName
+--     toRawName (QName ns n) = go $ n : ns
+--       where
+--         unMkName (Name (SrcLoc l c) s) = C.Name ((l, c), s)
 
-        go []       = __IMPOSSIBLE__
-        go [n]      = C.NotQual $ unMkName n
-        go (n : ns) = C.Qual (go ns) $ unMkName n
+--         go []       = __IMPOSSIBLE__
+--         go [n]      = C.NotQual $ unMkName n
+--         go (n : ns) = C.Qual (go ns) $ unMkName n
 
 ------------------------------------------------------------------------
 --  HasSrcLoc instances
-
-instance HasSrcLoc C.Name where
-  srcLoc (C.Name ((l, c), _)) = SrcLoc l c
-
-instance HasSrcLoc C.QName where
-  srcLoc (C.Qual n _) = srcLoc n
-  srcLoc (C.NotQual n) = srcLoc n
-
-instance HasSrcLoc C.Expr where
-  srcLoc e = case e of
-    C.Lam (x:_) _ -> srcLoc x
-    C.Lam [] _    -> error $ "nullary lambda: " ++ show e
-    C.Pi tel _    -> srcLoc tel
-    C.Fun a _     -> srcLoc a
-    C.Eq x _      -> srcLoc x
-    C.App (e:_)   -> srcLoc e
-    C.App []      -> error "empty application"
-    C.Id x        -> srcLoc x
-
-instance HasSrcLoc C.Arg where
-  srcLoc (C.Arg e)  = srcLoc e
-  srcLoc (C.HArg e) = srcLoc e
-
-instance HasSrcLoc C.Telescope where
-  srcLoc (C.Tel (b : _)) = srcLoc b
-  srcLoc tel = error $ "empty telescope: " ++ show tel
-
-instance HasSrcLoc C.Binding where
-  srcLoc (C.Bind  (x:_) _) = srcLoc x
-  srcLoc (C.HBind (x:_) _) = srcLoc x
-  srcLoc b = error $ "binding no names: " ++ show b
-
-instance HasSrcLoc C.TypeSig where
-  srcLoc (C.Sig x _) = srcLoc x
-
-instance HasSrcLoc C.Decl where
-  srcLoc d = case d of
-    C.Postulate (d:_)  -> srcLoc d
-    C.Postulate []     -> noSrcLoc
-    C.TypeSig x        -> srcLoc x
-    C.Data x _ _       -> srcLoc x
-    C.Record x _ _     -> srcLoc x
-    C.FunDef x _ _ _   -> srcLoc x
-    C.Open x           -> srcLoc x
-    C.Import x         -> srcLoc x
-    C.Module_ x        -> srcLoc x
-    C.OpenImport x     -> srcLoc x
-
-instance HasSrcLoc C.Import where
-  srcLoc x = case x of
-    C.ImportNoArgs x -> srcLoc x
-    C.ImportArgs x _ -> srcLoc x
-
-instance HasSrcLoc C.Pattern where
-  srcLoc p = case p of
-    C.IdP x    -> srcLoc x
-    C.AppP p _ -> srcLoc p
-    C.HideP p  -> srcLoc p
-
-instance HasSrcLoc C.Module where
-  srcLoc (C.Module x _ _) = srcLoc x
-
-instance HasSrcLoc C.Params where
-  srcLoc (C.ParamDecl (x : _)) = srcLoc x
-  srcLoc (C.ParamDef (x : _)) = srcLoc x
-  srcLoc _ = noSrcLoc
-
-instance HasSrcLoc C.HiddenName where
-  srcLoc (C.NotHidden n) = srcLoc n
-  srcLoc (C.Hidden n) = srcLoc n
 
 instance HasSrcLoc AppHead where
   srcLoc h = case h of
