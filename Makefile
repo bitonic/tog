@@ -1,16 +1,16 @@
-bnfc_output = $(patsubst %,bnfc/Syntax/Raw/%,Abs.hs ErrM.hs Layout.hs Print.hs Lex.x Par.y)
+bnfc_output = $(patsubst %,bnfc/Raw/%,Abs.hs ErrM.hs Layout.hs Print.hs Lex.x Par.y)
 hs_sources = $(shell find src/ -name '*.hs')
-alex_file = bnfc/Syntax/Raw/Lex
-happy_file = bnfc/Syntax/Raw/Par
+alex_file = bnfc/Raw/Lex
+happy_file = bnfc/Raw/Par
 executable = dist/build/tog/tog
 
 .PHONY: build
 build: $(executable)
 
-$(bnfc_output): src/Syntax/Raw.cf
+$(bnfc_output): src/Raw/Raw.cf
 	-@mkdir -p bnfc
 	-@rm $(bnfc_output)
-	@(cd bnfc && bnfc -p Syntax -d ../$<)
+	@(cd bnfc && bnfc -d ../$<)
 
 $(alex_file).hs: $(alex_file).x
 	alex $<
@@ -20,6 +20,9 @@ $(happy_file).hs: $(happy_file).y
 
 $(executable): $(bnfc_output) $(hs_sources) tog.cabal
 	cabal build
+
+.PHONY: bnfc
+bnfc: $(bnfc_output)
 
 .PHONY: clean
 clean:

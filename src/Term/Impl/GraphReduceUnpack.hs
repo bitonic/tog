@@ -3,10 +3,10 @@ module Term.Impl.GraphReduceUnpack (GraphReduceUnpack) where
 import           Data.IORef                       (IORef, readIORef, writeIORef, newIORef)
 import           System.IO.Unsafe                 (unsafePerformIO)
 
-import           Syntax
+import           Names
 import qualified Term.Types                       as T
 import           Term.Impl.Common
-import           Prelude.Extended
+import           TogPrelude
 
 -- Base terms
 ------------------------------------------------------------------------

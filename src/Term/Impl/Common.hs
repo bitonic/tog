@@ -17,9 +17,9 @@ import qualified Data.HashSet                     as HS
 import           Data.Traversable                 (mapM, sequence)
 
 import           Instrumentation
-import           Prelude.Extended                 hiding (foldr, mapM, sequence)
-import           Syntax
-import qualified Syntax.Abstract                  as SA
+import           TogPrelude                 hiding (foldr, mapM, sequence)
+import           Names
+import qualified Abstract                         as SA
 import qualified PrettyPrint                      as PP
 import           Term.Synonyms
 import           Term.Types
@@ -325,21 +325,21 @@ internalToTerm t0 = do
     Equal type_ x y ->
       SA.Equal <$> internalToTerm type_ <*> internalToTerm x <*> internalToTerm y
     Refl ->
-      return $ SA.Refl SA.noSrcLoc
+      return $ SA.Refl noSrcLoc
     Con dataCon args ->
       SA.Con (opndKey dataCon) <$> mapM internalToTerm (opndArgs dataCon ++ args)
     Set ->
-      return $ SA.Set SA.noSrcLoc
+      return $ SA.Set noSrcLoc
     App h args -> do
       (h', args1) <- case h of
         Var v ->
-          return (SA.Var (SA.name (PP.render v)), [])
+          return (SA.Var (mkName (PP.render v)), [])
         Def (Opened f args') ->
           (SA.Def f,) <$> mapM internalToTerm args'
         Meta mv ->
-          return $ (SA.Var (SA.Name (srcLoc mv) (PP.render mv)), [])
+          return $ (SA.Var (Name (srcLoc mv) (PP.render mv)), [])
         J ->
-          return (SA.J SA.noSrcLoc, [])
+          return (SA.J noSrcLoc, [])
       args2 <- forM args $ \arg -> case arg of
         Apply t -> SA.Apply <$> internalToTerm t
         -- TODO this is really less than ideal -- we want to see what

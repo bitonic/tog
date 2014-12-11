@@ -1,18 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
-module TypeCheck3.Check
+-- | Type checks a term, treating meta-variables as object variables (no
+-- unification).
+module TypeCheck
   ( check
   , definitionallyEqual
   , instantiateMeta
   ) where
 
-import           Prelude.Extended
+import           TogPrelude
 import           Instrumentation
-import           Syntax
+import           Names
 import           Term
 import           PrettyPrint                      ((<+>), ($$), (//>), render)
 import qualified PrettyPrint                      as PP
-import           TypeCheck3.Monad
-import           TypeCheck3.Common
+import           Monad
+import           Error
 
 -- | @check Γ t A@ checks that @t@ is of type @A@ in @Γ@, treating
 -- metavariables as object variables.

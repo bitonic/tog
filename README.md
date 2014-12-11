@@ -35,12 +35,26 @@ To run the (sadly quite limited) tests, run
 
 ## Module structure
 
-Top-level module interface:
+Only the top-level modules are supposed to be imported.  Some of them,
+we often import qualified.  If you wanted to import everything:
 
-    import           Conf
-    import           PrettyPrint
-    import           Syntax
-    import qualified Syntax.Raw                       as SR
-    import qualified Syntax.Abstract                  as SA
-    import           Term
-    import           TypeCheck3
+    import qualified Abstract
+    import CheckFile
+    import Elaborate
+    import Error
+    import Instrumentation
+    import Main
+    import Monad
+    import Names
+    import Parse
+    import PrettyPrint
+    import qualified Raw
+    import ScopeCheck
+    import Syntax
+    import Term
+    import TogPrelude
+    import TypeCheck
+    import Unify
+
+The exception are modules that ideally wouldn't be in this repo, namely
+`Data.Collect`.

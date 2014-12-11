@@ -206,7 +206,7 @@
 -- >   import M.N
 -- >   open M.N
 -- >   postulate M.bar : M.N.X -> M.N.X
-module Syntax.Abstract.Scope (scopeCheckModule, scopeCheckFile) where
+module ScopeCheck (scopeCheckModule, scopeCheckFile) where
 
 import           Prelude hiding (length)
 
@@ -218,10 +218,12 @@ import qualified Control.Lens as L
 import           Control.Lens (at)
 import           Data.List.NonEmpty (NonEmpty(..), (<|))
 
-import           Prelude.Extended
+import           TogPrelude
 import           Instrumentation
-import qualified Syntax.Raw                       as C
-import           Syntax.Abstract.Abs
+import           Names                            hiding (mkName)
+import           Parse
+import qualified Raw                              as C
+import           Abstract
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      (render, Pretty(..), (<+>), ($$), (//>))
 
@@ -499,10 +501,11 @@ scopeCheckModule (C.Module (C.Name ((l, c), s)) pars ds) =
   where
     q = QName (Name (SrcLoc l c) s) []
 
+-- Useful for debugging.
 scopeCheckFile :: FilePath -> IO ()
 scopeCheckFile fp = do
   s <- readFile fp
-  case C.parseModule s of
+  case parseModule s of
     Left err -> putStrLn $ render err
     Right raw -> case scopeCheckModule raw of
       Left err -> putStrLn $ render err

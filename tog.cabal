@@ -10,8 +10,8 @@ tested-with:         GHC == 7.6.3
 
 executable tog
   main-is:             Main.hs
-  other-modules:       Syntax.Raw.Lex
-                     , Syntax.Raw.Par
+  other-modules:       Raw.Lex
+                     , Raw.Par
 
   build-depends:       array >= 0.4
                      , base >= 4.6

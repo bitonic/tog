@@ -7,7 +7,7 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 import qualified Text.PrettyPrint.Boxes           as Boxes
 import           Text.Printf                      (printf)
 
-import           Prelude.Extended
+import           TogPrelude
 
 type Key = String
 

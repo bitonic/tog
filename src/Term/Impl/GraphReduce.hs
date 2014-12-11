@@ -5,7 +5,7 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Term.Types
 import           Term.Impl.Common
-import           Prelude.Extended
+import           TogPrelude
 
 -- Base terms
 ------------------------------------------------------------------------

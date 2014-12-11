@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module TypeCheck3.Solve.Simple
+module Unify.Simple
   ( SolveState
   , initSolveState
   , solve
@@ -12,16 +12,16 @@ import qualified Data.HashSet                     as HS
 import qualified Data.Set                         as Set
 
 import           Instrumentation
-import           Syntax
-import           Prelude.Extended
+import           Names
+import           TogPrelude
 import           PrettyPrint                      (($$), (<+>), (//>), (//), group, indent, hang)
 import qualified PrettyPrint                      as PP
 import           Term
-import qualified TypeCheck3.Common                as Common
-import           TypeCheck3.Common                hiding (Constraint(..), Constraints)
-import           TypeCheck3.Monad
-import           TypeCheck3.Check
-import           TypeCheck3.Solve.Common
+import qualified Elaborate                        as Elaborate
+import           Monad
+import           TypeCheck
+import           Unify.Common
+import           Error
 
 #include "impossible.h"
 
@@ -66,14 +66,14 @@ instance Monoid (Constraint t) where
   c1       `mappend` Conj cs2 = Conj (c1 : cs2)
   c1       `mappend` c2       = Conj [c1, c2]
 
-constraint :: (IsTerm t) => Common.Constraint t -> Constraint t
-constraint (Common.JmEq ctx type1 t1 type2 t2) =
+constraint :: (IsTerm t) => Elaborate.Constraint t -> Constraint t
+constraint (Elaborate.JmEq ctx type1 t1 type2 t2) =
   Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
 
 initSolveState :: SolveState t
 initSolveState = SolveState 0 []
 
-solve :: forall t r. (IsTerm t) => Common.Constraint t -> TC t r (SolveState t) ()
+solve :: forall t r. (IsTerm t) => Elaborate.Constraint t -> TC t r (SolveState t) ()
 solve c = do
   debugBracket_ "solve" "" $ do
     count <- bumpCount

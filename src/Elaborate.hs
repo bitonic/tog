@@ -1,7 +1,8 @@
+-- | Turns some abstract expression in a term.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module TypeCheck3.Elaborate
+module Elaborate
   ( -- * 'Env'
     Block
   , Env
@@ -15,6 +16,8 @@ module TypeCheck3.Elaborate
   , openDefinitionInEnv_
   , startBlock
     -- * Elaboration
+  , Constraint(..)
+  , Constraints
   , elaborate
   ) where
 
@@ -23,12 +26,12 @@ import           Control.Monad.State              (modify)
 import qualified Data.HashMap.Strict              as HMS
 
 import           Instrumentation
-import           Syntax
-import           Prelude.Extended
-import qualified Syntax.Abstract                  as SA
+import           Names
+import           TogPrelude
+import qualified Abstract                         as SA
 import           Term
-import           TypeCheck3.Common
-import           TypeCheck3.Monad
+-- import           TypeCheck3.Common  
+import           Monad
 import           PrettyPrint                      (($$), (//>))
 import qualified PrettyPrint                      as PP
 
@@ -155,6 +158,32 @@ lookupName n = do
 
 -- Elaboration
 ------------------------------------------------------------------------
+
+-- Constraints
+--------------
+
+type Constraints t = [Constraint t]
+
+data Constraint t
+  = JmEq (Ctx t)
+         (Type t) (Term t)
+         (Type t) (Term t)
+
+instance PrettyM t (Constraint t) where
+  prettyM c = case c of
+    JmEq ctx type1 t1 type2 t2 -> do
+      ctxDoc <- prettyM ctx
+      type1Doc <- prettyM type1
+      t1Doc <- prettyM t1
+      type2Doc <- prettyM type2
+      t2Doc <- prettyM t2
+      return $
+        "JmEq" $$
+        "ctx:" //> ctxDoc $$
+        "t:" //> t1Doc $$
+        "A:" //> type1Doc $$
+        "u:" //> t2Doc $$
+        "B:" //> type2Doc
 
 -- | Pre: In @elaborate Γ τ t@, @Γ ⊢ τ : Set@.
 --
@@ -331,3 +360,4 @@ elaborateApp type_ h (SA.Proj projName0 : elims) = atSrcLoc projName0 $ do
   type' <- instantiate_ type1 rec_
   t <- eliminate rec_ [Proj proj]
   expect type_ type' t
+

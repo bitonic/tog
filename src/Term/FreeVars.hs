@@ -4,7 +4,7 @@ module Term.FreeVars
   , freeVars
   ) where
 
-import           Prelude.Extended
+import           TogPrelude
 import qualified Data.Set                         as Set
 
 import           Term.Types

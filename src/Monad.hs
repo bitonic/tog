@@ -1,9 +1,10 @@
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module TypeCheck3.Monad
+-- | The monad that we use in elaboration, unification, and
+-- type-checking in general.
+module Monad
   ( -- * Monad definition
     TC
   , TC_
@@ -19,6 +20,7 @@ module TypeCheck3.Monad
     -- ** Errors
   , catchTC
   , typeError
+  , checkError
   , assert
   , assert_
     -- ** Source location
@@ -36,7 +38,12 @@ module TypeCheck3.Monad
   , addDataCon
   , addModule
   , addMeta
+  , addMetaInCtx
   , uncheckedInstantiateMeta
+    -- * Miscellanea
+  , extendContext
+  , unrollPiWithNames
+  , unrollPi
   ) where
 
 import qualified Control.Lens                     as L
@@ -44,12 +51,13 @@ import           Control.Monad.State.Strict       (StateT(StateT), runStateT, Mo
 import           Control.Monad.Reader             (MonadReader(..), asks)
 import           Control.Monad.Except             (catchError)
 
-import           Prelude.Extended
+import           TogPrelude
 import           Instrumentation
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import qualified PrettyPrint                      as PP
-import           Syntax
+import           Names
 import           Term
+import           Error
 
 -- Monad definition
 ------------------------------------------------------------------------
@@ -148,6 +156,9 @@ typeError err = TC $ do
   loc <- use tsSrcLoc
   throwE $ DocErr loc err
 
+checkError :: (IsTerm t) => CheckError t -> TC_ t a
+checkError err = typeError =<< prettyM err
+
 assert :: (PP.Doc -> TC t r s PP.Doc) -> TC t r s a -> TC t r s a
 assert msg m = do
   mbErr <- catchTC m
@@ -220,6 +231,14 @@ addMeta type_ = do
           "type:" //> typeDoc
   debugBracket "addMeta" msg $ return mv
 
+addMetaInCtx
+  :: (IsTerm t)
+  => Ctx t -> Type t -> TC_ t (Term t)
+addMetaInCtx ctx type_ = do
+  type' <- ctxPi ctx type_
+  mv <- addMeta type'
+  ctxApp (meta mv []) ctx
+
 uncheckedInstantiateMeta :: Meta -> MetaBody t -> TC t r s ()
 uncheckedInstantiateMeta mv mvb =
   modifySignature $ \sig -> sigInstantiateMeta sig mv mvb
@@ -229,3 +248,61 @@ uncheckedInstantiateMeta mv mvb =
 
 modifySignature :: (Signature t -> Signature t) -> TC t r s ()
 modifySignature f = TC $ tsSignature %= f
+
+-- Miscellanea
+------------------------------------------------------------------------
+
+-- Miscellanea
+------------------------------------------------------------------------
+
+-- Telescope & context utils
+----------------------------
+
+-- | Useful just for debugging.
+extendContext
+  :: (IsTerm t, MonadTerm t m)
+  => Ctx (Type t) -> (Name, Type t) -> m (Ctx (Type t))
+extendContext ctx type_ = do
+  let ctx' = ctx :< type_
+  debug "extendContext" $ prettyM ctx'
+  return ctx'
+
+-- Unrolling Pis
+----------------
+
+-- TODO remove duplication
+
+unrollPiWithNames
+  :: (IsTerm t)
+  => Type t
+  -- ^ Type to unroll
+  -> [Name]
+  -- ^ Names to give to each parameter
+  -> TC_ t (Tel (Type t), Type t)
+  -- ^ A telescope with accumulated domains of the pis and the final
+  -- codomain.
+unrollPiWithNames type_ [] =
+  return (T0, type_)
+unrollPiWithNames type_ (name : names) = do
+  typeView <- whnfView type_
+  case typeView of
+    Pi domain codomain -> do
+      (ctx, endType) <- unrollPiWithNames codomain names
+      return ((name, domain) :> ctx, endType)
+    _ -> do
+      checkError $ ExpectingPi type_
+
+unrollPi
+  :: (IsTerm t, MonadTerm t m)
+  => Type t
+  -- ^ Type to unroll
+  -> m (Tel (Type t), Type t)
+unrollPi type_ = do
+  typeView <- whnfView type_
+  case typeView of
+    Pi domain codomain -> do
+      name <- getAbsName_ codomain
+      (ctx, endType) <- unrollPi codomain
+      return ((name, domain) :> ctx, endType)
+    _ ->
+      return (T0, type_)

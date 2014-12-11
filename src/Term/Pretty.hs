@@ -6,8 +6,8 @@ module Term.Pretty () where
 
 import qualified Data.HashSet                     as HS
 
-import           Prelude.Extended
-import           Syntax
+import           TogPrelude
+import           Names
 import           PrettyPrint                      ((<+>), ($$), (</>), (//>), ($$>))
 import qualified PrettyPrint                      as PP
 import           Term.Types

@@ -18,7 +18,7 @@ import           Control.Exception                (bracket)
 import           Instrumentation.Debug
 import           Instrumentation.Timing
 import           Instrumentation.Conf
-import           Prelude.Extended
+import           TogPrelude
 
 instrument :: Conf -> IO a -> IO a
 instrument conf m = bracket init' (\() -> halt) (\() -> m)

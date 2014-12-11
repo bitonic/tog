@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module TypeCheck3
+-- | Processes a @tog@ file.  This provides the function that will be
+-- used by the main program.
+module CheckFile
   ( -- * Program checking
     checkFile
   ) where
@@ -11,17 +13,17 @@ import           Data.Proxy                       (Proxy(Proxy))
 import qualified Data.HashSet                     as HS
 
 import           Instrumentation
-import           Prelude.Extended
-import           Syntax
-import qualified Syntax.Abstract                  as SA
+import           TogPrelude
+import           Names
+import qualified Abstract                         as SA
 import           Term
 import           PrettyPrint                      ((<+>), render, (//>), ($$))
 import qualified PrettyPrint                      as PP
-import           TypeCheck3.Monad
-import           TypeCheck3.Check
-import           TypeCheck3.Common
-import           TypeCheck3.Elaborate
-import           TypeCheck3.Solve
+import           Monad
+import           TypeCheck
+import           Elaborate
+import           Unify
+import           Error
 
 #include "impossible.h"
 

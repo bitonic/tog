@@ -1,4 +1,4 @@
--- | Terms and a lot of facilities.
+-- | Terms and a lot of facilities.  Output of typechecking.
 module Term
   ( module Term.Types
   , module Term.Synonyms

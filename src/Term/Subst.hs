@@ -2,7 +2,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Term.Subst (Subst(..)) where
 
-import           Prelude.Extended
+import           TogPrelude
 import           Term.Synonyms
 
 -- | A substitution σ : Δ → Γ can be seen as a list of terms Γ ⊢ vᵢ : Aᵢ

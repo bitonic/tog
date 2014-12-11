@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP #-}
-module Prelude.Extended
+module TogPrelude
   ( module Prelude
   , (!!)
   , (***)

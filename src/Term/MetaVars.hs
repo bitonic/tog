@@ -2,8 +2,8 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Term.MetaVars where
 
-import           Prelude.Extended
-import           Syntax
+import           TogPrelude
+import           Names
 import           Term.Types
 
 instance IsTerm t => Metas t (Clause t) where

@@ -9,10 +9,11 @@ import           Data.List.Split                  (splitOn)
 import           Instrumentation
 import           PrettyPrint                      ((<+>), ($$))
 import qualified PrettyPrint                      as PP
-import           Prelude.Extended
+import           TogPrelude
 import           Term
-import           TypeCheck3
-import           Syntax
+import           CheckFile
+import           Parse
+import           ScopeCheck
 
 parseTypeCheckConf :: Parser Conf
 parseTypeCheckConf = Conf

@@ -6,7 +6,7 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 import           Term.Types
 import           Term.Synonyms
 import           Term.Impl.Common
-import           Prelude.Extended
+import           TogPrelude
 
 
 data Hashed = H Int (TermView Hashed)

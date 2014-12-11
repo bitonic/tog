@@ -24,7 +24,7 @@ module PrettyPrint
 import qualified Data.Map.Strict                  as Map.Strict
 import qualified Data.Set                         as Set
 
-import           Prelude.Extended
+import           TogPrelude
 import qualified Text.PrettyPrint.Leijen          as PP
 import           Text.PrettyPrint.Leijen          hiding ((<$>), (<$$>), renderPretty, renderCompact, Pretty(..), list, parens, tupled, hang, indent, (<>))
 

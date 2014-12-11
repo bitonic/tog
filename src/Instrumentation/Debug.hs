@@ -19,7 +19,7 @@ import           System.IO.Unsafe                 (unsafePerformIO)
 
 import           Instrumentation.Conf
 import           Instrumentation.Timing
-import           Prelude.Extended
+import           TogPrelude
 import           PrettyPrint                      as PP
 
 type DebugLabel = String

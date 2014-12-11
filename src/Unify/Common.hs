@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module TypeCheck3.Solve.Common where
+module Unify.Common where
 
 import qualified Prelude
 import qualified Data.HashSet                     as HS
@@ -8,14 +8,13 @@ import qualified Data.Set                         as Set
 import           Data.Tree                        (Tree(Node), subForest, rootLabel, Forest)
 
 import           Instrumentation
-import           Syntax
-import           Prelude.Extended
+import           Names
+import           TogPrelude
 import           PrettyPrint                      (($$), (<+>), (//>))
 import qualified PrettyPrint                      as PP
 import           Term
-import           TypeCheck3.Common
-import           TypeCheck3.Monad
-import           TypeCheck3.Check
+import           Monad
+import           TypeCheck
 import           Data.Collect
 
 #include "impossible.h"

@@ -156,6 +156,9 @@ module Term.Types
   , getAbsName
   , getAbsName_
   , eliminate
+    -- * Clauses invertibility
+  , termHead
+  , checkInvertibility
   ) where
 
 import           Control.Monad.Trans.Reader       (ReaderT, runReaderT, ask)
@@ -163,8 +166,8 @@ import qualified Data.HashSet                     as HS
 import qualified Data.HashMap.Strict              as HMS
 
 import           Instrumentation
-import           Prelude.Extended
-import           Syntax
+import           TogPrelude
+import           Names
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import           Term.Subst
@@ -1349,3 +1352,50 @@ data Opened t
           -- 'Contextual' anymore.
           !(HMS.HashMap Name (Definition t))
 -}
+
+-- Clauses invertibility
+------------------------
+
+termHead :: (IsTerm t, MonadTerm t m) => t -> m (Maybe TermHead)
+termHead t = do
+  tView <- whnfView t
+  case tView of
+    App (Def opnd) _ -> do
+      let f = opndKey opnd
+      fDef <- getDefinition opnd
+      return $ case fDef of
+        Constant _ Data{}      -> Just $ DefHead f
+        Constant _ Record{}    -> Just $ DefHead f
+        Constant _ Postulate{} -> Just $ DefHead f
+        Constant _ Function{}  -> Nothing
+        DataCon{}              -> Nothing
+        Projection{}           -> Nothing
+        Module{}               -> __IMPOSSIBLE__
+    App{} -> do
+      return Nothing
+    Con f _ ->
+      return $ Just $ DefHead $ opndKey f
+    Pi{} ->
+      return $ Just $ PiHead
+    Lam{} ->
+      return Nothing
+    Refl{} ->
+      return Nothing
+    Set{} ->
+      return Nothing
+    Equal{} ->
+      return Nothing
+
+checkInvertibility
+  :: (IsTerm t, MonadTerm t m) => [Closed (Clause t)] -> m (Closed (Invertible t))
+checkInvertibility = go []
+  where
+    go injClauses [] =
+      return $ Invertible $ reverse injClauses
+    go injClauses (clause@(Clause _ body) : clauses) = do
+      th <- termHead body
+      case th of
+        Just tHead | Nothing <- lookup tHead injClauses ->
+          go ((tHead, clause) : injClauses) clauses
+        _ ->
+          return $ NotInvertible $ reverse (map snd injClauses) ++ (clause : clauses)

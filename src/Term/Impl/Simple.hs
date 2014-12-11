@@ -1,6 +1,6 @@
 module Term.Impl.Simple (Simple) where
 
-import           Prelude.Extended
+import           TogPrelude
 import           Term.Types
 import           Term.Impl.Common
 import           System.IO.Unsafe                 (unsafePerformIO)
