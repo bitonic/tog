@@ -1,5 +1,5 @@
 name:                tog
-version:             0.1.0.0
+version:             0.1.0
 license:             BSD3
 author:              Francesco Mazzoli
 maintainer:          f@mazzo.li
@@ -21,7 +21,6 @@ executable tog
                      , either >= 4.3.2
                      , hashable >= 1.2
                      , hashtables >= 1.1
-                     , haskeline >= 0.7
                      , lens >= 4.4
                      , mtl >= 2.1
                      , nats >= 0.2

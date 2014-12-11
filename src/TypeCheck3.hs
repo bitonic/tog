@@ -5,17 +5,10 @@ module TypeCheck3
   ( -- * Program checking
     checkFile
   ) where
-  --   -- * Interactive mode
-  -- , Command
-  -- , parseCommand
-  -- , runCommand
-  -- ) where
 
 import qualified Control.Lens                     as L
 import           Data.Proxy                       (Proxy(Proxy))
 import qualified Data.HashSet                     as HS
--- import           Safe                             (readMay)
--- import qualified Text.ParserCombinators.ReadP     as ReadP
 
 import           Instrumentation
 import           Prelude.Extended
@@ -509,96 +502,3 @@ checkFile' _ decls0 ret = do
     drawLine :: MonadIO m => m ()
     drawLine =
       putStrLn' "------------------------------------------------------------------------"
-
-{-
--- Commands
-------------------------------------------------------------------------
-
-data Command
-  = TypeOf SA.Expr
-  | Normalize SA.Expr
-  | ShowConstraints
-  | ShowMeta Meta
-  | Help
-  deriving (Eq, Show)
-
-parseCommand :: Signature t -> String -> Either PP.Doc Command
-parseCommand ts s0 = runReadP $
-  (do void $ ReadP.string ":t " <|> ReadP.string ":type "
-      return (\s -> TypeOf <$> parseAndScopeCheck s)) <|>
-  (do void $ ReadP.string ":n " <|> ReadP.string ":normalize "
-      return (\s -> Normalize <$> parseAndScopeCheck s)) <|>
-  (do void $ ReadP.string ":c" <|> ReadP.string ":constraints"
-      ReadP.eof
-      return (\_ -> Right ShowConstraints)) <|>
-  (do void $ ReadP.string ":mv" <|> ReadP.string ":metavar "
-      return (\s -> ShowMeta <$> parseMeta s)) <|>
-  (do void $ ReadP.string ":h" <|> ReadP.string ":help"
-      ReadP.eof
-      return (\_ -> Right Help))
-  where
-    scope = sigToScope ts
-
-    parseAndScopeCheck = parseExpr >=> SA.scopeCheckExpr scope
-
-    parseMeta s =
-      case readMay s of
-        Just mv ->
-          Right MV{metaId = mv, metaSrcLoc = SA.noSrcLoc}
-        _ ->
-          Left $ "Invalid metavar id" <+> PP.text s
-
-    runReadP :: ReadP.ReadP (String -> Either PP.Doc Command) -> Either PP.Doc Command
-    runReadP p = case ReadP.readP_to_S p s0 of
-      []            -> Left "Unrecognised command"
-      ((f, s') : _) -> f s'
-
-runCommand :: (IsTerm t) => Signature t -> Command -> IO (PP.Doc, Signature t)
-runCommand ts cmd =
-  case cmd of
-    TypeOf synT -> runTC' $ do
-      (_, type_) <- inferExpr C0 synT
-      typeDoc <- prettyM type_
-      return $ "type:" //> typeDoc
-    Normalize synT -> runTC' $ do
-      (t, type_) <- inferExpr C0 synT
-      typeDoc <- prettyM type_
-      tDoc <- prettyM t
-      return $
-        "type:" //> typeDoc $$
-        "term:" //> tDoc
-    ShowConstraints -> runTC' $ do
-      prettyM =<< L.use csSolveState
-    ShowMeta mv -> runTC' $ do
-      mvType <- getMetaType mv
-      mbMvBody <- lookupMetaBody mv
-      mvTypeDoc <- prettyM mvType
-      mvBodyDoc <- case mbMvBody of
-        Nothing -> return "?"
-        Just mi -> prettyM mi
-      return $
-        PP.pretty mv <+> ":" <+> mvTypeDoc $$
-        PP.pretty mv <+> "=" <+> mvBodyDoc
-    Help -> do
-      return $
-        ":t [EXPR], :type [EXPR]\t\tTypecheck an expression" $$
-        ":n [EXPR], :normalize [EXPR]\tTypecheck and normalize an expression" $$
-        ":c, :constraints\t\tShow unsolved constraints" $$
-        ":mv [ID], metavar [ID]\t\tDisplay type and body (if instantiated) of a metavariable" $$
-        ":h, :help\t\t\tDisplay this message"
-  where
-    runTC' m = do
-      (mbErr, _) <- runTC ts m
-      let doc = case mbErr of
-                  Left err   -> "Error:" //> err
-                  Right doc0 -> doc0
-      return (doc, ts)
-
-inferExpr
-  :: (IsTerm t)
-  => Ctx t -> SA.Expr -> CheckM t (Term t, Type t)
-inferExpr ctx synT = do
-  type_ <- addMetaInCtx ctx set
-  t <- checkExpr ctx synT type_
-  return (t, type_)
--}

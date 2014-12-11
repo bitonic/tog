@@ -4,7 +4,6 @@ import           Prelude                          hiding (interact)
 import           Options.Applicative
 import           Options.Applicative.Types
 import           System.Exit                      (exitFailure)
-import qualified System.Console.Haskeline         as Haskeline
 import           Data.List.Split                  (splitOn)
 
 import           Instrumentation
@@ -97,50 +96,15 @@ parseMain :: Parser (IO ())
 parseMain =
   typeCheck
     <$> argument str (metavar "FILE")
-    <*> parseInteractive
     <*> parseTypeCheckConf
   where
-    parseInteractive =
-      switch
-      ( long "interactive" <> short 'i' <>
-        help "Start interpreter once the file is loaded."
-      )
-
-    typeCheck file interactive conf0 = do
-      conf <- if interactive && confDebug conf0
-        then do
-          putStrLn "-i incompatible with -d, disabling -d"
-          return $ confDisableDebug conf0
-        else return conf0
+    typeCheck file conf = do
       instrument conf $ do
-        processFile file $ \ts mbErr -> do
+        processFile file $ \_ mbErr -> do
           forM_ mbErr $ \err -> do
             silent <- confQuiet <$> readConf
             unless silent $ putStrLn (PP.render err)
-            unless interactive exitFailure
-          when interactive $
-            Haskeline.runInputT interactSettings (interact' ts)
-
-    interactSettings = Haskeline.defaultSettings
-      { Haskeline.historyFile    = Just "~/.tog_history"
-      , Haskeline.autoAddHistory = True
-      }
-
-    interact' = error "TODO"
-{-
-    interact' :: (IsTerm t) => TCState' t -> Haskeline.InputT IO ()
-    interact' ts = do
-      mbS <- Haskeline.getInputLine "> "
-      forM_ mbS $ \s ->
-        case parseCommand ts s of
-          Left err -> do
-            lift $ putStrLn $ PP.render err
-            interact' ts
-          Right cmd -> do
-            (doc, ts') <- lift $ runCommand ts cmd
-            lift $ putStrLn $ PP.render doc
-            interact' ts'
--}
+            exitFailure
 
 processFile
   :: FilePath
