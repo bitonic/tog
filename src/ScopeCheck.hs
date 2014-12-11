@@ -569,14 +569,14 @@ checkDecls ds ret = case ds of
       checkDecls ds $ \ds -> do
         ret (TypeSig sig : ds)
   C.Data x pars mbDataBody : ds -> case mbDataBody of
-    C.NoDataBody set -> case isParamDecl pars of
+    C.DataDecl set -> case isParamDecl pars of
       Nothing -> scopeError x $ "Bad data declaration " ++ C.printTree x
       Just ps -> checkDataOrRecDecl x ps set $ \sig -> do
                    checkDecls ds $ \ds -> do
                      ret (Data sig : ds)
-    C.DataBody cs -> case isParamDef pars of
+    C.DataDef cs -> case isParamDef pars of
       Nothing -> do
-        scopeError x $ "Bad data definition"
+        scopeError x "Bad data declaration"
       Just xs -> do
         (x, n) <- resolveLocalDef $ mkName x
         when (n > length xs) $
@@ -590,13 +590,24 @@ checkDecls ds ret = case ds of
         let bindCon (c, ni, a) ret = bindLocalName c ni $ \qn -> ret $ Sig qn a
         mapC bindCon cs $ \cs ->
           checkDecls ds $ \ds' -> ret (DataDef x xs cs : ds')
+    C.DataDeclDef set cs -> case isParamDecl pars of
+      Nothing ->
+        scopeError x $ "Bad data declaration"
+      Just bindings -> do
+        -- If we got a parameter declaration and a body, split this into
+        -- two.
+        xs <- mkHiddenNames bindings
+        let ds' = C.Data x pars (C.DataDecl set) :
+                  C.Data x (C.ParamDef xs) (C.DataDef cs):
+                  ds
+        checkDecls ds' ret
   C.Record x pars mbRecBody : ds -> case mbRecBody of
-    C.NoRecordBody set -> case isParamDecl pars of
+    C.RecordDecl set -> case isParamDecl pars of
       Nothing -> scopeError x $ "Bad record declaration " ++ C.printTree x
       Just ps -> checkDataOrRecDecl x ps set $ \sig -> do
                    checkDecls ds $ \ds -> do
                      ret (Record sig : ds)
-    C.RecordBody con fs -> case isParamDef pars of
+    C.RecordDef con fs -> case isParamDef pars of
       Nothing -> do
         scopeError x $ "Bad record definition"
       Just xs -> do
@@ -609,13 +620,20 @@ checkDecls ds ret = case ds of
         (con, ni, fs) <- mapC bindVar xs $ \_ -> do
           checkFields (getFields fs) $ \fs ->
             return (mkName con, ConName 0 (length fs), fs)
-        -- TODO this is wrong: we should only allow instantiation of
-        -- locally defined functions, not all.
         bindLocalName con ni $ \con -> do
           let bindProj (f, ni, a) ret = bindLocalName f ni $ \qn -> ret $ Sig qn a
           mapC bindProj fs $ \fs -> do
             checkDecls ds $ \ds' -> do
               ret (RecDef x xs con fs : ds')
+    C.RecordDeclDef set con fs -> case isParamDecl pars of
+      Nothing -> do
+        scopeError x $ "Bad record definition"
+      Just bindings -> do
+        xs <- mkHiddenNames bindings
+        let ds' = C.Record x pars (C.RecordDecl set) :
+                  C.Record x (C.ParamDef xs) (C.RecordDef con fs):
+                  ds
+        checkDecls ds' ret
   C.FunDef f _ _ _ : _ -> do
     (clauses, ds) <- return $ takeFunDefs f ds
     (f, n) <- resolveLocalDef $ mkName f
@@ -955,6 +973,12 @@ isParamDecl :: C.Params -> Maybe [C.Binding]
 isParamDecl C.NoParams       = Just []
 isParamDecl (C.ParamDecl ps) = Just ps
 isParamDecl C.ParamDef{}     = Nothing
+
+mkHiddenNames :: [C.Binding] -> Check [C.HiddenName]
+mkHiddenNames xs = concat <$> mapM goBinding xs
+  where
+    goBinding (C.Bind args _) = map C.NotHidden <$> mapM argName args
+    goBinding (C.HBind args _) = map C.Hidden <$> mapM argName args
 
 isSet :: C.Name -> Check ()
 isSet (C.Name (_, "Set")) = return ()

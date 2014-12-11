@@ -42,11 +42,13 @@ NotHidden. HiddenName ::= Name;
 Hidden.    HiddenName ::= "{" Name "}";
 separator nonempty HiddenName "";
 
-NoDataBody. DataBody ::= ":" Name;
-DataBody.   DataBody ::= "where" "{" [Constr] "}";
+DataDecl.    DataBody ::= ":" Name;
+DataDef.     DataBody ::= "where" "{" [Constr] "}";
+DataDeclDef. DataBody ::= ":" Name "where" "{" [Constr] "}";
 
-NoRecordBody. RecordBody ::= ":" Name;
-RecordBody.   RecordBody ::= "where" "{" "constructor" Name Fields "}";
+RecordDecl.    RecordBody ::= ":" Name;
+RecordDef.     RecordBody ::= "where" "{" "constructor" Name Fields "}";
+RecordDeclDef. RecordBody ::= ":" Name "where" "{" "constructor" Name Fields "}";
 
 NoFields. Fields ::= ;
 Fields.   Fields ::= ";" "field" "{" [Constr] "}";
