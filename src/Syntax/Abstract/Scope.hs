@@ -970,8 +970,7 @@ cWild x = C.IdP (C.NotQual (C.Name ((l, c), "_")))
   where SrcLoc l c = srcLoc x
 
 mkRawImportDecl :: QName -> C.Decl
-mkRawImportDecl qn = let x = C.Import . C.ImportNoArgs . toRawName $ qn
-                     in trace (render x) x
+mkRawImportDecl = C.Import . C.ImportNoArgs . toRawName
   where
     toRawName :: QName -> C.QName
     toRawName (QName n ns) = go $ n : ns

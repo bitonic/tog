@@ -47,7 +47,7 @@ instance Hashable Name where
 
 -- | A qualified name is a non-empty list of names.  We store them
 -- backwards, so that @M.N.f@ will be stored as @f :| [N, M]@.
-data QName = QName !Name ![Name]
+data QName = QName {qNameName :: !Name, qNameModule :: ![Name]}
   deriving (Eq, Show, Ord, Read, Typeable, Generic)
 
 instance Hashable QName

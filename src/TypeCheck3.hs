@@ -390,20 +390,16 @@ checkModule (SA.Module moduleName pars0 exports decls) cont = do
   let msg =
         "name:" //> PP.pretty moduleName $$
         "pars:" //> PP.pretty pars0 $$
-                "exports:" //> PP.pretty exports
+        "exports:" //> PP.pretty exports
   debugBracket_ "checkModule" msg $ do
     module_ <- go pars0 C0
     tel <- asks elabEnvTel
     addModule moduleName tel module_
-    openDefinitionInEnv_ moduleName $ \_ -> do
-      -- If the module has no parameters, we import it right away.
-      case pars0 of
-        []  -> checkImport moduleName [] cont
-        _:_ -> cont
+    openDefinitionInEnv_ moduleName $ \_ -> cont
   where
     go :: SA.Params -> Ctx t -> CheckM t (Module t)
     go [] ctx = do
-      extendEnv ctx $ do
+      extendEnv ctx $ startBlock $ do
         env <- ask
         void $ checkDecls env decls
       return $ Contextual (ctxToTel ctx) $ HS.fromList exports
@@ -411,44 +407,28 @@ checkModule (SA.Module moduleName pars0 exports decls) cont = do
       type_ <- extendEnv ctx $ checkExpr synType set
       go pars $ ctx :< (n, type_)
 
-checkOpen
-  :: (IsTerm t) => QName -> CCheckM t
-checkOpen = error "TODO"
-{-
-checkOpen moduleName synArgs0 cont = do
-  Contextual tel0 names0 <- getModule moduleName
-
-  let go1 T0 [] args = do
-        go2 (reverse args) (HS.toList names0)
-      go1 ((_, type_) :> tel) (synArg : synArgs) args = do
-        arg <- checkExpr synArg type_
-        tel' <- instantiate_ tel arg
-        go1 tel' synArgs (arg : args)
-      go1 _ _ _ = do
-        checkError $ MismatchingArgumentsForModule moduleName tel0 synArgs0
-
-      go2 _    []             = cont
-      go2 args (name : names) = openDefinitionInEnv name args $ \_ -> go2 args names
-
-  go1 tel0 synArgs0 []
--}
-
 checkImport
   :: (IsTerm t) => QName -> [SA.Expr] -> CCheckM t
-checkImport moduleName0 synArgs = do
-  (moduleName0, Contextual tel0 names0) <- getOpenedDefinition moduleName0
+checkImport moduleName0 synArgs0 cont = do
+  (_, Module (Contextual tel0 names0)) <- getOpenedDefinition moduleName0
 
-  let go1 go1 T0 [] args = do
-        go2 (reverse args) (HS.toList names0)
-      go1 ((_, type_) :> tel) (synArg : synArgs) args = do
+  let checkArgs T0 [] args = do
+        openDefs (reverse args) (HS.toList names0)
+      checkArgs ((_, type_) :> tel) (synArg : synArgs) args = do
         arg <- checkExpr synArg type_
         tel' <- instantiate_ tel arg
-        go1 tel' synArgs (arg : args)
-      go1 _ _ _ = do
-        checkError $ MismatchingArgumentsForModule moduleName tel0 synArgs0
+        checkArgs tel' synArgs (arg : args)
+      checkArgs _ _ _ = do
+        checkError $ MismatchingArgumentsForModule moduleName0 tel0 synArgs0
 
-      go2 _    []             = cont
-      go2 args (name : names) = openDefinitionInEnv name args $ \_ -> go2 args names
+      openDefs _    []             = cont
+      openDefs args (name : names) = openDefinitionInEnv name args $ \_ -> openDefs args names
+
+  checkArgs tel0 synArgs0 []
+
+checkOpen
+  :: (IsTerm t) => QName -> CCheckM t
+checkOpen _ cont = cont
 
 -- Bringing everything together
 ------------------------------------------------------------------------

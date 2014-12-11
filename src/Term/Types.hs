@@ -75,7 +75,6 @@ module Term.Types
   , Invertible(..)
   , TermHead(..)
   , ignoreInvertible
-  , definitionToNameInfo
   , definitionType
     -- * MonadTerm
   , MonadTerm(..)
@@ -107,8 +106,8 @@ module Term.Types
   , sigAddModule
   , sigAddMeta
   , sigInstantiateMeta
-    -- ** Utils
-  , sigToScope
+  --   -- ** Utils
+  -- , sigToScope
     -- * Context
   , Ctx(..)
   , ctxSingleton
@@ -162,12 +161,10 @@ module Term.Types
 import           Control.Monad.Trans.Reader       (ReaderT, runReaderT, ask)
 import qualified Data.HashSet                     as HS
 import qualified Data.HashMap.Strict              as HMS
-import qualified Data.Map.Strict                  as Map
 
 import           Instrumentation
 import           Prelude.Extended
 import           Syntax
-import qualified Syntax.Abstract                  as SA
 import qualified PrettyPrint                      as PP
 import           PrettyPrint                      ((<+>), ($$), (//>))
 import           Term.Subst
@@ -752,10 +749,10 @@ ignoreInvertible :: Invertible t -> [Clause t]
 ignoreInvertible (NotInvertible clauses) = clauses
 ignoreInvertible (Invertible injClauses) = map snd injClauses
 
-definitionToNameInfo :: QName -> Definition n t -> NameInfo
-definitionToNameInfo n (Constant _ _)     = SA.DefName n 0
-definitionToNameInfo n (DataCon _ args _) = SA.ConName n 0 $ fromIntegral args
-definitionToNameInfo n (Projection _ _ _) = SA.ProjName n 0
+-- definitionToNameInfo :: QName -> Definition n t -> NameInfo
+-- definitionToNameInfo n (Constant _ _)     = SA.DefName n 0
+-- definitionToNameInfo n (DataCon _ args _) = SA.ConName n 0 $ fromIntegral args
+-- definitionToNameInfo n (Projection _ _ _) = SA.ProjName n 0
 
 definitionType :: (MonadTerm t m) => Closed (Definition n t) -> m (Closed (Type t))
 definitionType (Constant type_ _) =
@@ -764,6 +761,8 @@ definitionType (DataCon _ _ (Contextual tel type_)) =
   telPi tel type_
 definitionType (Projection _ _ (Contextual tel type_)) =
   telPi tel type_
+definitionType (Module _) =
+  __IMPOSSIBLE__
 
 -- 'Meta'iables
 ------------------------------------------------------------------------
@@ -971,8 +970,8 @@ sigDefinedNames sig = HMS.keys $ sigDefinitions sig
 sigDefinedMetas :: Signature t -> [Meta]
 sigDefinedMetas sig = HMS.keys $ sigMetasTypes sig
 
-sigToScope :: Signature t -> Scope
-sigToScope = error "TODO sigToScope"
+-- sigToScope :: Signature t -> Scope
+-- sigToScope = error "TODO sigToScope"
 -- sigToScope sig = Scope $ Map.fromList $ map f $ sigDefinedNames sig
 --   where
 --     f n = (nameString n, definitionToNameInfo n (contextualInside (sigGetDefinition sig n)))

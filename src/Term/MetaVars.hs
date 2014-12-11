@@ -20,6 +20,7 @@ instance (Metas t (f QName t), Metas t (f Projection t)) => Metas t (Definition 
   metas (Constant t c)             = metas (t, c)
   metas (DataCon dataCon _ type_)  = metas (dataCon, type_)
   metas (Projection _ tyCon type_) = metas (tyCon, type_)
+  metas (Module _)                 = return mempty
 
 instance (Metas t (f QName t), Metas t (f Projection t)) => Metas t (Constant f t) where
   metas Postulate               = return mempty

@@ -142,11 +142,11 @@ parseMain =
             interact' ts'
 -}
 
-check
+processFile
   :: FilePath
   -> (forall t. (IsTerm t) => Signature t -> Maybe PP.Doc -> IO a)
   -> IO a
-check file ret = do
+processFile file ret = do
   mbErr <- runExceptT $ do
     s   <- lift $ readFile file
     raw <- exceptShowErr "Parse" $ parseModule s
@@ -161,19 +161,6 @@ check file ret = do
 
     exceptShowErr errType =
       ExceptT . return . either (Left . showError errType) Right
-
-scopeCheck :: FilePath -> IO ()
-scopeCheck file = do
-  s <- readFile file
-  mbErr <- runExceptT $ do
-    raw <- exceptShowErr "Parse" $ paseModule s
-    exceptShowErr "Scope" $ scopeCheckModule raw
-  case mbErr of
-    Left err -> do
-      putStrLn err
-      exitFailure
-    Right s -> do
-      putStrLn $ PP.render s
 
 main :: IO ()
 main = do
