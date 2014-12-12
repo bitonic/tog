@@ -208,7 +208,7 @@
 -- >   postulate M.bar : M.N.X -> M.N.X
 module ScopeCheck (scopeCheckModule, scopeCheckFile) where
 
-import           Prelude hiding (length)
+import           Prelude hiding (length, replicate)
 
 import           Control.Monad.Reader (MonadReader, ReaderT, runReaderT, local)
 import           Control.Monad.Except (MonadError, throwError)
@@ -843,7 +843,7 @@ checkExpr e = case e of
               C.HArg _ : _ -> scopeError e $ "Unexpected implicit argument to projection function: " ++ C.printTree e
               C.Arg e : es -> do
                 e <- checkExpr e
-                doProj x e . map Apply =<< checkArgs e n es (\ _ -> return ())
+                doProj x e n . map Apply =<< checkArgs e n es (\ _ -> return ())
             IsRefl p | [] <- es ->
               return $ Refl p
             IsRefl p ->
@@ -854,8 +854,8 @@ checkExpr e = case e of
             Other h    -> App h . map Apply <$> checkArgs z n es (\ _ -> return ())
             HeadSet p  -> return $ Set p
             HeadMeta p -> return $ Meta p
-    doProj x (App h es1) es2 = return $ App h (es1 ++ [Proj x] ++ es2)
-    doProj x e _ = scopeError x $ "Cannot project " ++ show x ++ " from " ++ show e
+    doProj x (App h es1) n es2 = return $ App h (es1 ++ [Proj x] ++ replicate n (Apply (Meta (srcLoc x))) ++ es2)
+    doProj x e _ _ = scopeError x $ "Cannot project " ++ show x ++ " from " ++ show e
 
 checkArgs :: HasSrcLoc a =>
              a -> Hiding -> [C.Arg] -> (forall b. [b] -> Check ()) ->
