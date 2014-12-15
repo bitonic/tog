@@ -25,11 +25,11 @@ parseTypeCheckConf = Conf
       )
   <*> strOption
       ( long "solver" <> value "S" <>
-        help "Available solvers: S (Simple), H (Hetero), TC (TwoContexts)."
+        help "Available solvers: S (Simple)."
       )
   <*> debugLabelsOption
       ( long "debug" <> short 'd' <> value mempty <>
-        help "Select debug labels to print."
+        help "Select debug labels to print. -d '' will print all the debug messages."
       )
   <*> switch
       ( long "stackTrace" <> short 's' <>

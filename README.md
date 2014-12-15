@@ -19,10 +19,6 @@ To type check files
 
     tog [FILE]
 
-There are various options, most notably `-i` to get a GHCi-like prompt,
-and `-d` to get debug output.  `-d ''` will give you a complete dump of
-all the debug output, that is to say a lot of stuff.
-
 `tog --help` gives the full options.
 
 See `examples/` for some example files, it's basically a simple `Agda`.
@@ -35,26 +31,6 @@ To run the (sadly quite limited) tests, run
 
 ## Module structure
 
-Only the top-level modules are supposed to be imported.  Some of them,
-we often import qualified.  If you wanted to import everything:
-
-    import qualified Abstract
-    import CheckFile
-    import Elaborate
-    import Error
-    import Instrumentation
-    import Main
-    import Monad
-    import Names
-    import Parse
-    import PrettyPrint
-    import qualified Raw
-    import ScopeCheck
-    import Syntax
-    import Term
-    import TogPrelude
-    import TypeCheck
-    import Unify
-
-The exception are modules that ideally wouldn't be in this repo, namely
-`Data.Collect`.
+See the exported modules in the library section `tog.cabal`, each of
+them should contain a brief description.  `Tog.Main` is the module that
+defines main function for the `tog` executable.
