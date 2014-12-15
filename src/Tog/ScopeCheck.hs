@@ -211,7 +211,6 @@ module Tog.ScopeCheck (scopeCheckModule, scopeCheckFile) where
 import           Prelude hiding (length, replicate)
 
 import           Control.Monad.Reader (MonadReader, ReaderT, runReaderT, local)
-import           Control.Monad.Except (MonadError, throwError)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Control.Lens as L
@@ -301,7 +300,7 @@ initScope :: FullyQName -> Scope
 initScope n = Scope Map.empty (initNameSpace n) [] Map.empty Map.empty
 
 newtype Check a = Check { unCheck :: ReaderT Scope (Either ScopeError) a }
-  deriving (Functor, Applicative, Monad, MonadReader Scope, MonadError ScopeError)
+  deriving (Functor, Applicative, Monad, MonadReader Scope)
 
 evalCheck :: Scope -> Check a -> Either ScopeError a
 evalCheck sc m = runReaderT (unCheck m) sc
@@ -321,7 +320,7 @@ concatMapC :: (a -> CCheck [b]) -> [a] -> CCheck [b]
 concatMapC f xs ret = mapC f xs $ ret . concat
 
 scopeError :: HasSrcLoc i => i -> String -> Check a
-scopeError p err = throwError $ ScopeError (srcLoc p) err
+scopeError p err = Check $ lift $ Left $ ScopeError (srcLoc p) err
 
 ------------------------------------------------------------------------
 -- Binding/resolving things

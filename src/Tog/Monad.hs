@@ -50,7 +50,7 @@ module Tog.Monad
 import qualified Control.Lens                     as L
 import           Control.Monad.State.Strict       (StateT(StateT), runStateT, MonadState(..))
 import           Control.Monad.Reader             (MonadReader(..), asks)
-import           Control.Monad.Except             (catchError)
+import           Control.Monad.Trans.Except       (catchE)
 
 import           Tog.Prelude
 import           Tog.Instrumentation
@@ -150,7 +150,7 @@ magnifyStateTC l m = TC $ ExceptT $ StateT $ \ts0 -> do
 
 catchTC
   :: TC t r s a -> TC t r s (Either PP.Doc a)
-catchTC m = TC $ catchError (Right <$> unTC m) $ return . Left . PP.pretty
+catchTC m = TC $ catchE (Right <$> unTC m) $ return . Left . PP.pretty
 
 -- | Fail with an error message.
 typeError :: PP.Doc -> TC t r s b
