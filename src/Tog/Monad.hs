@@ -25,6 +25,7 @@ module Tog.Monad
   , assert_
     -- ** Source location
   , atSrcLoc
+  , askSrcLoc
     -- ** Queries
   , getDefinition
   , getMetaType
@@ -182,6 +183,9 @@ atSrcLoc l m = TC $ do
   x <- unTC m
   tsSrcLoc .= oldLoc
   return x
+
+askSrcLoc :: TC_ t SrcLoc
+askSrcLoc = TC $ use tsSrcLoc
 
 -- Signature
 ------------------------------------------------------------------------

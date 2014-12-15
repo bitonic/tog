@@ -166,13 +166,14 @@ lookupName n = do
 type Constraints t = [Constraint t]
 
 data Constraint t
-  = JmEq (Ctx t)
+  = JmEq SrcLoc
+         (Ctx t)
          (Type t) (Term t)
          (Type t) (Term t)
 
 instance PrettyM t (Constraint t) where
   prettyM c = case c of
-    JmEq ctx type1 t1 type2 t2 -> do
+    JmEq _ ctx type1 t1 type2 t2 -> do
       ctxDoc <- prettyM ctx
       type1Doc <- prettyM type1
       t1Doc <- prettyM t1
@@ -212,7 +213,8 @@ expect :: IsTerm t => Type t -> Type t -> Term t -> ElabM t (Term t)
 expect type_ type' u = do
   t <- addMetaInEnv type_
   env <- ask
-  writeConstraint $ JmEq (envCtx env) type_ t type' u
+  loc <- askSrcLoc
+  writeConstraint $ JmEq loc (envCtx env) type_ t type' u
   return t
 
 elaborate'

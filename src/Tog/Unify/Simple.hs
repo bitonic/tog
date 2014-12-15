@@ -34,8 +34,8 @@ type Constraints t = [([ConstraintId], MetaSet, Constraint t)]
 type Constraints_ t = [(MetaSet, Constraint t)]
 
 data Constraint t
-  = Unify (Ctx t) (Type t) (Term t) (Term t)
-  | UnifySpine (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)] [Elim (Term t)]
+  = Unify SrcLoc (Ctx t) (Type t) (Term t) (Term t)
+  | UnifySpine SrcLoc (Ctx t) (Type t) (Maybe (Term t)) [Elim (Term t)] [Elim (Term t)]
   | Conj [Constraint t]
   | (:>>:) (Constraint t) (Constraint t)
 
@@ -67,8 +67,8 @@ instance Monoid (Constraint t) where
   c1       `mappend` c2       = Conj [c1, c2]
 
 constraint :: (IsTerm t) => Elaborate.Constraint t -> Constraint t
-constraint (Elaborate.JmEq ctx type1 t1 type2 t2) =
-  Unify ctx set type1 type2 :>>: Unify ctx type1 t1 t2
+constraint (Elaborate.JmEq loc ctx type1 t1 type2 t2) =
+  Unify loc ctx set type1 type2 :>>: Unify loc ctx type1 t1 t2
 
 initSolveState :: SolveState t
 initSolveState = SolveState 0 []
@@ -140,9 +140,9 @@ execConstraint :: (IsTerm t) => Constraint t -> TC t r s (Constraints_ t)
 execConstraint constr0 = case constr0 of
   Conj constrs -> do
     mconcat <$> forM constrs execConstraint
-  Unify ctx type_ t1 t2 -> do
+  Unify loc ctx type_ t1 t2 -> atSrcLoc loc $ do
     checkEqual (ctx, type_, t1, t2)
-  UnifySpine ctx type_ mbH elims1 elims2 -> do
+  UnifySpine loc ctx type_ mbH elims1 elims2 -> atSrcLoc loc $ do
     checkEqualSpine' ctx type_ mbH elims1 elims2
   constr1 :>>: constr2 -> do
     constrs1_0 <- execConstraint constr1
@@ -264,7 +264,8 @@ checkMetas (ctx, type_, t1, t2) = do
           then done []
           else do
             debug_ "both sides blocked" $ "waiting for" <+> PP.pretty (HS.toList mvs)
-            done [(mvs, Unify ctx type_ t1'' t2'')]
+            loc <- askSrcLoc
+            done [(mvs, Unify loc ctx type_ t1'' t2'')]
   case (blockedT1, blockedT2) of
     (BlockingHead mv els1, BlockingHead mv' els2) | mv == mv' -> do
       mbKills <- intersectVars els1 els2
@@ -348,7 +349,9 @@ checkEqualBlockedOn ctx type_ mvs bh elims1 t2 = do
               _ -> do
                 notInvertible
   where
-    fallback t1 = return $ [(mvs, Unify ctx type_ t1 t2)]
+    fallback t1 = do
+      loc <- askSrcLoc
+      return $ [(mvs, Unify loc ctx type_ t1 t2)]
 
     matchPats :: [Pattern t] -> [Elim t] -> TC t r s Bool
     matchPats (VarP : pats) (_ : elims) = do
@@ -484,7 +487,8 @@ checkEqualSpine'' ctx type_ mbH (elim1 : elims1) (elim2 : elims2) = do
             return (res1 <> res2)
           Nothing -> do
             cod' <- instantiate_ cod arg1
-            sequenceConstraints res1 (UnifySpine ctx cod' mbH' elims1 elims2)
+            loc <- askSrcLoc
+            sequenceConstraints res1 (UnifySpine loc ctx cod' mbH' elims1 elims2)
       (Proj proj, Proj proj') -> do
           sameProj <- synEq proj proj'
           if sameProj
@@ -516,7 +520,8 @@ metaAssign ctx0 type0 mv elims t0 = do
           "to term:" //> tDoc
   let fallback mvs = do
         mvT <- meta mv elims
-        return [(mvs, Unify ctx0 type0 mvT t0)]
+        loc <- askSrcLoc
+        return [(mvs, Unify loc ctx0 type0 mvT t0)]
   debugBracket "metaAssign" msg $ do
     -- See if we can invert the metavariable
     invOrMvs <- do
@@ -631,7 +636,7 @@ compareTerms (ctx, type_, t1, t2) = do
 instance PrettyM t (Constraint t) where
   prettyM c0 = do
     case fromMaybe c0 (simplify c0) of
-      Unify ctx type_ t1 t2 -> do
+      Unify _ ctx type_ t1 t2 -> do
         ctxDoc <- prettyM ctx
         typeDoc <- prettyM type_
         t1Doc <- prettyM t1
@@ -647,7 +652,7 @@ instance PrettyM t (Constraint t) where
         csDoc <- mapM prettyM cs
         return $
           "Conj" //> PP.list csDoc
-      UnifySpine ctx type_ mbH elims1 elims2 -> do
+      UnifySpine _ ctx type_ mbH elims1 elims2 -> do
         ctxDoc <- prettyM ctx
         typeDoc <- prettyM type_
         hDoc <- case mbH of
