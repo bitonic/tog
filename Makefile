@@ -1,16 +1,16 @@
-bnfc_output = $(patsubst %,bnfc/Raw/%,Abs.hs ErrM.hs Layout.hs Print.hs Lex.x Par.y)
+bnfc_output = $(patsubst %,bnfc/Tog/Raw/%,Abs.hs ErrM.hs Layout.hs Print.hs Lex.x Par.y)
 hs_sources = $(shell find src/ -name '*.hs')
-alex_file = bnfc/Raw/Lex
-happy_file = bnfc/Raw/Par
+alex_file = bnfc/Tog/Raw/Lex
+happy_file = bnfc/Tog/Raw/Par
 executable = dist/build/tog/tog
 
 .PHONY: build
 build: $(executable)
 
-$(bnfc_output): src/Raw/Raw.cf
+$(bnfc_output): src/Tog/Raw/Raw.cf
 	-@mkdir -p bnfc
 	-@rm $(bnfc_output)
-	@(cd bnfc && bnfc -d ../$<)
+	@(cd bnfc && bnfc -p Tog -d ../$<)
 
 $(alex_file).hs: $(alex_file).x
 	alex $<
@@ -38,11 +38,11 @@ modules.pdf: $(bnfc_output) $(hs_sources)
 
 .PHONY: install-prof
 install-prof: $(bnfc_output) $(hs_sources)
-	cabal install --enable-executable-profiling --disable-documentation
+	cabal install --enable-executable-profiling --enable-library-profiling --disable-documentation
 
 .PHONY: install
 install: $(bnfc_output) $(hs_source)
-	cabal install --disable-documentation
+	cabal install --disable-executable-profiling --disable-library-profiling --disable-documentation
 
 .PHONY: ghci
 ghci: $(bnfc_output) $(alex_file).hs $(happy_file).hs

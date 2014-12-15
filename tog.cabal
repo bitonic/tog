@@ -8,10 +8,49 @@ cabal-version:       >= 1.10
 tested-with:         GHC == 7.6.3
                      GHC == 7.8.3
 
-executable tog
-  main-is:             Main.hs
-  other-modules:       Raw.Lex
-                     , Raw.Par
+library
+  exposed-modules:     Tog.Abstract
+                     , Tog.CheckFile
+                     , Tog.Elaborate
+                     , Tog.Error
+                     , Tog.Instrumentation
+                     , Tog.Main
+                     , Tog.Monad
+                     , Tog.Names
+                     , Tog.Parse
+                     , Tog.PrettyPrint
+                     , Tog.Raw
+                     , Tog.ScopeCheck
+                     , Tog.Term
+                     , Tog.TypeCheck
+                     , Tog.Unify
+
+  other-modules:       Data.Collect
+                     , Tog.Instrumentation.Conf
+                     , Tog.Instrumentation.Debug
+                     , Tog.Instrumentation.Timing
+                     , Tog.Prelude
+                     , Tog.Term.FreeVars
+                     , Tog.Term.Impl
+                     , Tog.Term.Impl.Common
+                     , Tog.Term.Impl.GraphReduce
+                     , Tog.Term.Impl.GraphReduceUnpack
+                     , Tog.Term.Impl.Hashed
+                     , Tog.Term.Impl.Simple
+                     , Tog.Term.MetaVars
+                     , Tog.Term.Pretty
+                     , Tog.Term.Subst
+                     , Tog.Term.Synonyms
+                     , Tog.Term.Types
+                     , Tog.Unify.Common
+                     , Tog.Unify.Simple
+                       -- BNFC stuff
+                     , Tog.Raw.Abs
+                     , Tog.Raw.ErrM
+                     , Tog.Raw.Layout
+                     , Tog.Raw.Lex
+                     , Tog.Raw.Par
+                     , Tog.Raw.Print
 
   build-depends:       array >= 0.4
                      , base >= 4.6
@@ -79,3 +118,8 @@ executable tog
                      , TypeFamilies
                      , TypeOperators
                      , UnicodeSyntax
+  
+executable tog
+  main-is:             tog.hs
+  build-depends:       base >= 4.6, tog
+  default-language:    Haskell2010
