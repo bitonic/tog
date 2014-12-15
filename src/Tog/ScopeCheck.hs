@@ -344,6 +344,12 @@ isBoundVar
   :: Name -> Check Bool
 isBoundVar n = Map.member n <$> L.view sVars
 
+checkReserved :: Name -> Check ()
+checkReserved n = do
+  let reserved = ["Set", "J"]
+  when (nameString n `elem` reserved) $
+    scopeError n $ "Cannot bind with reserved name " ++ render n
+
 checkShadowing :: Name -> Check ()
 checkShadowing n = do
   mbVar <- L.view $ sVars . at n
@@ -386,6 +392,7 @@ qualifyName n = do
 bindLocalName
   :: Name -> NameInfo -> CCheck FullyQName
 bindLocalName n ni ret = do
+  checkReserved n
   checkShadowing n
   qn <- qualifyName n
   local (L.set (sNameSpace . nsLocalNames . at n) (Just ni)) $ ret qn
@@ -406,6 +413,7 @@ bindProj n hidden = bindLocalName n $ ProjName hidden
 
 bindVar :: Name -> CCheck Name
 bindVar n ret = do
+  checkReserved n
   local (over sVars (Map.insert n (srcLoc n))) $ ret n
 
 notInScopeError :: (PP.Pretty name, HasSrcLoc name) => name -> Check a
