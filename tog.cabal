@@ -71,7 +71,7 @@ library
                      , tagged >= 0.7.2
                      , transformers >= 0.2
                      , transformers-compat >= 0.3
-                     , unordered-containers >= 0.2
+                     , unordered-containers >= 0.2.5
                      , wl-pprint >= 1.1
 
   hs-source-dirs:      src, bnfc
