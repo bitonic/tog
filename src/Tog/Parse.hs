@@ -5,7 +5,6 @@ import           Tog.Raw.ErrM                     (Err(Bad, Ok))
 import           Tog.Raw.Layout                   (resolveLayout)
 import           Tog.Raw.Par                      (myLexer, pModule, pExpr)
 import qualified Tog.PrettyPrint                  as PP
-import           Tog.Prelude
 
 parseModule :: String -> Either PP.Doc Module
 parseModule s =

@@ -10,11 +10,10 @@ module Tog.Instrumentation.Conf
   , readConf
   ) where
 
-import           Control.Monad                    (unless)
 import           System.IO.Unsafe                 (unsafePerformIO)
-import           Control.Monad.IO.Class           (MonadIO, liftIO)
 import           Data.IORef                       (IORef, newIORef, atomicModifyIORef', readIORef)
-import           Data.Monoid                      (Monoid(..))
+
+import           Tog.Prelude
 
 -- Configuration
 ------------------------------------------------------------------------

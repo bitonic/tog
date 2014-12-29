@@ -1,21 +1,27 @@
 {-# LANGUAGE CPP #-}
 module Tog.Prelude
   ( module Prelude
+#if __GLASGOW_HASKELL__ < 710
+  , (<*>)
+  , Applicative
+  , Foldable
+  , Traversable
+  , pure
+  , sequenceA
+  , traverse
+#endif
   , (!!)
   , (***)
   , (<$)
   , (<$>)
-  , (<*>)
   , (<=<)
   , (<>)
   , (<|>)
   , (>=>)
-  , Applicative
   , Bifunctor(..)
   , Collect(..)
   , Const(..)
   , ExceptT(..)
-  , Foldable
   , Generic
   , Hashable(..)
   , IsString(..)
@@ -23,7 +29,6 @@ module Tog.Prelude
   , MonadIO(..)
   , Monoid(..)
   , Natural
-  , Traversable
   , Typeable
   , Validation(..)
   , _1
@@ -59,10 +64,8 @@ module Tog.Prelude
   , mzero
   , on
   , over
-  , pure
   , replicate
   , runExceptT
-  , sequenceA
   , sortBy
   , stderr
   , strictDrop
@@ -72,7 +75,6 @@ module Tog.Prelude
   , trace
   , traceM
   , traceShow
-  , traverse
   , unless
   , validationToEither
   , void
@@ -100,7 +102,11 @@ import Control.Monad.Trans.Maybe
 import Data.Bifunctor
 import Data.Collect
 import Data.Either.Validation
+#if __GLASGOW_HASKELL__ < 710
 import Data.Foldable
+#else
+import Data.Foldable hiding (length)
+#endif
 import Data.Function
 import Data.Hashable
 import Data.List hiding (foldl', any, length, (!!), replicate, splitAt)

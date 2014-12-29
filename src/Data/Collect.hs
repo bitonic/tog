@@ -1,7 +1,9 @@
 module Data.Collect where
 
+#if __GLASGOW_HASKELL__ < 710
 import           Control.Applicative              (Applicative, pure, (<*>))
 import           Data.Monoid                      (Monoid, mempty, mappend)
+#endif
 import           Data.Semigroup                   (Semigroup, (<>))
 import           Control.Monad                    (ap)
 
