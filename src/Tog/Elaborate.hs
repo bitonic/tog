@@ -201,7 +201,12 @@ elaborate type_ absT = do
         return $ "env:" //> envDoc
   debugBracket "elaborate" msg $ do
     (t, constrs) <- magnifyStateTC (const []) $ (,) <$> elaborate' type_ absT <*> get
-    debug "constraints" $ PP.list <$> mapM prettyM constrs
+    debug "constraints" $ do
+      tDoc <- prettyM t
+      constrsDoc <- PP.list <$> mapM prettyM constrs
+      return $
+        "term:" //> tDoc $$
+        "constraints:" //> constrsDoc
     return (t, constrs)
 
 type ElabM t = TC t (Env t) (Constraints t)
