@@ -110,6 +110,10 @@ expect type_ type' u = do
   writeConstraint $ JmEq loc (envCtx env) type_ t type' u
   return t
 
+-- We annotate each case with the correspondent bidirectional
+-- type-checking rule.  The elaboration should be fairly close, apart
+-- from generating synthetic types when needed (e.g. see the case for
+-- 'SA.PI').
 elaborate'
   :: (IsTerm t) => Type t -> SA.Expr -> ElabM t (Term t)
 elaborate' type_ absT = atSrcLoc absT $ do
@@ -247,7 +251,7 @@ inferHead synH = atSrcLoc synH $ case synH of
     return (h, type_)
   --
   -- --------------------------------------------------------------
-  --   Γ ⊢ J : (A : Set) → (x : A) → (y : A) ->
+  --   Γ ⊢ J ⇒ (A : Set) → (x : A) → (y : A) ->
   --           (P : (x : A) → (y : A) → (eq : x =={A} y) → Set) →
   --           (p : (x : A) → P x x refl) →
   --           (eq : x =={A} y) ->
