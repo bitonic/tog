@@ -2,149 +2,143 @@
 module Tog.Prelude
   ( module Prelude
 #if __GLASGOW_HASKELL__ < 710
-  , (<*>)
-  , Applicative
-  , Foldable
-  , Traversable
-  , pure
-  , sequenceA
-  , traverse
+  , (Control.Applicative.<*>)
+  , Control.Applicative.Applicative
+  , Data.Foldable.Foldable
+  , Data.Traversable.Traversable
+  , Control.Applicative.pure
+  , Data.Traversable.sequenceA
+  , Data.Traversable.traverse
 #endif
   , (!!)
-  , (***)
-  , (<$)
-  , (<$>)
-  , (<=<)
-  , (<>)
-  , (<|>)
-  , (>=>)
-  , Bifunctor(..)
-  , Collect(..)
-  , Const(..)
-  , ExceptT(..)
-  , Generic
-  , Hashable(..)
-  , IsString(..)
-  , MaybeT(..)
-  , MonadIO(..)
-  , Monoid(..)
-  , Natural
-  , Typeable
-  , Validation(..)
-  , _1
-  , _2
-  , _3
-  , any
-  , ap
-  , catMaybes
-  , comparing
-  , eitherToValidation
-  , elemIndex
-  , fold
-  , foldl'
-  , foldlM
-  , for
-  , forM
-  , forM_
-  , fromMaybe
-  , groupBy
-  , guard
-  , hPutStr
-  , hPutStrLn
-  , intersperse
-  , isJust
-  , isNothing
-  , isPrefixOf
-  , join
+  , (Control.Arrow.***)
+  , (Control.Applicative.<$)
+  , (Control.Applicative.<$>)
+  , (Control.Monad.<=<)
+  , (Data.Monoid.<>)
+  , (Control.Applicative.<|>)
+  , (Control.Monad.>=>)
+  , Data.Bifunctor.Bifunctor(..)
+  , Data.Collect.Collect(..)
+  , Control.Applicative.Const(..)
+  , Control.Monad.Trans.Except.ExceptT(..)
+  , GHC.Generics.Generic
+  , Data.Hashable.Hashable(..)
+  , Data.String.IsString(..)
+  , Control.Monad.Trans.Maybe.MaybeT(..)
+  , Control.Monad.IO.Class.MonadIO(..)
+  , Data.Monoid.Monoid(..)
+  , Numeric.Natural.Natural
+  , Data.Typeable.Typeable
+  , Data.Either.Validation.Validation(..)
+  , Control.Lens._1
+  , Control.Lens._2
+  , Control.Lens._3
+  , Data.Foldable.any
+  , Control.Monad.ap
+  , Data.Maybe.catMaybes
+  , Data.Ord.comparing
+  , Data.Either.Validation.eitherToValidation
+  , Data.List.elemIndex
+  , Data.Foldable.fold
+  , Data.Foldable.foldl'
+  , Data.Foldable.foldlM
+  , Data.Traversable.for
+  , Data.Traversable.forM
+  , Data.Foldable.forM_
+  , Data.Maybe.fromMaybe
+  , Data.List.groupBy
+  , Control.Monad.guard
+  , System.IO.hPutStr
+  , System.IO.hPutStrLn
+  , Data.List.intersperse
+  , Data.Maybe.isJust
+  , Data.Maybe.isNothing
+  , Data.List.isPrefixOf
+  , Control.Monad.join
   , length
-  , lift
-  , liftM
-  , mplus
-  , msum
-  , mzero
-  , on
-  , over
+  , Control.Monad.Trans.lift
+  , Control.Monad.liftM
+  , Control.Monad.mplus
+  , Data.Foldable.msum
+  , Control.Monad.mzero
+  , Data.Function.on
+  , Control.Lens.over
   , replicate
-  , runExceptT
-  , sortBy
-  , stderr
+  , Control.Monad.Trans.Except.runExceptT
+  , Data.List.sortBy
+  , System.IO.stderr
   , strictDrop
   , strictSplitAt
-  , throwE
-  , toList
-  , trace
+  , Control.Monad.Trans.Except.throwE
+  , Data.Foldable.toList
+  , Debug.Trace.trace
   , traceM
-  , traceShow
-  , unless
-  , validationToEither
-  , void
-  , when
-  , makeLenses
-  , use
-  , (%=)
-  , (.=)
-  , (^.)
-  , zoom
-  , Lens'
-  , Getter
+  , Debug.Trace.traceShow
+  , Control.Monad.unless
+  , Data.Either.Validation.validationToEither
+  , Control.Monad.void
+  , Control.Monad.when
+  , Control.Lens.makeLenses
+  , Control.Lens.use
+  , (Control.Lens.%=)
+  , (Control.Lens..=)
+  , (Control.Lens.^.)
+  , Control.Lens.zoom
+  , Control.Lens.Lens'
+  , Control.Lens.Getter
   ) where
 
-import Prelude hiding (length, any, (!!), replicate, splitAt, abs, pi)
+import Prelude hiding (replicate, (!!), length, any, pi, exp)
 
-import Control.Applicative
-import Control.Arrow hiding (first, second)
-import Control.Lens
-import Control.Monad hiding (forM_, msum, forM)
-import Control.Monad.IO.Class
-import Control.Monad.Trans
-import Control.Monad.Trans.Except
-import Control.Monad.Trans.Maybe
-import Data.Bifunctor
-import Data.Collect
-import Data.Either.Validation
-#if __GLASGOW_HASKELL__ < 710
-import Data.Foldable
-#else
-import Data.Foldable hiding (length)
-#endif
-import Data.Function
-import Data.Hashable
-import Data.List hiding (foldl', any, length, (!!), replicate, splitAt)
-import Data.Maybe
-import Data.Monoid
-import Data.Ord
-import Data.String
-import Data.Traversable
-import Data.Typeable
-import Debug.Trace
-import GHC.Generics
-import Numeric.Natural
-import System.IO
+import qualified Control.Applicative
+import qualified Control.Arrow
+import qualified Control.Lens
+import qualified Control.Monad
+import qualified Control.Monad.IO.Class
+import qualified Control.Monad.Trans
+import qualified Control.Monad.Trans.Except
+import qualified Control.Monad.Trans.Maybe
+import qualified Data.Bifunctor
+import qualified Data.Collect
+import qualified Data.Either.Validation
+import qualified Data.Foldable
+import qualified Data.Function
+import qualified Data.Hashable
+import qualified Data.List
+import qualified Data.Maybe
+import qualified Data.Monoid
+import qualified Data.Ord
+import qualified Data.String
+import qualified Data.Traversable
+import qualified Data.Typeable
+import qualified Debug.Trace
+import qualified GHC.Generics
+import qualified Numeric.Natural
+import qualified System.IO
 
-#if __GLASGOW_HASKELL__ < 708
 traceM :: (Monad m) => String -> m ()
-traceM string = trace string $ return ()
-#endif
+traceM string = Debug.Trace.trace string $ return ()
 
-length :: [a] -> Natural
+length :: [a] -> Numeric.Natural.Natural
 length []       = 0
 length (_ : xs) = 1 + length xs
 
-(!!) :: [a] -> Natural -> a
+(!!) :: [a] -> Numeric.Natural.Natural -> a
 (x : _ ) !! 0 = x
 (_ : xs) !! n = xs !! (n - 1)
 []       !! _ = error "Prelude.Extended.!!: out of bounds"
 
-replicate :: Natural -> a -> [a]
+replicate :: Numeric.Natural.Natural -> a -> [a]
 replicate 0 _ = []
 replicate n x = x : replicate (n-1) x
 
-strictSplitAt :: Natural -> [a] -> ([a], [a])
+strictSplitAt :: Numeric.Natural.Natural -> [a] -> ([a], [a])
 strictSplitAt 0 xs       = ([], xs)
 strictSplitAt _ []       = error "strictSplitAt: list too short"
 strictSplitAt n (x : xs) = let (l, r) = strictSplitAt (n-1) xs in (x : l, r)
 
-strictDrop :: Natural -> [a] -> [a]
+strictDrop :: Numeric.Natural.Natural -> [a] -> [a]
 strictDrop 0 xs       = xs
 strictDrop _ []       = error "strictDrop: list too short"
 strictDrop n (_ : xs) = strictDrop (n-1) xs
