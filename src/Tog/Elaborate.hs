@@ -39,6 +39,50 @@ import qualified Tog.PrettyPrint                  as PP
 
 #include "impossible.h"
 
+-- We define these types first because of TH restrictions.
+
+-- | A block is an environment where we can open modules.  In practice,
+-- where clauses and modules.  They have a context (modules can be
+-- parametrised and where clauses have the clause parameters in scope),
+-- and a collection of opened names.
+data Block t = Block
+  { _blockCtx    :: !(Ctx t)
+  , _blockOpened :: !(HMS.HashMap QName [Term t])
+    -- ^ Stores arguments to opened things.
+  }
+
+makeLenses ''Block
+
+
+instance PrettyM t (Block t) where
+  prettyM (Block ctx opened) = do
+    ctxDoc <- prettyM ctx
+    openedDoc <- prettyM $ HMS.toList opened
+    return $
+      "Block" $$
+      "ctx:" //> ctxDoc $$
+      "opened:" //> openedDoc
+
+-- | The environment we do the elaboration is a series of 'Block's plus
+-- a dangling context at the end.  The dangling context is the usual
+-- context that you would find when type checking---what we get when we
+-- traverse abstractions.
+data Env t = Env
+  { _envBlocks  :: ![Block t]
+  , _envPending :: !(Ctx t)
+  }
+
+makeLenses ''Env
+
+instance PrettyM t (Env t) where
+  prettyM (Env blocks ctx) = do
+    blocksDoc <- prettyM blocks
+    ctxDoc <- prettyM ctx
+    return $
+      "Env" $$
+      "blocks:" //> blocksDoc $$
+      "pending:" //> ctxDoc
+
 -- Elaboration
 ------------------------------------------------------------------------
 
@@ -315,47 +359,6 @@ elaborateApp type_ h (SA.Proj projName0 : elims) = atSrcLoc projName0 $ do
 
 -- Elaboration environment
 ------------------------------------------------------------------------
-
--- | A block is an environment where we can open modules.  In practice,
--- where clauses and modules.  They have a context (modules can be
--- parametrised and where clauses have the clause parameters in scope),
--- and a collection of opened names.
-data Block t = Block
-  { _blockCtx    :: !(Ctx t)
-  , _blockOpened :: !(HMS.HashMap QName [Term t])
-    -- ^ Stores arguments to opened things.
-  }
-
-makeLenses ''Block
-
-instance PrettyM t (Block t) where
-  prettyM (Block ctx opened) = do
-    ctxDoc <- prettyM ctx
-    openedDoc <- prettyM $ HMS.toList opened
-    return $
-      "Block" $$
-      "ctx:" //> ctxDoc $$
-      "opened:" //> openedDoc
-
--- | The environment we do the elaboration is a series of 'Block's plus
--- a dangling context at the end.  The dangling context is the usual
--- context that you would find when type checking---what we get when we
--- traverse abstractions.
-data Env t = Env
-  { _envBlocks  :: ![Block t]
-  , _envPending :: !(Ctx t)
-  }
-
-makeLenses ''Env
-
-instance PrettyM t (Env t) where
-  prettyM (Env blocks ctx) = do
-    blocksDoc <- prettyM blocks
-    ctxDoc <- prettyM ctx
-    return $
-      "Env" $$
-      "blocks:" //> blocksDoc $$
-      "pending:" //> ctxDoc
 
 initEnv :: Ctx t -> Env t
 initEnv ctx = Env [Block ctx HMS.empty] C0
