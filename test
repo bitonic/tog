@@ -1,6 +1,6 @@
 #!/bin/bash
 
-tc="./dist/build/tog/tog"
+tc="tog"
 
 make $tc
 

@@ -19,7 +19,7 @@ $(happy_file).hs: $(happy_file).y
 	happy $<
 
 $(executable): $(bnfc_output) $(hs_sources) tog.cabal
-	cabal build
+	stack build
 
 .PHONY: bnfc
 bnfc: $(bnfc_output)
@@ -27,24 +27,24 @@ bnfc: $(bnfc_output)
 .PHONY: clean
 clean:
 	rm -rf bnfc
-	cabal clean
+	stack clean
 
 .PHONY: test
 test: $(executable)
-	time ./test
+	stack exec -- time ./test
 
 modules.pdf: $(bnfc_output) $(hs_sources)
 	graphmod -i src -i bnfc src/Tog/Main.hs | dot -T pdf -o modules.pdf
 
 .PHONY: install-prof
 install-prof: $(bnfc_output) $(hs_sources)
-	cabal install --enable-executable-profiling --enable-library-profiling --disable-documentation
+	stack build --library-profiling --executable-profiling
 
 .PHONY: install
 install: $(bnfc_output) $(hs_source)
-	cabal install --disable-executable-profiling --disable-library-profiling --disable-documentation
+	stack install
 
 .PHONY: ghci
 ghci: $(bnfc_output) $(alex_file).hs $(happy_file).hs
-	ghci src/Main.hs
+	stack ghci tog:lib tog:tog
 

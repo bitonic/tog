@@ -567,7 +567,7 @@ data Blocked t
   | BlockingHead Meta [Elim t]
   -- ^ The term is headed by some blocking thing.
   | BlockedOn MetaSet (BlockedHead t) [Elim t]
-  -- ^ Some keys are preventing us from reducing a definition.  The
+  -- ^ Some meta-variables are preventing us from reducing a definition.  The
   -- 'BlockedHead' is the head, the 'Elim's the eliminators stuck on it.
   --
   -- Note that the metavariables impeding reduction might be both at
@@ -575,7 +575,7 @@ data Blocked t
   -- definition heading an eliminator.  In other words, even if the
   -- term is blocked, we don't guarantee that every eliminator is
   -- constructor headed.
- deriving (Eq, Show, Read, Typeable, Functor)
+  deriving (Eq, Show, Read, Typeable, Functor)
 
 data BlockedHead t
     = BlockedOnFunction !(Opened QName t)
