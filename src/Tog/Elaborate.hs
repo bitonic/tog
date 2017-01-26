@@ -222,11 +222,12 @@ elaborate' type_ absT = atSrcLoc absT $ do
         t1 <- addMetaInEnv eqType
         type' <- equal eqType t1 t1
         expect_ type' refl
+      --   D : Δ → Set     ∈ Σ
       --   c : Δ → Ψ → D Δ ∈ Σ
-      --   ∀ i. Γ ⊢ tᵢ : Δᵢ (every tycon arg is well-typed)
-      --   ∀ j. Γ ⊢ uⱼ : Ψⱼ (every datacon arg is well-typed)
-      -- -----------------------------------------------------
-      --   Γ ⊢ c u₁ ⋯ tₘ : D Δ
+      --   Γ ⊢ ts : Δ       (every tycon arg (aka parameter) is well-typed)
+      --   Γ ⊢ us : Ψ[ts/Δ] (every datacon arg is well-typed)
+      -- ------------------------------------------------------------------
+      --   Γ ⊢ c u₁ ⋯ uₘ : D ts
       --
       -- Again, we don't have the tycon args, so we put meta-variables
       -- instead.
