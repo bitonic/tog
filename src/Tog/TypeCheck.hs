@@ -265,9 +265,9 @@ compareTerms (ctx, type_, t1, t2) = do
       checkEqual (ctx', cod, body1, body2)
     (Set, Pi dom1 cod1, Pi dom2 cod2) -> do
       checkEqual (ctx, set, dom1, dom2)
-      cod1' <- instantiate_ cod1 dom1
-      cod2' <- instantiate_ cod2 dom1
-      checkEqual (ctx, set, cod1', cod2')
+      name <- getAbsName_ dom1
+      ctx' <- extendContext ctx (name,dom1)
+      checkEqual (ctx', set, cod1, cod2)
     (Set, Equal type1' l1 r1, Equal type2' l2 r2) -> do
       checkEqual (ctx, set, type1', type2')
       checkEqual (ctx, type1', l1, l2)
