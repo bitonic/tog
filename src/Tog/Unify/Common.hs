@@ -217,51 +217,54 @@ prune allowedVs oldMv elims = do
             "allowed vars:" //> PP.pretty (Set.toList allowedVs)
     MaybeT $ debugBracket "prune" msg $ runMaybeT $ do
       oldMvType <- lift $ getMetaType oldMv
-      (newMvType, kills1) <- lift $ createNewMeta oldMvType kills0
+      (newMvType, kills1) <- lift $ createNewMetaFromKills oldMvType kills0
       lift $ debug_ "new kills" $ PP.pretty (map unNamed kills1)
       guard (any unNamed kills1)
       newMv <- lift $ addMeta newMvType
       mi <- lift $ killArgs newMv kills1
       lift $ instantiateMeta oldMv mi
       lift $ metaBodyToTerm mi
-  where
-    -- We build a pi-type with the non-killed types in.  This way, we
-    -- can analyze the dependency between arguments and avoid killing
-    -- things that later arguments depend on.
-    --
-    -- At the end of the type we put both the new metavariable and the
-    -- remaining type, so that this dependency check will be performed
-    -- on it as well.
-    createNewMeta
-      :: Type t -> [Bool] -> TC t r s (Type t, [Named Bool])
-    createNewMeta type_ [] =
-      return (type_, [])
-    createNewMeta type_ (kill : kills) = do
-      typeView <- whnfView type_
-      case typeView of
-        Pi domain codomain -> do
-          name <- getAbsName_ codomain
-          (type', kills') <- createNewMeta codomain kills
-          debug "createNewMeta" $ do
-            domDoc <- prettyM domain
-            typeDoc <- prettyM type'
-            return $
-              "kill:" <+> PP.pretty kill $$
-              "type:" //> domDoc $$
-              "strengthening:" //> typeDoc
-          let notKilled = do
-                type'' <- pi domain type'
-                return (type'', named name False : kills')
-          if not kill
-            then notKilled
-            else do
-              mbType <- safeStrengthen =<< nf type'
-              case mbType of
-                Just type'' -> do return (type'', named name True : kills')
-                Nothing     -> do debug_ "couldn't strengthen" ""
-                                  notKilled
-        _ ->
-          fatalError "impossible.createNewMeta: metavar type too short"
+
+-- | We build a pi-type with the non-killed types in.  This way, we
+--   can analyze the dependency between arguments and avoid killing
+--   things that later arguments depend on.
+--
+--   At the end of the type we put both the new metavariable and the
+--   remaining type, so that this dependency check will be performed
+--  on it as well.
+createNewMetaFromKills
+  :: IsTerm t => Type t -> [Bool] -> TC t r s (Type t, [Named Bool])
+createNewMetaFromKills type_ [] =
+  return (type_, [])
+createNewMetaFromKills type_ (kill : kills) = do
+  typeView <- whnfView type_
+  case typeView of
+    Pi domain codomain -> do
+      name <- getAbsName_ codomain
+      (type', kills') <- createNewMetaFromKills codomain kills
+      debug "createNewMetaFromKills" $ do
+        domDoc <- prettyM domain
+        typeDoc <- prettyM type'
+        return $
+          "kill:" <+> PP.pretty kill $$
+          "type:" //> domDoc $$
+          "strengthening:" //> typeDoc
+      let notKilled = do
+            type'' <- pi domain type'
+            return (type'', named name False : kills')
+      if not kill
+        then notKilled
+        else do
+          -- By using `maybeNfElseFullNf` we cover the case where the
+          -- metavariable reduces to a simple lambda, even if full
+          -- normalization is disabled.
+          mbType <- safeStrengthen =<< nf type'
+          case mbType of
+            Just type'' -> do return (type'', named name True : kills')
+            Nothing     -> do debug_ "couldn't strengthen" ""
+                              notKilled
+    _ ->
+      fatalError "impossible.createNewMeta: metavar type too short"
 
 -- | Returns whether the term should be killed, given a set of allowed
 --   variables.
@@ -832,10 +835,28 @@ intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
       t1View <- lift $ whnfView t1
       t2View <- lift $ whnfView t2
       case (t1View, t2View) of
-        (App (Var v1) [], App (Var v2) []) -> return $ (v1 /= v2) <$ unVar v1 -- prune different vars
+        (App (Var v1) [], App (Var v2) []) ->
+          return $ (v1 /= v2) <$ unVar v1 -- prune different vars
         (_,               _)               -> mzero
     areVars _ _ =
       mzero
+
+intersectMetaSpine :: (IsTerm t) => Meta -> [Elim t] -> [Elim t] -> TC t r s (Maybe MetaSet)
+intersectMetaSpine mv els1 els2 = do
+      mbKills <- intersectVars els1 els2
+      case mbKills of
+        Nothing ->
+          -- TODO: If any of the arguments is blocked, this should be added to the guard
+          pure$ Just$ HS.singleton mv
+        Just kills -> do
+          mvType <- getMetaType mv
+          (mvType', kills') <- createNewMetaFromKills mvType$ map unNamed kills
+          if any unNamed kills' then do
+            newMv <- addMeta mvType'
+            instantiateMeta mv =<< killArgs newMv kills'
+            return Nothing
+          else
+            pure$ Just$ HS.singleton mv
 
 {-
 -- | @instantiateDataCon α c@ makes it so that @α := c β₁ ⋯ βₙ@, where

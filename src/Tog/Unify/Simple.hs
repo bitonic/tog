@@ -268,15 +268,9 @@ checkMetas (ctx, type_, t1, t2) = do
             done [(mvs, Unify loc ctx type_ t1'' t2'')]
   case (blockedT1, blockedT2) of
     (BlockingHead mv els1, BlockingHead mv' els2) | mv == mv' -> do
-      mbKills <- intersectVars els1 els2
-      case mbKills of
-        Nothing -> do
-          syntacticEqualityOrPostpone $ HS.singleton mv
-        Just kills -> do
-          mvType <- getMetaType mv
-          newMv <- addMeta mvType
-          instantiateMeta mv =<< killArgs newMv kills
-          done []
+      intersectMetaSpine mv els1 els2 >>= \case                                                               
+        Just mvs -> syntacticEqualityOrPostpone mvs
+        Nothing  -> done []
     (BlockingHead mv elims, _) -> do
       done =<< metaAssign ctx type_ mv elims t2
     (_, BlockingHead mv elims) -> do
