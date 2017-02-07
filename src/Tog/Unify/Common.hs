@@ -835,8 +835,7 @@ intersectVars els1 els2 = runMaybeT $ mapM (uncurry areVars) $ zip els1 els2
       t1View <- lift $ whnfView t1
       t2View <- lift $ whnfView t2
       case (t1View, t2View) of
-        (App (Var v1) [], App (Var v2) []) ->
-          return $ (v1 /= v2) <$ unVar v1 -- prune different vars
+        (App (Var v1) [], App (Var v2) []) -> return $ (v1 /= v2) <$ unVar v1 -- prune different vars
         (_,               _)               -> mzero
     areVars _ _ =
       mzero

@@ -268,7 +268,7 @@ checkMetas (ctx, type_, t1, t2) = do
             done [(mvs, Unify loc ctx type_ t1'' t2'')]
   case (blockedT1, blockedT2) of
     (BlockingHead mv els1, BlockingHead mv' els2) | mv == mv' -> do
-      intersectMetaSpine mv els1 els2 >>= \case                                                               
+      intersectMetaSpine mv els1 els2 >>= \case
         Just mvs -> syntacticEqualityOrPostpone mvs
         Nothing  -> done []
     (BlockingHead mv elims, _) -> do
